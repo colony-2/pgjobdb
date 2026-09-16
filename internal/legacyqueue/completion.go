@@ -1,4 +1,4 @@
-package pgjobdb
+package legacyqueue
 
 // CompletionStatus represents the outcome stored in pgjobdb.jobs_archive.
 // Values are arbitrary, but empty defaults to "succeeded" when completing jobs.

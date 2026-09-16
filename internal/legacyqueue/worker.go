@@ -1,4 +1,4 @@
-package pgjobdb
+package legacyqueue
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-package pgjobdb_test
+package legacyqueue_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
+	pgjobdb "github.com/colony-2/pgjobdb/internal/legacyqueue"
 )
 
 // Note: These are unit tests that work with the real database setup from integration_test.go

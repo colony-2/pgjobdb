@@ -15,7 +15,7 @@ import (
 	_ "github.com/lib/pq"
 
 	pgjobdbinstaller "github.com/colony-2/pgjobdb/installer"
-	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
+	pgjobdb "github.com/colony-2/pgjobdb/internal/legacyqueue"
 )
 
 const testTenantID = pgjobdb.TenantID("test-tenant")
