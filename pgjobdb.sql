@@ -1973,7 +1973,8 @@ ALTER TABLE pgjobdb.jobs
     ADD COLUMN IF NOT EXISTS alternate_job_type TEXT,
     ADD COLUMN IF NOT EXISTS alternate_task_type TEXT,
     ADD COLUMN IF NOT EXISTS lease_worker_id TEXT,
-    ADD COLUMN IF NOT EXISTS lease_payload JSONB NOT NULL DEFAULT '{}'::JSONB;
+    ADD COLUMN IF NOT EXISTS lease_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+    ADD COLUMN IF NOT EXISTS lease_payload_visible BOOLEAN NOT NULL DEFAULT FALSE;
 
 DO $$
 BEGIN
@@ -2032,7 +2033,8 @@ ALTER TABLE pgjobdb.jobs_archive
     ADD COLUMN IF NOT EXISTS final_lease_expires_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS final_lease_worker_id TEXT,
     ADD COLUMN IF NOT EXISTS final_cancel_requested BOOLEAN,
-    ADD COLUMN IF NOT EXISTS final_lease_payload JSONB;
+    ADD COLUMN IF NOT EXISTS final_lease_payload JSONB,
+    ADD COLUMN IF NOT EXISTS final_lease_payload_visible BOOLEAN;
 
 DO $$
 BEGIN
@@ -2047,12 +2049,14 @@ BEGIN
                     AND final_task_output_ordinal IS NULL
                     AND final_task_input_hash IS NULL AND final_wait_for IS NULL
                     AND final_available_at IS NULL AND final_cancel_requested IS NULL
-                    AND final_lease_payload IS NULL)
+                    AND final_lease_payload IS NULL
+                    AND final_lease_payload_visible IS NULL)
                 OR (final_route_job_type IS NOT NULL AND final_route_job_type <> ''
                     AND final_work_kind IS NOT NULL
                     AND final_wait_for IS NOT NULL AND final_available_at IS NOT NULL
                     AND final_cancel_requested IS NOT NULL
                     AND final_lease_payload IS NOT NULL
+                    AND final_lease_payload_visible IS NOT NULL
                     AND jsonb_typeof(final_lease_payload) = 'object' AND (
                         (final_work_kind = 'JOB' AND final_task_type IS NULL
                             AND final_resume_job_type IS NULL
@@ -2287,7 +2291,8 @@ CREATE OR REPLACE FUNCTION pgjobdb.submit_native_job(
     p_wait_for TEXT[],
     p_available_at TIMESTAMPTZ,
     p_expires_at TIMESTAMPTZ,
-    p_lease_payload JSONB
+    p_lease_payload JSONB,
+    p_lease_payload_visible BOOLEAN
 )
 RETURNS TABLE(job_id TEXT, created BOOLEAN)
 LANGUAGE plpgsql
@@ -2309,7 +2314,8 @@ BEGIN
     END IF;
     IF jsonb_typeof(p_run_policy) IS DISTINCT FROM 'object'
         OR jsonb_typeof(p_app_metadata) IS DISTINCT FROM 'object'
-        OR jsonb_typeof(p_lease_payload) IS DISTINCT FROM 'object' THEN
+        OR jsonb_typeof(p_lease_payload) IS DISTINCT FROM 'object'
+        OR p_lease_payload_visible IS NULL THEN
         RAISE EXCEPTION 'run policy, app metadata, and lease payload must be JSON objects';
     END IF;
     IF p_schedule IS NOT NULL AND jsonb_typeof(p_schedule) IS DISTINCT FROM 'object' THEN
@@ -2371,12 +2377,12 @@ BEGIN
 
     INSERT INTO pgjobdb.jobs (
         tenant_id, job_id, next_need, wait_for, available_at, expires_at,
-        route_job_type, work_kind, lease_payload
+        route_job_type, work_kind, lease_payload, lease_payload_visible
     ) VALUES (
         p_tenant_id, p_job_id, '__pgjobdb_native__',
         pgjobdb.normalize_wait_for(p_tenant_id, p_wait_for),
         COALESCE(p_available_at, clock_timestamp()), v_expires_at,
-        p_job_type, 'JOB', p_lease_payload
+        p_job_type, 'JOB', p_lease_payload, p_lease_payload_visible
     );
     RETURN QUERY SELECT p_job_id, TRUE;
 END;
@@ -2402,7 +2408,8 @@ RETURNS TABLE(
     job_type TEXT, route_job_type TEXT, work_kind TEXT, task_type TEXT,
     resume_job_type TEXT, task_input_ordinal BIGINT,
     task_output_ordinal BIGINT, task_input_hash TEXT,
-    run_policy JSONB, lease_payload JSONB, schema_hash TEXT
+    run_policy JSONB, lease_payload JSONB, lease_payload_visible BOOLEAN,
+    schema_hash TEXT
 )
 LANGUAGE plpgsql
 AS $$
@@ -2509,7 +2516,8 @@ BEGIN
         CASE WHEN l.effective_work_kind = 'TASK' THEN l.effective_task_type
             ELSE l.task_type END,
         l.resume_job_type, l.task_input_ordinal, l.task_output_ordinal,
-        l.task_input_hash, f.run_policy, l.lease_payload, f.schema_hash
+        l.task_input_hash, f.run_policy, l.lease_payload,
+        l.lease_payload_visible, f.schema_hash
     FROM leased l JOIN pgjobdb.job_facts f USING (tenant_id, job_id);
 END;
 $$;
@@ -2560,7 +2568,8 @@ BEGIN
         final_lease_expires_at = v_active.lease_expires_at,
         final_lease_worker_id = v_active.lease_worker_id,
         final_cancel_requested = v_active.cancel_requested,
-        final_lease_payload = v_active.lease_payload
+        final_lease_payload = v_active.lease_payload,
+        final_lease_payload_visible = v_active.lease_payload_visible
     WHERE a.tenant_id = v_active.tenant_id AND a.job_id = v_active.job_id;
     RETURN TRUE;
 END;
@@ -2644,7 +2653,8 @@ RETURNS TABLE(
     job_type TEXT, route_job_type TEXT, work_kind TEXT, task_type TEXT,
     resume_job_type TEXT, task_input_ordinal BIGINT,
     task_output_ordinal BIGINT, task_input_hash TEXT,
-    run_policy JSONB, lease_payload JSONB, schema_hash TEXT
+    run_policy JSONB, lease_payload JSONB, lease_payload_visible BOOLEAN,
+    schema_hash TEXT
 )
 LANGUAGE plpgsql
 AS $$
@@ -2656,7 +2666,8 @@ BEGIN
     SELECT j.tenant_id, j.job_id, j.lease_id, j.lease_expires_at,
         f.job_type, j.route_job_type, j.work_kind, j.task_type,
         j.resume_job_type, j.task_input_ordinal, j.task_output_ordinal,
-        j.task_input_hash, f.run_policy, j.lease_payload, f.schema_hash
+        j.task_input_hash, f.run_policy, j.lease_payload,
+        j.lease_payload_visible, f.schema_hash
     FROM pgjobdb.jobs j JOIN pgjobdb.job_facts f USING (tenant_id, job_id)
     WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id
       AND j.lease_id = p_lease_id AND j.lease_expires_at > clock_timestamp()
@@ -2726,7 +2737,8 @@ CREATE OR REPLACE FUNCTION pgjobdb.reschedule_native_job(
     p_set_alternate BOOLEAN,
     p_alternate_job_type TEXT,
     p_alternate_task_type TEXT,
-    p_alternate_after_seconds INTEGER
+    p_alternate_after_seconds INTEGER,
+    p_lease_payload_visible BOOLEAN
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -2761,6 +2773,11 @@ BEGIN
     IF p_lease_payload IS NOT NULL
         AND jsonb_typeof(p_lease_payload) IS DISTINCT FROM 'object' THEN
         RAISE EXCEPTION 'lease payload must be a JSON object';
+    END IF;
+    IF (p_lease_payload IS NOT NULL
+            AND p_lease_payload_visible IS DISTINCT FROM TRUE)
+        OR (p_lease_payload IS NULL AND p_lease_payload_visible IS TRUE) THEN
+        RAISE EXCEPTION 'lease payload visibility and value disagree';
     END IF;
     IF p_set_alternate THEN
         IF p_alternate_job_type IS NULL THEN
@@ -2814,7 +2831,9 @@ BEGIN
         task_input_hash = p_task_input_hash,
         wait_for = v_wait_for,
         available_at = COALESCE(p_available_at, v_now),
-        lease_payload = COALESCE(p_lease_payload, j.lease_payload),
+        lease_payload = CASE WHEN p_lease_payload_visible IS FALSE
+            THEN '{}'::JSONB ELSE COALESCE(p_lease_payload, j.lease_payload) END,
+        lease_payload_visible = COALESCE(p_lease_payload_visible, j.lease_payload_visible),
         alternate_job_type = CASE WHEN p_set_alternate
             THEN p_alternate_job_type ELSE j.alternate_job_type END,
         alternate_task_type = CASE WHEN p_set_alternate
@@ -2840,7 +2859,8 @@ CREATE OR REPLACE FUNCTION pgjobdb.complete_native_task_work(
     p_input_ordinal BIGINT,
     p_output_ordinal BIGINT,
     p_input_hash TEXT,
-    p_lease_payload JSONB DEFAULT NULL
+    p_lease_payload JSONB,
+    p_lease_payload_visible BOOLEAN
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -2875,7 +2895,7 @@ BEGIN
         p_tenant_id, p_job_id, NULL, p_worker_id,
         p_resume_job_type, 'JOB', NULL, NULL, NULL, NULL, NULL,
         ARRAY[]::TEXT[], clock_timestamp(), p_lease_payload,
-        FALSE, NULL, NULL, NULL
+        FALSE, NULL, NULL, NULL, p_lease_payload_visible
     );
 END;
 $$;
@@ -2889,6 +2909,7 @@ SELECT
     j.alternate_after_seconds, j.wait_for, j.available_at,
     NULLIF(j.lease_expires_at, '-infinity'::TIMESTAMPTZ) AS lease_expires_at,
     j.lease_worker_id, j.cancel_requested, j.lease_payload,
+    j.lease_payload_visible,
     f.run_policy, f.app_metadata, f.schema_hash, f.parent_job_id,
     f.created_at,
     NULLIF(f.expires_at, 'infinity'::TIMESTAMPTZ) AS expires_at,
@@ -2915,7 +2936,8 @@ SELECT
     a.final_wait_for, a.final_available_at,
     NULLIF(a.final_lease_expires_at, '-infinity'::TIMESTAMPTZ),
     a.final_lease_worker_id, a.final_cancel_requested,
-    a.final_lease_payload, f.run_policy, f.app_metadata,
+    a.final_lease_payload, a.final_lease_payload_visible,
+    f.run_policy, f.app_metadata,
     f.schema_hash, f.parent_job_id, f.created_at,
     NULLIF(f.expires_at, 'infinity'::TIMESTAMPTZ), a.archived_at,
     a.completion_status, a.completion_detail,

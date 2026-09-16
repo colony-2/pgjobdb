@@ -127,6 +127,7 @@ func scanJobLease(row scheduleScanner, worker WorkerID) (*JobLease, error) {
 	if err := row.Scan(&tenant, &job, &lease.LeaseID, &lease.ExpiresAt,
 		&jobType, &route, &workKind, &taskType, &resumeType,
 		&inputOrdinal, &outputOrdinal, &inputHash, &policy, &payload,
+		&lease.LeasePayloadVisible,
 		&schemaHash); err != nil {
 		return nil, err
 	}

@@ -38,6 +38,7 @@ func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 		appMetadata = json.RawMessage(`{}`)
 	}
 	leasePayload := req.LeasePayload
+	leasePayloadVisible := len(leasePayload) > 0
 	if len(leasePayload) == 0 {
 		leasePayload = json.RawMessage(`{}`)
 	}
@@ -72,12 +73,12 @@ func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 	var result SubmitJobResult
 	var returnedID string
 	err = db.QueryRowContext(ctx, `SELECT job_id, created FROM pgjobdb.submit_native_job(
-		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		string(req.TenantID), string(req.JobID), string(req.WorkerID),
 		string(req.JobType), string(policy), string(appMetadata),
 		nilIfBlank(req.Runtime.SchemaHash), nilIfBlank(string(req.Runtime.ParentJobID)),
 		schedule, pq.Array(waitFor), optionalTime(req.AvailableAt),
-		optionalTime(req.ExpiresAt), string(leasePayload)).Scan(&returnedID, &result.Created)
+		optionalTime(req.ExpiresAt), string(leasePayload), leasePayloadVisible).Scan(&returnedID, &result.Created)
 	if err != nil {
 		return nil, err
 	}

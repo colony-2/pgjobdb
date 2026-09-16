@@ -122,7 +122,10 @@ type JobLease struct {
 	Task         *TaskWork
 	RunPolicy    RunPolicy
 	LeasePayload json.RawMessage
-	SchemaHash   string
+	// LeasePayloadVisible distinguishes an explicit {} application payload
+	// from the generated lease payload view.
+	LeasePayloadVisible bool
+	SchemaHash          string
 }
 
 type LeaseIdentity struct {
@@ -162,16 +165,20 @@ type RescheduleRequest struct {
 	WaitFor      []JobID
 	AvailableAt  *time.Time
 	LeasePayload json.RawMessage
-	Alternate    *AlternateRoute
+	// ClearLeasePayload resets the lease payload to the generated view.
+	// It cannot be combined with LeasePayload.
+	ClearLeasePayload bool
+	Alternate         *AlternateRoute
 }
 
 type CompleteTaskWorkRequest struct {
-	TenantID     TenantID
-	JobID        JobID
-	WorkerID     WorkerID
-	JobType      JobType
-	Task         TaskWork
-	LeasePayload json.RawMessage
+	TenantID          TenantID
+	JobID             JobID
+	WorkerID          WorkerID
+	JobType           JobType
+	Task              TaskWork
+	LeasePayload      json.RawMessage
+	ClearLeasePayload bool
 }
 
 type JobStore string
@@ -217,6 +224,7 @@ type JobDetail struct {
 	LeaseWorkerID          WorkerID          `json:"lease_worker_id"`
 	CancelRequested        bool              `json:"cancel_requested"`
 	LeasePayload           json.RawMessage   `json:"lease_payload"`
+	LeasePayloadVisible    bool              `json:"lease_payload_visible"`
 	RunPolicy              RunPolicy         `json:"run_policy"`
 	AppMetadata            json.RawMessage   `json:"app_metadata"`
 	SchemaHash             string            `json:"schema_hash"`

@@ -62,10 +62,10 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 			final_resume_job_type, final_task_input_ordinal,
 			final_task_output_ordinal, final_task_input_hash,
 			final_wait_for, final_available_at, final_cancel_requested,
-			final_lease_payload)
+			final_lease_payload, final_lease_payload_visible)
 			VALUES ('tenant', 'job-1', 'collect:task', now(), 'failed_app',
 			'collect', 'TASK', 'task', 'collect', 1, 2, 'sha256:input',
-			ARRAY['prerequisite'], now(), TRUE, '{"opaque":true}')`); err != nil {
+			ARRAY['prerequisite'], now(), TRUE, '{"opaque":true}', TRUE)`); err != nil {
 			t.Fatalf("insert archived task snapshot: %v", err)
 		}
 		var route, workKind, waitFor, payload string

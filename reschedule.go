@@ -64,11 +64,19 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 		waitFor = append(waitFor, string(id))
 	}
 	var payload any
+	var payloadVisible any
+	if req.ClearLeasePayload {
+		if req.LeasePayload != nil {
+			return fmt.Errorf("pgjobdb: cleared lease payload cannot include application JSON")
+		}
+		payloadVisible = false
+	}
 	if req.LeasePayload != nil {
 		if !isJSONObject(req.LeasePayload) {
 			return fmt.Errorf("pgjobdb: lease payload must be a JSON object")
 		}
 		payload = string(req.LeasePayload)
+		payloadVisible = true
 	}
 	var alternateJob, alternateTask, alternateAfter any
 	if req.Alternate != nil {
@@ -97,13 +105,14 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 	var updated bool
 	if err := db.QueryRowContext(ctx, `SELECT pgjobdb.reschedule_native_job(
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-		$13, $14, $15, $16, $17, $18)`,
+		$13, $14, $15, $16, $17, $18, $19)`,
 		string(identity.TenantID), string(identity.JobID),
 		nilIfBlank(identity.LeaseID), string(identity.WorkerID),
 		string(req.RouteJobType), string(req.WorkKind),
 		taskType, resumeType, inputOrdinal, outputOrdinal, inputHash,
 		pq.Array(waitFor), optionalTime(req.AvailableAt), payload,
 		req.Alternate != nil, alternateJob, alternateTask, alternateAfter,
+		payloadVisible,
 	).Scan(&updated); err != nil {
 		return err
 	}

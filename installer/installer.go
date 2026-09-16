@@ -50,8 +50,8 @@ func (i Installer) Verify(ctx context.Context) error {
 		}
 	}
 	for table, columns := range map[string][]string{
-		"jobs":         {"route_job_type", "work_kind", "lease_payload", "lease_worker_id"},
-		"jobs_archive": {"final_route_job_type", "final_work_kind", "final_lease_payload"},
+		"jobs":         {"route_job_type", "work_kind", "lease_payload", "lease_payload_visible", "lease_worker_id"},
+		"jobs_archive": {"final_route_job_type", "final_work_kind", "final_lease_payload", "final_lease_payload_visible"},
 	} {
 		for _, column := range columns {
 			if err := i.assertColumn(ctx, schema, table, column); err != nil {
