@@ -27,7 +27,8 @@ func GetJobLease(ctx context.Context, db DB, tenant TenantID, job JobID, worker 
 	}
 	return getWork(ctx, db, worker, selector, GetWorkOptions{
 		TenantIDs: []TenantID{tenant}, AppMetadataContains: opts.AppMetadataContains,
-		LeaseDuration: opts.LeaseDuration,
+		MetadataPredicates: opts.MetadataPredicates,
+		LeaseDuration:      opts.LeaseDuration,
 	}, tenant, job)
 }
 
@@ -69,6 +70,17 @@ func getWork(ctx context.Context, db DB, worker WorkerID, selector WorkSelector,
 	if !isJSONObject(metadata) {
 		return nil, fmt.Errorf("pgjobdb: metadata filter must be a JSON object")
 	}
+	predicates := opts.MetadataPredicates
+	if predicates == nil {
+		predicates = []MetadataPredicate{}
+	}
+	if err := validateMetadataPredicates(predicates); err != nil {
+		return nil, err
+	}
+	predicateJSON, err := json.Marshal(predicates)
+	if err != nil {
+		return nil, fmt.Errorf("pgjobdb: encode metadata predicates: %w", err)
+	}
 	seconds, err := leaseSeconds(opts.LeaseDuration)
 	if err != nil {
 		return nil, err
@@ -81,9 +93,10 @@ func getWork(ctx context.Context, db DB, worker WorkerID, selector WorkSelector,
 		tenantIDs = append(tenantIDs, string(tenant))
 	}
 	row := db.QueryRowContext(ctx, `SELECT * FROM pgjobdb.get_native_work(
-		$1, $2, $3, $4, $5, $6, $7, $8)`, string(worker),
+		$1, $2, $3, $4, $5, $6, $7, $8, $9)`, string(worker),
 		pq.Array(tenantIDs), pq.Array(jobTypes), string(tasks), string(metadata),
-		seconds, nilIfBlank(string(targetTenant)), nilIfBlank(string(targetJob)))
+		seconds, nilIfBlank(string(targetTenant)), nilIfBlank(string(targetJob)),
+		string(predicateJSON))
 	lease, err := scanJobLease(row, worker)
 	if err == sql.ErrNoRows {
 		return nil, nil

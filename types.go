@@ -92,11 +92,13 @@ type WorkSelector struct {
 type GetWorkOptions struct {
 	TenantIDs           []TenantID
 	AppMetadataContains json.RawMessage
+	MetadataPredicates  []MetadataPredicate
 	LeaseDuration       time.Duration
 }
 
 type GetJobLeaseOptions struct {
 	AppMetadataContains json.RawMessage
+	MetadataPredicates  []MetadataPredicate
 	LeaseDuration       time.Duration
 }
 

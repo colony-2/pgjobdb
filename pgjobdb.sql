@@ -2382,6 +2382,10 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS pgjobdb.get_native_work(
+    TEXT, TEXT[], TEXT[], JSONB, JSONB, INTEGER, TEXT, TEXT
+);
+
 CREATE OR REPLACE FUNCTION pgjobdb.get_native_work(
     p_worker_id TEXT,
     p_tenant_ids TEXT[],
@@ -2390,7 +2394,8 @@ CREATE OR REPLACE FUNCTION pgjobdb.get_native_work(
     p_app_metadata_contains JSONB,
     p_lease_seconds INTEGER,
     p_target_tenant_id TEXT DEFAULT NULL,
-    p_target_job_id TEXT DEFAULT NULL
+    p_target_job_id TEXT DEFAULT NULL,
+    p_metadata_predicates JSONB DEFAULT '[]'::JSONB
 )
 RETURNS TABLE(
     tenant_id TEXT, job_id TEXT, lease_id TEXT, lease_expires_at TIMESTAMPTZ,
@@ -2411,8 +2416,9 @@ BEGIN
         RAISE EXCEPTION 'lease seconds must be between 1 and 86400';
     END IF;
     IF jsonb_typeof(p_task_selectors) IS DISTINCT FROM 'array'
-        OR jsonb_typeof(p_app_metadata_contains) IS DISTINCT FROM 'object' THEN
-        RAISE EXCEPTION 'task selectors must be an array and metadata filter an object';
+        OR jsonb_typeof(p_app_metadata_contains) IS DISTINCT FROM 'object'
+        OR jsonb_typeof(p_metadata_predicates) IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'task selectors and metadata predicates must be arrays; metadata containment must be an object';
     END IF;
     IF (p_target_tenant_id IS NULL) <> (p_target_job_id IS NULL) THEN
         RAISE EXCEPTION 'target tenant and job id must be provided together';
@@ -2437,6 +2443,15 @@ BEGIN
                   WHERE a.tenant_id = j.tenant_id AND a.job_id = pending.id)
           )
           AND f.app_metadata @> p_app_metadata_contains
+          AND NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(p_metadata_predicates) AS predicate(item)
+              WHERE NOT EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(predicate.item->'values') AS value(item)
+                  WHERE f.app_metadata #> ARRAY(
+                      SELECT jsonb_array_elements_text(predicate.item->'path')
+                  ) = value.item
+              )
+          )
           AND (
               (j.work_kind = 'JOB'
                   AND j.route_job_type = ANY(COALESCE(p_job_types, ARRAY[]::TEXT[])))

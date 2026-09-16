@@ -102,20 +102,8 @@ func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult
 	if predicates == nil {
 		predicates = []MetadataPredicate{}
 	}
-	for _, predicate := range predicates {
-		if len(predicate.Path) == 0 || len(predicate.Values) == 0 {
-			return nil, fmt.Errorf("pgjobdb: metadata predicate requires path and values")
-		}
-		for _, element := range predicate.Path {
-			if element == "" {
-				return nil, fmt.Errorf("pgjobdb: metadata path element cannot be empty")
-			}
-		}
-		for _, value := range predicate.Values {
-			if !json.Valid(value) {
-				return nil, fmt.Errorf("pgjobdb: metadata predicate value is invalid JSON")
-			}
-		}
+	if err := validateMetadataPredicates(predicates); err != nil {
+		return nil, err
 	}
 	slices.Sort(tenantIDs)
 	slices.Sort(statuses)
@@ -225,4 +213,23 @@ func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult
 		result.NextPageToken = base64.RawURLEncoding.EncodeToString(data)
 	}
 	return result, nil
+}
+
+func validateMetadataPredicates(predicates []MetadataPredicate) error {
+	for _, predicate := range predicates {
+		if len(predicate.Path) == 0 || len(predicate.Values) == 0 {
+			return fmt.Errorf("pgjobdb: metadata predicate requires path and values")
+		}
+		for _, element := range predicate.Path {
+			if element == "" {
+				return fmt.Errorf("pgjobdb: metadata path element cannot be empty")
+			}
+		}
+		for _, value := range predicate.Values {
+			if !json.Valid(value) {
+				return fmt.Errorf("pgjobdb: metadata predicate value is invalid JSON")
+			}
+		}
+	}
+	return nil
 }
