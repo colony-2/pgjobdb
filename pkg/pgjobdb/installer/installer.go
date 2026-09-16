@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	pgjobdbsql "github.com/colony-2/pgjobdb"
+	pgjobdbsql "github.com/colony-2/pgjobdb/pkg/pgjobdb"
 )
 
 // Installer applies and verifies the pgjobdb schema.

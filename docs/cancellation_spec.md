@@ -1,22 +1,22 @@
 # Job Cancellation Specification
 
 ## Overview
-- Introduce a first-class cancellation lifecycle so jobs can be explicitly retired before running, extending the status model defined in `pgjobdb.jobs_with_status` (`pgjobdb.sql:42-61`) without disturbing the rest of the leasing API surface.
+- Introduce a first-class cancellation lifecycle so jobs can be explicitly retired before running, extending the status model defined in `pgjobdb.jobs_with_status` (`pkg/pgjobdb/pgjobdb.sql:42-61`) without disturbing the rest of the leasing API surface.
 - Preserve existing leasing semantics for in-flight work—workers may finish or release a job they already hold—but ensure cancelled jobs never re-enter the READY queue or emit capability notifications afterward.
-- Treat cancellation as an alternative terminal path that still archives metadata, unblocks dependents, and participates in trace logging alongside the current completion flow (`pgjobdb.sql:216-274`).
+- Treat cancellation as an alternative terminal path that still archives metadata, unblocks dependents, and participates in trace logging alongside the current completion flow (`pkg/pgjobdb/pgjobdb.sql:216-274`).
 - Keep the change scoped to SQL schema/functions plus regression coverage in the Go harness (`test/pgjobdb_test.go`); client libraries remain pure SQL consumers.
 
 ## Schema Changes
-- Extend `pgjobdb.jobs` with `cancel_requested BOOLEAN NOT NULL DEFAULT FALSE`, `cancel_requested_by TEXT`, and `cancel_requested_at TIMESTAMPTZ` so we can durably mark a job for cancellation and capture who/when the request was made (`pgjobdb.sql:11-20`).
-- Mirror the three columns in `pgjobdb.jobs_archive` so the archive records whether a job finished normally or via cancellation and when that decision was recorded (`pgjobdb.sql:22-30`).
+- Extend `pgjobdb.jobs` with `cancel_requested BOOLEAN NOT NULL DEFAULT FALSE`, `cancel_requested_by TEXT`, and `cancel_requested_at TIMESTAMPTZ` so we can durably mark a job for cancellation and capture who/when the request was made (`pkg/pgjobdb/pgjobdb.sql:11-20`).
+- Mirror the three columns in `pgjobdb.jobs_archive` so the archive records whether a job finished normally or via cancellation and when that decision was recorded (`pkg/pgjobdb/pgjobdb.sql:22-30`).
 - Update `pgjobdb.jobs_with_status` so cancelled-but-not-active rows report `status = 'CANCELLED'` ahead of the READY/PENDING/AWAITING cases, while actively leased rows continue to report `ACTIVE` until their lease expires; expose `cancel_requested_at` in the select list for downstream consumers.
-- Update `pgjobdb.jobs_friendly_status` to include the new `CANCELLED` state (with `cancelled_at`/`cancelled_by` columns) so dashboards can display who issued the cancel request (`pgjobdb.sql:53-61`).
+- Update `pgjobdb.jobs_friendly_status` to include the new `CANCELLED` state (with `cancelled_at`/`cancelled_by` columns) so dashboards can display who issued the cancel request (`pkg/pgjobdb/pgjobdb.sql:53-61`).
 
 ## Cancel Flow
 - Add `pgjobdb.cancel_job(p_job_id TEXT, p_worker_id TEXT, p_reason TEXT DEFAULT NULL)` that locks the job row `FOR UPDATE`, validates it still exists in `pgjobdb.jobs`, sets the cancel columns, and returns the row so callers can see whether it was already marked.
-- If the job is already archived, raise the same “job already completed” error that `submit_job` uses (`pgjobdb.sql:374-424`); if it is already cancelled, treat the call as idempotent and simply emit a trace event.
+- If the job is already archived, raise the same “job already completed” error that `submit_job` uses (`pkg/pgjobdb/pgjobdb.sql:374-424`); if it is already cancelled, treat the call as idempotent and simply emit a trace event.
 - For ACTIVE jobs, do not revoke the lease; we only toggle the cancel columns and let the existing lease expire or the worker finish voluntarily.
-- Teach `pgjobdb.extend_lease` (`pgjobdb.sql:520-568`), `pgjobdb.reschedule_job`, and `pgjobdb.reschedule_unheld_job` to raise `job %s is cancelled and cannot be extended/rescheduled` when `cancel_requested = TRUE`, preventing cancelled work from re-entering the queue or extending visibility time.
+- Teach `pgjobdb.extend_lease` (`pkg/pgjobdb/pgjobdb.sql:520-568`), `pgjobdb.reschedule_job`, and `pgjobdb.reschedule_unheld_job` to raise `job %s is cancelled and cannot be extended/rescheduled` when `cancel_requested = TRUE`, preventing cancelled work from re-entering the queue or extending visibility time.
 - Ensure `cancel_job` never clears `wait_for` or singleton metadata; the job simply transitions to CANCELLED once it loses its lease, and any downstream notifications are suppressed until archival.
 
 ## Archival Flow
@@ -27,9 +27,9 @@
 - Document that operators should invoke `archive_cancelled_jobs` periodically (or after issuing `cancel_job`) to reclaim rows; the function is idempotent because it skips jobs once they leave the live table.
 
 ## Trace & Notifications
-- Emit a `'job_cancel_requested'` event from `cancel_job` via `_emit_trace_event` (`pgjobdb.sql:120-175`), recording `job_id`, `worker_id`, optional `p_reason`, and whether the job was ACTIVE at request time.
+- Emit a `'job_cancel_requested'` event from `cancel_job` via `_emit_trace_event` (`pkg/pgjobdb/pgjobdb.sql:120-175`), recording `job_id`, `worker_id`, optional `p_reason`, and whether the job was ACTIVE at request time.
 - During `archive_cancelled_jobs`, insert the per-job `'job_cancel_archived'` trace records with a single bulk insert so every archived job still produces its own audit row without iterative function calls. Emit an aggregate `'job_cancel_archived_run'` event (also via `_emit_trace_event`) only when the sweep actually archived one or more jobs; include the total count, limit, and worker id in that payload.
-- Update `_update_waiters_for_completion` to skip `_notify_need` for rows that now have `cancel_requested = TRUE`, satisfying the requirement that cancelled jobs never trigger “new work” notifications even if their dependencies finish (`pgjobdb.sql:216-236`).
+- Update `_update_waiters_for_completion` to skip `_notify_need` for rows that now have `cancel_requested = TRUE`, satisfying the requirement that cancelled jobs never trigger “new work” notifications even if their dependencies finish (`pkg/pgjobdb/pgjobdb.sql:216-236`).
 - Leave `_notify_need` unchanged, but add a guard in `submit_job`/`_reschedule_locked_job` to only notify when `cancel_requested = FALSE`.
 - Extend the README to describe the CANCELLED status, both new functions, and the fact that tracing must be enabled to see cancel records.
 

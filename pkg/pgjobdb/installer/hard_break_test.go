@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	pgjobdbinstaller "github.com/colony-2/pgjobdb/installer"
+	pgjobdbinstaller "github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
 )
 
 func TestInstallerRejectsLegacyState(t *testing.T) {

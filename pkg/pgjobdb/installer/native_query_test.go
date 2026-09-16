@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/colony-2/pgjobdb"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 )
 
 func TestNativeGetJobKeepsArchivedFields(t *testing.T) {

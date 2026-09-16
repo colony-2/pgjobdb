@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/colony-2/pgjobdb"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 )
 
 func TestNativeAlternateRoutes(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
-	pgjobdbinstaller "github.com/colony-2/pgjobdb/installer"
+	pgjobdbinstaller "github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
 )
 
 func TestNativeSchemaRoundTrip(t *testing.T) {

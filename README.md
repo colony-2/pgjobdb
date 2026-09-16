@@ -15,10 +15,14 @@ starts accept an initialized `pgjobdb` installation. Startup rejects old
 that already contains user tables. There is no data migration or dual-read
 period.
 
-The root `github.com/colony-2/pgjobdb` package exposes typed scheduler
-operations. JobDB's direct runtime adapts those operations to its public
+The `github.com/colony-2/pgjobdb/pkg/pgjobdb` package exposes typed scheduler
+operations. Its `installer` subpackage installs and verifies the embedded
+Postgres schema. JobDB's direct runtime adapts those operations to its public
 workflow core. Applications using another backend can import only that
 backend and JobDB core.
+
+The repository layout follows JobDB's module: public Go packages live under
+`pkg/pgjobdb`, while the module root holds documentation and module metadata.
 
 Run the current checks with:
 
