@@ -251,6 +251,37 @@ type JobStatusInfo struct {
 	CancelRequested  bool              `json:"cancel_requested"`
 }
 
+type JobKey struct {
+	TenantID TenantID `json:"tenant_id"`
+	JobID    JobID    `json:"job_id"`
+}
+
+type MetadataPredicate struct {
+	Path   []string          `json:"path"`
+	Values []json.RawMessage `json:"values"`
+}
+
+type ListJobsOptions struct {
+	TenantIDs          []TenantID
+	Statuses           []JobStatus
+	Stores             []JobStore
+	JobTypes           []JobType
+	TaskSelectors      []TaskSelector
+	JobKeys            []JobKey
+	ParentJobIDs       []JobID
+	RootOnly           bool
+	MetadataPredicates []MetadataPredicate
+	CreatedAfter       *time.Time
+	CreatedBefore      *time.Time
+	PageSize           int
+	PageToken          string
+}
+
+type ListJobsResult struct {
+	Jobs          []JobDetail
+	NextPageToken string
+}
+
 type ScheduleState string
 
 const (

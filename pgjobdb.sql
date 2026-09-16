@@ -1959,6 +1959,8 @@ CREATE INDEX IF NOT EXISTS job_facts_parent_idx
     WHERE parent_job_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS job_facts_metadata_idx
     ON pgjobdb.job_facts USING GIN (app_metadata jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS job_facts_created_idx
+    ON pgjobdb.job_facts (created_at DESC, tenant_id DESC, job_id DESC);
 
 ALTER TABLE pgjobdb.jobs
     ADD COLUMN IF NOT EXISTS route_job_type TEXT,
@@ -2905,6 +2907,86 @@ AS $$
         'cancel_requested', n.cancel_requested
     ) FROM pgjobdb.native_jobs n
     WHERE n.tenant_id = p_tenant_id AND n.job_id = p_job_id;
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.list_native_jobs(
+    p_tenant_ids TEXT[],
+    p_statuses TEXT[],
+    p_stores TEXT[],
+    p_job_types TEXT[],
+    p_task_selectors JSONB,
+    p_job_keys JSONB,
+    p_parent_job_ids TEXT[],
+    p_root_only BOOLEAN,
+    p_metadata_predicates JSONB,
+    p_created_after TIMESTAMPTZ,
+    p_created_before TIMESTAMPTZ,
+    p_before_created_at TIMESTAMPTZ,
+    p_before_tenant_id TEXT,
+    p_before_job_id TEXT,
+    p_limit INTEGER
+)
+RETURNS SETOF JSONB
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF p_tenant_ids IS NULL OR cardinality(p_tenant_ids) = 0 THEN
+        RAISE EXCEPTION 'tenant ids are required';
+    END IF;
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
+        RAISE EXCEPTION 'job page limit must be between 1 and 1000';
+    END IF;
+    IF jsonb_typeof(p_task_selectors) IS DISTINCT FROM 'array'
+        OR jsonb_typeof(p_job_keys) IS DISTINCT FROM 'array'
+        OR jsonb_typeof(p_metadata_predicates) IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'task, key, and metadata filters must be arrays';
+    END IF;
+    IF p_root_only AND p_parent_job_ids IS NOT NULL THEN
+        RAISE EXCEPTION 'root-only and parent job filters cannot be combined';
+    END IF;
+    IF (p_before_created_at IS NULL) <> (p_before_tenant_id IS NULL)
+        OR (p_before_created_at IS NULL) <> (p_before_job_id IS NULL) THEN
+        RAISE EXCEPTION 'job cursor fields must be provided together';
+    END IF;
+
+    RETURN QUERY
+    SELECT to_jsonb(n) FROM pgjobdb.native_jobs n
+    WHERE n.tenant_id = ANY(p_tenant_ids)
+      AND (p_statuses IS NULL OR n.status = ANY(p_statuses))
+      AND (p_stores IS NULL OR n.store = ANY(p_stores))
+      AND (
+          (p_job_types IS NULL AND jsonb_array_length(p_task_selectors) = 0)
+          OR n.job_type = ANY(COALESCE(p_job_types, ARRAY[]::TEXT[]))
+          OR (n.work_kind = 'TASK' AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(p_task_selectors) AS selector(item)
+              WHERE selector.item->>'job_type' = n.route_job_type
+                AND selector.item->>'task_type' = n.task_type
+          ))
+      )
+      AND (jsonb_array_length(p_job_keys) = 0 OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements(p_job_keys) AS key(item)
+          WHERE key.item->>'tenant_id' = n.tenant_id
+            AND key.item->>'job_id' = n.job_id
+      ))
+      AND (p_parent_job_ids IS NULL OR n.parent_job_id = ANY(p_parent_job_ids))
+      AND (NOT p_root_only OR n.parent_job_id IS NULL)
+      AND NOT EXISTS (
+          SELECT 1 FROM jsonb_array_elements(p_metadata_predicates) AS predicate(item)
+          WHERE NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(predicate.item->'values') AS value(item)
+              WHERE n.app_metadata #> ARRAY(
+                  SELECT jsonb_array_elements_text(predicate.item->'path')
+              ) = value.item
+          )
+      )
+      AND (p_created_after IS NULL OR n.created_at > p_created_after)
+      AND (p_created_before IS NULL OR n.created_at < p_created_before)
+      AND (p_before_created_at IS NULL
+        OR (n.created_at, n.tenant_id, n.job_id)
+          < (p_before_created_at, p_before_tenant_id, p_before_job_id))
+    ORDER BY n.created_at DESC, n.tenant_id DESC, n.job_id DESC
+    LIMIT p_limit;
+END;
 $$;
 
 COMMIT;
