@@ -2232,13 +2232,18 @@ AS $$
     WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id;
 $$;
 
+DROP FUNCTION IF EXISTS pgjobdb.list_schedules(
+    TEXT, TEXT[], TEXT[], TIMESTAMPTZ, TEXT, INTEGER
+);
+
 CREATE OR REPLACE FUNCTION pgjobdb.list_schedules(
     p_tenant_id TEXT,
     p_states TEXT[] DEFAULT NULL,
     p_target_job_types TEXT[] DEFAULT NULL,
     p_before_updated_at TIMESTAMPTZ DEFAULT NULL,
     p_before_schedule_id TEXT DEFAULT NULL,
-    p_limit INTEGER DEFAULT 100
+    p_limit INTEGER DEFAULT 100,
+    p_schedule_ids TEXT[] DEFAULT NULL
 )
 RETURNS SETOF pgjobdb.schedules
 LANGUAGE plpgsql STABLE
@@ -2254,6 +2259,7 @@ BEGIN
     WHERE s.tenant_id = p_tenant_id
       AND (p_states IS NULL OR s.state = ANY(p_states))
       AND (p_target_job_types IS NULL OR s.target_job_type = ANY(p_target_job_types))
+      AND (p_schedule_ids IS NULL OR s.schedule_id = ANY(p_schedule_ids))
       AND (p_before_updated_at IS NULL
         OR (s.updated_at, s.schedule_id) < (p_before_updated_at, p_before_schedule_id))
     ORDER BY s.updated_at DESC, s.schedule_id DESC
