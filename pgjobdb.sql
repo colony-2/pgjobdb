@@ -2426,9 +2426,35 @@ BEGIN
 
     RETURN QUERY
     WITH candidate AS (
-        SELECT j.tenant_id, j.job_id
+        SELECT j.tenant_id, j.job_id,
+            route.effective_job_type,
+            route.effective_work_kind,
+            route.effective_task_type
         FROM pgjobdb.jobs j
         JOIN pgjobdb.job_facts f USING (tenant_id, job_id)
+        CROSS JOIN LATERAL (
+            SELECT COALESCE(
+                j.alternate_job_type IS NOT NULL
+                AND j.alternate_after_seconds IS NOT NULL
+                AND v_now >= GREATEST(
+                    j.available_at,
+                    j.created_at,
+                    COALESCE(NULLIF(j.lease_expires_at, '-infinity'::TIMESTAMPTZ),
+                        j.created_at)
+                ) + make_interval(secs => j.alternate_after_seconds),
+                FALSE
+            ) AS due
+        ) alt
+        CROSS JOIN LATERAL (
+            SELECT
+                CASE WHEN alt.due THEN j.alternate_job_type
+                    ELSE j.route_job_type END AS effective_job_type,
+                CASE WHEN alt.due THEN
+                    CASE WHEN j.alternate_task_type IS NULL THEN 'JOB' ELSE 'TASK' END
+                    ELSE j.work_kind END AS effective_work_kind,
+                CASE WHEN alt.due THEN j.alternate_task_type
+                    ELSE j.task_type END AS effective_task_type
+        ) route
         WHERE j.route_job_type IS NOT NULL
           AND (p_tenant_ids IS NULL OR j.tenant_id = ANY(p_tenant_ids))
           AND (p_target_tenant_id IS NULL
@@ -2453,12 +2479,12 @@ BEGIN
               )
           )
           AND (
-              (j.work_kind = 'JOB'
-                  AND j.route_job_type = ANY(COALESCE(p_job_types, ARRAY[]::TEXT[])))
-              OR (j.work_kind = 'TASK' AND EXISTS (
+              (route.effective_work_kind = 'JOB'
+                  AND route.effective_job_type = ANY(COALESCE(p_job_types, ARRAY[]::TEXT[])))
+              OR (route.effective_work_kind = 'TASK' AND EXISTS (
                   SELECT 1 FROM jsonb_array_elements(p_task_selectors) AS selector(item)
-                  WHERE selector.item->>'job_type' = j.route_job_type
-                    AND selector.item->>'task_type' = j.task_type
+                  WHERE selector.item->>'job_type' = route.effective_job_type
+                    AND selector.item->>'task_type' = route.effective_task_type
               ))
           )
         ORDER BY j.available_at, j.created_at, j.tenant_id, j.job_id
@@ -2475,10 +2501,13 @@ BEGIN
                 THEN j.consecutive_expirations + 1 ELSE 0 END
         FROM candidate c
         WHERE j.tenant_id = c.tenant_id AND j.job_id = c.job_id
-        RETURNING j.*
+        RETURNING j.*, c.effective_job_type, c.effective_work_kind,
+            c.effective_task_type
     )
     SELECT l.tenant_id, l.job_id, l.lease_id, l.lease_expires_at,
-        f.job_type, l.route_job_type, l.work_kind, l.task_type,
+        f.job_type, l.effective_job_type, l.effective_work_kind,
+        CASE WHEN l.effective_work_kind = 'TASK' THEN l.effective_task_type
+            ELSE l.task_type END,
         l.resume_job_type, l.task_input_ordinal, l.task_output_ordinal,
         l.task_input_hash, f.run_policy, l.lease_payload, f.schema_hash
     FROM leased l JOIN pgjobdb.job_facts f USING (tenant_id, job_id);
@@ -2742,6 +2771,9 @@ BEGIN
             OR p_alternate_after_seconds < 0
             OR (p_alternate_task_type IS NOT NULL AND p_alternate_task_type = '') THEN
             RAISE EXCEPTION 'invalid alternate route';
+        END IF;
+        IF p_alternate_task_type IS NOT NULL AND p_work_kind <> 'TASK' THEN
+            RAISE EXCEPTION 'alternate task route requires task coordinates';
         END IF;
     END IF;
     IF p_job_id = ANY(COALESCE(p_wait_for, ARRAY[]::TEXT[])) THEN

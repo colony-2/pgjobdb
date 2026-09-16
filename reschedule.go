@@ -77,6 +77,9 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 				return fmt.Errorf("pgjobdb: cleared alternate route cannot have task or delay")
 			}
 		} else {
+			if req.Alternate.TaskType != "" && req.WorkKind != WorkKindTask {
+				return fmt.Errorf("pgjobdb: alternate task route requires task coordinates")
+			}
 			if req.Alternate.After < 0 {
 				return fmt.Errorf("pgjobdb: alternate delay must be non-negative")
 			}

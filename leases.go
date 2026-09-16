@@ -138,7 +138,7 @@ func scanJobLease(row scheduleScanner, worker WorkerID) (*JobLease, error) {
 	if err := json.Unmarshal(policy, &lease.RunPolicy); err != nil {
 		return nil, fmt.Errorf("pgjobdb: decode run policy: %w", err)
 	}
-	if lease.WorkKind == WorkKindTask {
+	if taskType.Valid {
 		lease.Task = &TaskWork{
 			TaskType: TaskType(taskType.String), ResumeJobType: JobType(resumeType.String),
 			InputOrdinal: inputOrdinal.Int64, OutputOrdinal: outputOrdinal.Int64,
