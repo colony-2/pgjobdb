@@ -2375,4 +2375,91 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION pgjobdb.get_native_work(
+    p_worker_id TEXT,
+    p_tenant_ids TEXT[],
+    p_job_types TEXT[],
+    p_task_selectors JSONB,
+    p_app_metadata_contains JSONB,
+    p_lease_seconds INTEGER,
+    p_target_tenant_id TEXT DEFAULT NULL,
+    p_target_job_id TEXT DEFAULT NULL
+)
+RETURNS TABLE(
+    tenant_id TEXT, job_id TEXT, lease_id TEXT, lease_expires_at TIMESTAMPTZ,
+    job_type TEXT, route_job_type TEXT, work_kind TEXT, task_type TEXT,
+    resume_job_type TEXT, task_input_ordinal BIGINT,
+    task_output_ordinal BIGINT, task_input_hash TEXT,
+    run_policy JSONB, lease_payload JSONB, schema_hash TEXT
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    IF p_worker_id IS NULL OR p_worker_id = '' THEN
+        RAISE EXCEPTION 'worker id is required';
+    END IF;
+    IF p_lease_seconds IS NULL OR p_lease_seconds < 1 OR p_lease_seconds > 86400 THEN
+        RAISE EXCEPTION 'lease seconds must be between 1 and 86400';
+    END IF;
+    IF jsonb_typeof(p_task_selectors) IS DISTINCT FROM 'array'
+        OR jsonb_typeof(p_app_metadata_contains) IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'task selectors must be an array and metadata filter an object';
+    END IF;
+    IF (p_target_tenant_id IS NULL) <> (p_target_job_id IS NULL) THEN
+        RAISE EXCEPTION 'target tenant and job id must be provided together';
+    END IF;
+
+    RETURN QUERY
+    WITH candidate AS (
+        SELECT j.tenant_id, j.job_id
+        FROM pgjobdb.jobs j
+        JOIN pgjobdb.job_facts f USING (tenant_id, job_id)
+        WHERE j.route_job_type IS NOT NULL
+          AND (p_tenant_ids IS NULL OR j.tenant_id = ANY(p_tenant_ids))
+          AND (p_target_tenant_id IS NULL
+            OR (j.tenant_id = p_target_tenant_id AND j.job_id = p_target_job_id))
+          AND j.cancel_requested = FALSE
+          AND j.available_at <= v_now
+          AND j.expires_at > v_now
+          AND j.lease_expires_at <= v_now
+          AND NOT EXISTS (
+              SELECT 1 FROM unnest(j.wait_for) AS pending(id)
+              WHERE NOT EXISTS (SELECT 1 FROM pgjobdb.jobs_archive a
+                  WHERE a.tenant_id = j.tenant_id AND a.job_id = pending.id)
+          )
+          AND f.app_metadata @> p_app_metadata_contains
+          AND (
+              (j.work_kind = 'JOB'
+                  AND j.route_job_type = ANY(COALESCE(p_job_types, ARRAY[]::TEXT[])))
+              OR (j.work_kind = 'TASK' AND EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(p_task_selectors) AS selector(item)
+                  WHERE selector.item->>'job_type' = j.route_job_type
+                    AND selector.item->>'task_type' = j.task_type
+              ))
+          )
+        ORDER BY j.available_at, j.created_at, j.tenant_id, j.job_id
+        FOR UPDATE OF j SKIP LOCKED
+        LIMIT 1
+    ), leased AS (
+        UPDATE pgjobdb.jobs j SET
+            lease_id = gen_random_uuid()::TEXT,
+            lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
+            lease_expiration_count = j.lease_expiration_count +
+                CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
+            consecutive_expirations = CASE WHEN j.lease_id IS NOT NULL
+                THEN j.consecutive_expirations + 1 ELSE 0 END
+        FROM candidate c
+        WHERE j.tenant_id = c.tenant_id AND j.job_id = c.job_id
+        RETURNING j.*
+    )
+    SELECT l.tenant_id, l.job_id, l.lease_id, l.lease_expires_at,
+        f.job_type, l.route_job_type, l.work_kind, l.task_type,
+        l.resume_job_type, l.task_input_ordinal, l.task_output_ordinal,
+        l.task_input_hash, f.run_policy, l.lease_payload, f.schema_hash
+    FROM leased l JOIN pgjobdb.job_facts f USING (tenant_id, job_id);
+END;
+$$;
+
 COMMIT;

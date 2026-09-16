@@ -70,6 +70,59 @@ type SubmitJobResult struct {
 	Created bool
 }
 
+type TaskType string
+
+type WorkKind string
+
+const (
+	WorkKindJob  WorkKind = "JOB"
+	WorkKindTask WorkKind = "TASK"
+)
+
+type TaskSelector struct {
+	JobType  JobType  `json:"job_type"`
+	TaskType TaskType `json:"task_type"`
+}
+
+type WorkSelector struct {
+	JobTypes []JobType
+	Tasks    []TaskSelector
+}
+
+type GetWorkOptions struct {
+	TenantIDs           []TenantID
+	AppMetadataContains json.RawMessage
+	LeaseDuration       time.Duration
+}
+
+type GetJobLeaseOptions struct {
+	AppMetadataContains json.RawMessage
+	LeaseDuration       time.Duration
+}
+
+type TaskWork struct {
+	TaskType      TaskType
+	ResumeJobType JobType
+	InputOrdinal  int64
+	OutputOrdinal int64
+	InputHash     string
+}
+
+type JobLease struct {
+	TenantID     TenantID
+	JobID        JobID
+	LeaseID      string
+	WorkerID     WorkerID
+	ExpiresAt    time.Time
+	JobType      JobType
+	RouteJobType JobType
+	WorkKind     WorkKind
+	Task         *TaskWork
+	RunPolicy    RunPolicy
+	LeasePayload json.RawMessage
+	SchemaHash   string
+}
+
 type ScheduleState string
 
 const (
