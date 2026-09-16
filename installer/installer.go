@@ -50,7 +50,7 @@ func (i Installer) Verify(ctx context.Context) error {
 		}
 	}
 	for table, columns := range map[string][]string{
-		"jobs":         {"route_job_type", "work_kind", "lease_payload"},
+		"jobs":         {"route_job_type", "work_kind", "lease_payload", "lease_worker_id"},
 		"jobs_archive": {"final_route_job_type", "final_work_kind", "final_lease_payload"},
 	} {
 		for _, column := range columns {
@@ -63,6 +63,7 @@ func (i Installer) Verify(ctx context.Context) error {
 		"submit_job", "get_work", "get_job_lease", "extend_lease",
 		"reschedule_job", "complete_job", "submit_native_job", "get_native_work",
 		"complete_native_job", "complete_native_unheld_job",
+		"validate_native_lease", "renew_native_lease", "cancel_native_job",
 		"upsert_schedule", "pause_schedule",
 		"resume_schedule", "archive_schedule", "get_schedule", "list_schedules",
 	} {

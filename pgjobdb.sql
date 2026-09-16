@@ -1970,6 +1970,7 @@ ALTER TABLE pgjobdb.jobs
     ADD COLUMN IF NOT EXISTS task_input_hash TEXT,
     ADD COLUMN IF NOT EXISTS alternate_job_type TEXT,
     ADD COLUMN IF NOT EXISTS alternate_task_type TEXT,
+    ADD COLUMN IF NOT EXISTS lease_worker_id TEXT,
     ADD COLUMN IF NOT EXISTS lease_payload JSONB NOT NULL DEFAULT '{}'::JSONB;
 
 DO $$
@@ -2024,6 +2025,7 @@ ALTER TABLE pgjobdb.jobs_archive
     ADD COLUMN IF NOT EXISTS final_wait_for TEXT[],
     ADD COLUMN IF NOT EXISTS final_available_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS final_lease_expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS final_lease_worker_id TEXT,
     ADD COLUMN IF NOT EXISTS final_cancel_requested BOOLEAN,
     ADD COLUMN IF NOT EXISTS final_lease_payload JSONB;
 
@@ -2445,6 +2447,7 @@ BEGIN
     ), leased AS (
         UPDATE pgjobdb.jobs j SET
             lease_id = gen_random_uuid()::TEXT,
+            lease_worker_id = p_worker_id,
             lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
             lease_expiration_count = j.lease_expiration_count +
                 CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
@@ -2503,6 +2506,7 @@ BEGIN
         final_wait_for = v_active.wait_for,
         final_available_at = v_active.available_at,
         final_lease_expires_at = v_active.lease_expires_at,
+        final_lease_worker_id = v_active.lease_worker_id,
         final_cancel_requested = v_active.cancel_requested,
         final_lease_payload = v_active.lease_payload
     WHERE a.tenant_id = v_active.tenant_id AND a.job_id = v_active.job_id;
@@ -2531,6 +2535,11 @@ BEGIN
     END IF;
     IF p_lease_id IS NULL OR p_lease_id = '' THEN
         RAISE EXCEPTION 'lease id is required';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pgjobdb.jobs j
+        WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id
+          AND j.lease_id = p_lease_id AND j.lease_worker_id = p_worker_id) THEN
+        RAISE EXCEPTION 'native lease owner mismatch';
     END IF;
     v_job := pgjobdb._lock_job_for_status(
         p_tenant_id, p_job_id, 'ACTIVE', p_lease_id,
@@ -2569,6 +2578,81 @@ BEGIN
         v_job, p_worker_id, p_completion_status,
         p_completion_detail, p_error_kind, p_retryable
     );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.validate_native_lease(
+    p_tenant_id TEXT,
+    p_job_id TEXT,
+    p_lease_id TEXT,
+    p_worker_id TEXT
+)
+RETURNS TABLE(
+    tenant_id TEXT, job_id TEXT, lease_id TEXT, lease_expires_at TIMESTAMPTZ,
+    job_type TEXT, route_job_type TEXT, work_kind TEXT, task_type TEXT,
+    resume_job_type TEXT, task_input_ordinal BIGINT,
+    task_output_ordinal BIGINT, task_input_hash TEXT,
+    run_policy JSONB, lease_payload JSONB, schema_hash TEXT
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF p_worker_id IS NULL OR p_worker_id = '' OR p_lease_id IS NULL OR p_lease_id = '' THEN
+        RAISE EXCEPTION 'worker id and lease id are required';
+    END IF;
+    RETURN QUERY
+    SELECT j.tenant_id, j.job_id, j.lease_id, j.lease_expires_at,
+        f.job_type, j.route_job_type, j.work_kind, j.task_type,
+        j.resume_job_type, j.task_input_ordinal, j.task_output_ordinal,
+        j.task_input_hash, f.run_policy, j.lease_payload, f.schema_hash
+    FROM pgjobdb.jobs j JOIN pgjobdb.job_facts f USING (tenant_id, job_id)
+    WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id
+      AND j.lease_id = p_lease_id AND j.lease_expires_at > clock_timestamp()
+      AND j.lease_worker_id = p_worker_id
+      AND j.route_job_type IS NOT NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.renew_native_lease(
+    p_tenant_id TEXT,
+    p_job_id TEXT,
+    p_lease_id TEXT,
+    p_worker_id TEXT,
+    p_additional_seconds INTEGER
+)
+RETURNS TIMESTAMPTZ
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pgjobdb.jobs j
+        WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id
+          AND j.lease_id = p_lease_id AND j.lease_worker_id = p_worker_id
+          AND j.route_job_type IS NOT NULL) THEN
+        RAISE EXCEPTION 'native lease not found';
+    END IF;
+    RETURN pgjobdb.extend_lease(
+        p_tenant_id, p_job_id, p_lease_id, p_worker_id, p_additional_seconds
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.cancel_native_job(
+    p_tenant_id TEXT,
+    p_job_id TEXT,
+    p_worker_id TEXT,
+    p_reason TEXT DEFAULT NULL
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pgjobdb.jobs j
+        WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id
+          AND j.route_job_type IS NOT NULL) THEN
+        RAISE EXCEPTION 'native job not found';
+    END IF;
+    PERFORM pgjobdb.cancel_job(p_tenant_id, p_job_id, p_worker_id, p_reason);
+    RETURN TRUE;
 END;
 $$;
 

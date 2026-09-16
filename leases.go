@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"time"
 
 	"github.com/lib/pq"
 )
+
+var ErrLeaseLost = errors.New("pgjobdb: lease lost")
 
 // GetWork atomically claims one eligible native job or task route.
 func GetWork(ctx context.Context, db DB, worker WorkerID, selector WorkSelector, opts GetWorkOptions) (*JobLease, error) {
@@ -130,4 +133,65 @@ func scanJobLease(row scheduleScanner, worker WorkerID) (*JobLease, error) {
 		}
 	}
 	return &lease, nil
+}
+
+// ValidateLease loads the current live native lease for an exact identity.
+func ValidateLease(ctx context.Context, db DB, identity LeaseIdentity) (*JobLease, error) {
+	if err := validateScheduleDB(ctx, db); err != nil {
+		return nil, err
+	}
+	if err := validateLeaseIdentity(identity); err != nil {
+		return nil, err
+	}
+	row := db.QueryRowContext(ctx, `SELECT * FROM pgjobdb.validate_native_lease(
+		$1, $2, $3, $4)`, string(identity.TenantID), string(identity.JobID),
+		identity.LeaseID, string(identity.WorkerID))
+	lease, err := scanJobLease(row, identity.WorkerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrLeaseLost
+	}
+	return lease, err
+}
+
+// KeepAliveLease extends a live native lease and returns its new snapshot.
+func KeepAliveLease(ctx context.Context, db DB, identity LeaseIdentity,
+	additional time.Duration) (*JobLease, error) {
+	if err := validateScheduleDB(ctx, db); err != nil {
+		return nil, err
+	}
+	if err := validateLeaseIdentity(identity); err != nil {
+		return nil, err
+	}
+	if additional <= 0 {
+		return nil, fmt.Errorf("pgjobdb: additional lease duration must be positive")
+	}
+	seconds, err := leaseSeconds(additional)
+	if err != nil {
+		return nil, err
+	}
+	var expiresAt time.Time
+	if err := db.QueryRowContext(ctx, `SELECT pgjobdb.renew_native_lease(
+		$1, $2, $3, $4, $5)`, string(identity.TenantID),
+		string(identity.JobID), identity.LeaseID, string(identity.WorkerID),
+		seconds).Scan(&expiresAt); err != nil {
+		return nil, err
+	}
+	return ValidateLease(ctx, db, identity)
+}
+
+func (l *JobLease) KeepAlive(ctx context.Context, db DB, additional time.Duration) error {
+	updated, err := KeepAliveLease(ctx, db, l.Identity(), additional)
+	if err != nil {
+		return err
+	}
+	l.ExpiresAt = updated.ExpiresAt
+	return nil
+}
+
+func validateLeaseIdentity(identity LeaseIdentity) error {
+	if identity.TenantID == "" || identity.JobID == "" ||
+		identity.LeaseID == "" || identity.WorkerID == "" {
+		return fmt.Errorf("pgjobdb: tenant, job, lease, and worker ids are required")
+	}
+	return nil
 }
