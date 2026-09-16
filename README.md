@@ -11,3 +11,8 @@ Run the current checks with:
 ```sh
 go test ./...
 ```
+
+Until the pinned JobDB core commit is available remotely, run checks in a
+temporary Go workspace containing local `jobdb` and `pgjobdb` checkouts, with
+a workspace replacement for the pinned JobDB version. The workspace file is
+local to the developer and is not committed to this module.
