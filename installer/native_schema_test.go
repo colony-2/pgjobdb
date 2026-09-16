@@ -85,3 +85,21 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 		}
 	})
 }
+
+func TestGenericQueueProceduresAreAbsent(t *testing.T) {
+	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
+		var count int
+		err := db.QueryRowContext(ctx, `SELECT count(*)
+			FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+			WHERE n.nspname = 'pgjobdb' AND p.proname IN (
+				'submit_job', 'get_work', 'get_job_lease', 'reschedule_job',
+				'complete_job', 'complete_unheld_job', 'reschedule_unheld_job',
+				'cancel_job', 'extend_lease')`).Scan(&count)
+		if err != nil {
+			t.Fatalf("inspect functions: %v", err)
+		}
+		if count != 0 {
+			t.Fatalf("found %d generic queue procedures", count)
+		}
+	})
+}

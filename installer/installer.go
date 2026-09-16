@@ -60,8 +60,7 @@ func (i Installer) Verify(ctx context.Context) error {
 		}
 	}
 	for _, fn := range []string{
-		"submit_job", "get_work", "get_job_lease", "extend_lease",
-		"reschedule_job", "complete_job", "submit_native_job", "get_native_work",
+		"submit_native_job", "get_native_work",
 		"complete_native_job", "complete_native_unheld_job",
 		"validate_native_lease", "renew_native_lease", "cancel_native_job",
 		"reschedule_native_job",
