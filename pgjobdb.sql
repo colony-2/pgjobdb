@@ -2,7 +2,7 @@ BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS pgjobdb;
 
-SET search_path = pgjobdb, public;
+SET LOCAL search_path = pgjobdb, public;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),

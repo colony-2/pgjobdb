@@ -11,10 +11,15 @@ import (
 
 func TestPublicRuntimeInitializesFreshDatabase(t *testing.T) {
 	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
+		db.SetMaxOpenConns(1)
 		cfg := pgjobdbruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()}
 		runtime, err := pgjobdbruntime.New(ctx, db, cfg)
 		if err != nil {
 			t.Fatalf("initialize runtime: %v", err)
+		}
+		var schema string
+		if err := db.QueryRowContext(ctx, `SELECT current_schema()`).Scan(&schema); err != nil || schema != "public" {
+			t.Fatalf("installer leaked search path: %q, %v", schema, err)
 		}
 		input, err := jobdb.NewTaskData(map[string]any{"item": 1})
 		if err != nil {
