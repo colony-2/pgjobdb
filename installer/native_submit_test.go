@@ -30,6 +30,7 @@ func TestNativeSubmitJob(t *testing.T) {
 				Schedule: &pgjobdb.ScheduleOccurrence{
 					ScheduleID: "daily", Generation: 1, SpecHash: "schedule-hash",
 					ScheduledAt: scheduledAt, RunID: "run-1", Reason: "automatic",
+					FailureHistory: json.RawMessage(`{"bits":"101","windowSize":3}`),
 				},
 			},
 			LeasePayload: json.RawMessage(`{"opaque":true}`),
@@ -39,22 +40,25 @@ func TestNativeSubmitJob(t *testing.T) {
 			t.Fatalf("submit = %+v, %v", result, err)
 		}
 		var jobType, route, workKind, schemaHash, parentID, scheduleID, runID string
-		var policy, metadata, leasePayload string
+		var policy, metadata, leasePayload, failureHistory string
 		if err := db.QueryRowContext(ctx, `SELECT f.job_type, j.route_job_type,
 			j.work_kind, f.schema_hash, f.parent_job_id, f.schedule_id,
 			f.schedule_run_id, f.run_policy::text, f.app_metadata::text,
+			f.schedule_failure_history::text,
 			j.lease_payload::text
 			FROM pgjobdb.job_facts f JOIN pgjobdb.jobs j USING (tenant_id, job_id)
 			WHERE f.tenant_id = 'tenant' AND f.job_id = 'job-1'`).Scan(
 			&jobType, &route, &workKind, &schemaHash, &parentID, &scheduleID,
-			&runID, &policy, &metadata, &leasePayload,
+			&runID, &policy, &metadata, &failureHistory, &leasePayload,
 		); err != nil {
 			t.Fatalf("read native job: %v", err)
 		}
 		if jobType != "collect" || route != "collect" || workKind != "JOB" ||
 			schemaHash != "schema-hash" || parentID != "parent-1" ||
 			scheduleID != "daily" || runID != "run-1" ||
-			metadata != `{"source": "api"}` || leasePayload != `{"opaque": true}` {
+			metadata != `{"source": "api"}` ||
+			failureHistory != `{"bits": "101", "windowSize": 3}` ||
+			leasePayload != `{"opaque": true}` {
 			t.Fatalf("native job fields = %q %q %q %q %q %q %q %q %q",
 				jobType, route, workKind, schemaHash, parentID, scheduleID,
 				runID, metadata, leasePayload)

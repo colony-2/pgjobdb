@@ -52,9 +52,12 @@ func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 			return nil, fmt.Errorf("pgjobdb: incomplete schedule occurrence")
 		}
 		if len(occurrence.FailureHistory) > 0 {
-			var history []json.RawMessage
+			var history map[string]json.RawMessage
 			if err := json.Unmarshal(occurrence.FailureHistory, &history); err != nil {
-				return nil, fmt.Errorf("pgjobdb: failure history must be a JSON array: %w", err)
+				return nil, fmt.Errorf("pgjobdb: failure history must be a JSON object: %w", err)
+			}
+			if history == nil {
+				return nil, fmt.Errorf("pgjobdb: failure history must be a JSON object")
 			}
 		}
 		encoded, err := json.Marshal(occurrence)

@@ -1945,9 +1945,9 @@ CREATE TABLE IF NOT EXISTS pgjobdb.job_facts (
             AND schedule_spec_hash <> '' AND scheduled_at IS NOT NULL
             AND schedule_run_id IS NOT NULL AND schedule_run_id <> '')
     ),
-    CONSTRAINT job_facts_failure_history_array CHECK (
+    CONSTRAINT job_facts_failure_history_object CHECK (
         schedule_failure_history IS NULL
-        OR jsonb_typeof(schedule_failure_history) = 'array'
+        OR jsonb_typeof(schedule_failure_history) = 'object'
     )
 );
 
