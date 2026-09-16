@@ -2067,4 +2067,198 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION pgjobdb.upsert_schedule(
+    p_tenant_id TEXT,
+    p_schedule_id TEXT,
+    p_state TEXT,
+    p_spec_hash TEXT,
+    p_trigger JSONB,
+    p_target_job_type TEXT,
+    p_target_snapshot JSONB,
+    p_overlap_policy TEXT,
+    p_failure_policy JSONB,
+    p_next_fire_at TIMESTAMPTZ,
+    p_next_job_id TEXT,
+    p_expected_generation BIGINT DEFAULT NULL
+)
+RETURNS pgjobdb.schedules
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_existing pgjobdb.schedules%ROWTYPE;
+    v_result pgjobdb.schedules%ROWTYPE;
+BEGIN
+    IF p_state NOT IN ('ACTIVE', 'PAUSED') THEN
+        RAISE EXCEPTION 'schedule upsert requires ACTIVE or PAUSED state';
+    END IF;
+    IF p_state = 'PAUSED' AND (p_next_fire_at IS NOT NULL OR p_next_job_id IS NOT NULL) THEN
+        RAISE EXCEPTION 'paused schedule cannot have next fire state';
+    END IF;
+    IF (p_next_fire_at IS NULL) <> (p_next_job_id IS NULL) THEN
+        RAISE EXCEPTION 'next fire and next job id must be provided together';
+    END IF;
+
+    SELECT * INTO v_existing FROM pgjobdb.schedules
+    WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id FOR UPDATE;
+    IF FOUND THEN
+        IF v_existing.state = 'ARCHIVED' THEN
+            RAISE EXCEPTION 'archived schedule cannot be updated';
+        END IF;
+        IF p_expected_generation IS NOT NULL
+            AND v_existing.generation <> p_expected_generation THEN
+            RAISE EXCEPTION 'schedule generation mismatch';
+        END IF;
+        UPDATE pgjobdb.schedules SET
+            state = p_state,
+            generation = v_existing.generation + 1,
+            spec_hash = p_spec_hash,
+            trigger = p_trigger,
+            target_job_type = p_target_job_type,
+            target_snapshot = p_target_snapshot,
+            overlap_policy = p_overlap_policy,
+            failure_policy = p_failure_policy,
+            next_fire_at = p_next_fire_at,
+            next_job_id = p_next_job_id,
+            updated_at = clock_timestamp()
+        WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id
+        RETURNING * INTO v_result;
+    ELSE
+        IF p_expected_generation IS NOT NULL THEN
+            RAISE EXCEPTION 'schedule generation mismatch';
+        END IF;
+        INSERT INTO pgjobdb.schedules (
+            tenant_id, schedule_id, state, generation, spec_hash, trigger,
+            target_job_type, target_snapshot, overlap_policy, failure_policy,
+            next_fire_at, next_job_id
+        ) VALUES (
+            p_tenant_id, p_schedule_id, p_state, 1, p_spec_hash, p_trigger,
+            p_target_job_type, p_target_snapshot, p_overlap_policy,
+            p_failure_policy, p_next_fire_at, p_next_job_id
+        ) RETURNING * INTO v_result;
+    END IF;
+    RETURN v_result;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.mutate_schedule(
+    p_tenant_id TEXT,
+    p_schedule_id TEXT,
+    p_state TEXT,
+    p_next_fire_at TIMESTAMPTZ DEFAULT NULL,
+    p_next_job_id TEXT DEFAULT NULL,
+    p_expected_generation BIGINT DEFAULT NULL
+)
+RETURNS pgjobdb.schedules
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_existing pgjobdb.schedules%ROWTYPE;
+    v_result pgjobdb.schedules%ROWTYPE;
+BEGIN
+    IF p_state NOT IN ('ACTIVE', 'PAUSED', 'ARCHIVED') THEN
+        RAISE EXCEPTION 'invalid schedule state';
+    END IF;
+    IF p_state <> 'ACTIVE' AND (p_next_fire_at IS NOT NULL OR p_next_job_id IS NOT NULL) THEN
+        RAISE EXCEPTION 'inactive schedule cannot have next fire state';
+    END IF;
+    IF (p_next_fire_at IS NULL) <> (p_next_job_id IS NULL) THEN
+        RAISE EXCEPTION 'next fire and next job id must be provided together';
+    END IF;
+
+    SELECT * INTO v_existing FROM pgjobdb.schedules
+    WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'schedule %/% does not exist', p_tenant_id, p_schedule_id;
+    END IF;
+    IF p_expected_generation IS NOT NULL
+        AND v_existing.generation <> p_expected_generation THEN
+        RAISE EXCEPTION 'schedule generation mismatch';
+    END IF;
+    IF v_existing.state = 'ARCHIVED' AND p_state <> 'ARCHIVED' THEN
+        RAISE EXCEPTION 'archived schedule cannot change state';
+    END IF;
+    UPDATE pgjobdb.schedules SET
+        state = p_state,
+        generation = v_existing.generation + 1,
+        next_fire_at = p_next_fire_at,
+        next_job_id = p_next_job_id,
+        updated_at = clock_timestamp()
+    WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id
+    RETURNING * INTO v_result;
+    RETURN v_result;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.pause_schedule(
+    p_tenant_id TEXT, p_schedule_id TEXT, p_expected_generation BIGINT DEFAULT NULL
+)
+RETURNS pgjobdb.schedules
+LANGUAGE sql
+AS $$
+    SELECT pgjobdb.mutate_schedule(p_tenant_id, p_schedule_id, 'PAUSED',
+        NULL, NULL, p_expected_generation);
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.resume_schedule(
+    p_tenant_id TEXT, p_schedule_id TEXT,
+    p_next_fire_at TIMESTAMPTZ DEFAULT NULL,
+    p_next_job_id TEXT DEFAULT NULL,
+    p_expected_generation BIGINT DEFAULT NULL
+)
+RETURNS pgjobdb.schedules
+LANGUAGE sql
+AS $$
+    SELECT pgjobdb.mutate_schedule(p_tenant_id, p_schedule_id, 'ACTIVE',
+        p_next_fire_at, p_next_job_id, p_expected_generation);
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.archive_schedule(
+    p_tenant_id TEXT, p_schedule_id TEXT, p_expected_generation BIGINT DEFAULT NULL
+)
+RETURNS pgjobdb.schedules
+LANGUAGE sql
+AS $$
+    SELECT pgjobdb.mutate_schedule(p_tenant_id, p_schedule_id, 'ARCHIVED',
+        NULL, NULL, p_expected_generation);
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.get_schedule(
+    p_tenant_id TEXT, p_schedule_id TEXT
+)
+RETURNS SETOF pgjobdb.schedules
+LANGUAGE sql STABLE
+AS $$
+    SELECT * FROM pgjobdb.schedules
+    WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id;
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.list_schedules(
+    p_tenant_id TEXT,
+    p_states TEXT[] DEFAULT NULL,
+    p_target_job_types TEXT[] DEFAULT NULL,
+    p_before_updated_at TIMESTAMPTZ DEFAULT NULL,
+    p_before_schedule_id TEXT DEFAULT NULL,
+    p_limit INTEGER DEFAULT 100
+)
+RETURNS SETOF pgjobdb.schedules
+LANGUAGE plpgsql STABLE
+AS $$
+BEGIN
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
+        RAISE EXCEPTION 'schedule page limit must be between 1 and 1000';
+    END IF;
+    IF (p_before_updated_at IS NULL) <> (p_before_schedule_id IS NULL) THEN
+        RAISE EXCEPTION 'schedule cursor fields must be provided together';
+    END IF;
+    RETURN QUERY SELECT s.* FROM pgjobdb.schedules s
+    WHERE s.tenant_id = p_tenant_id
+      AND (p_states IS NULL OR s.state = ANY(p_states))
+      AND (p_target_job_types IS NULL OR s.target_job_type = ANY(p_target_job_types))
+      AND (p_before_updated_at IS NULL
+        OR (s.updated_at, s.schedule_id) < (p_before_updated_at, p_before_schedule_id))
+    ORDER BY s.updated_at DESC, s.schedule_id DESC
+    LIMIT p_limit;
+END;
+$$;
+
 COMMIT;

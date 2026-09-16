@@ -59,7 +59,11 @@ func (i Installer) Verify(ctx context.Context) error {
 			}
 		}
 	}
-	for _, fn := range []string{"submit_job", "get_work", "get_job_lease", "extend_lease", "reschedule_job", "complete_job"} {
+	for _, fn := range []string{
+		"submit_job", "get_work", "get_job_lease", "extend_lease",
+		"reschedule_job", "complete_job", "upsert_schedule", "pause_schedule",
+		"resume_schedule", "archive_schedule", "get_schedule", "list_schedules",
+	} {
 		if err := i.assertFunction(ctx, schema, fn); err != nil {
 			return err
 		}
