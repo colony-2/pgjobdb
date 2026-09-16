@@ -1875,4 +1875,186 @@ BEGIN
 END;
 $$;
 
+-- JobDB-native facts and schedule state. The copied generic procedures remain
+-- available while the native procedures are introduced in the next step.
+CREATE TABLE IF NOT EXISTS pgjobdb.schedules (
+    tenant_id TEXT NOT NULL,
+    schedule_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('ACTIVE', 'PAUSED', 'ARCHIVED')),
+    generation BIGINT NOT NULL CHECK (generation > 0),
+    spec_hash TEXT NOT NULL CHECK (spec_hash <> ''),
+    trigger JSONB NOT NULL CHECK (jsonb_typeof(trigger) = 'object'),
+    target_job_type TEXT NOT NULL CHECK (target_job_type <> ''),
+    target_snapshot JSONB NOT NULL CHECK (jsonb_typeof(target_snapshot) = 'object'),
+    overlap_policy TEXT NOT NULL CHECK (overlap_policy <> ''),
+    failure_policy JSONB NOT NULL CHECK (jsonb_typeof(failure_policy) = 'object'),
+    next_fire_at TIMESTAMPTZ,
+    next_job_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (tenant_id, schedule_id)
+);
+
+CREATE INDEX IF NOT EXISTS schedules_due_idx
+    ON pgjobdb.schedules (next_fire_at, tenant_id, schedule_id)
+    WHERE state = 'ACTIVE' AND next_fire_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS pgjobdb.job_facts (
+    tenant_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    job_type TEXT NOT NULL CHECK (job_type <> ''),
+    run_policy JSONB NOT NULL DEFAULT '{}'::JSONB
+        CHECK (jsonb_typeof(run_policy) = 'object'),
+    app_metadata JSONB NOT NULL DEFAULT '{}'::JSONB
+        CHECK (jsonb_typeof(app_metadata) = 'object'),
+    schema_hash TEXT,
+    parent_job_id TEXT,
+    schedule_id TEXT,
+    schedule_generation BIGINT,
+    schedule_spec_hash TEXT,
+    scheduled_at TIMESTAMPTZ,
+    schedule_run_id TEXT,
+    schedule_reason TEXT,
+    schedule_manual BOOLEAN NOT NULL DEFAULT FALSE,
+    schedule_backfill_id TEXT,
+    schedule_previous_job_id TEXT,
+    schedule_failure_history JSONB,
+    created_by_worker_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT 'infinity',
+    PRIMARY KEY (tenant_id, job_id),
+    FOREIGN KEY (tenant_id, schedule_id)
+        REFERENCES pgjobdb.schedules (tenant_id, schedule_id),
+    CONSTRAINT job_facts_schedule_complete CHECK (
+        (schedule_id IS NULL AND schedule_generation IS NULL
+            AND schedule_spec_hash IS NULL AND scheduled_at IS NULL
+            AND schedule_run_id IS NULL)
+        OR
+        (schedule_id IS NOT NULL AND schedule_generation IS NOT NULL
+            AND schedule_generation > 0 AND schedule_spec_hash IS NOT NULL
+            AND schedule_spec_hash <> '' AND scheduled_at IS NOT NULL
+            AND schedule_run_id IS NOT NULL AND schedule_run_id <> '')
+    ),
+    CONSTRAINT job_facts_failure_history_array CHECK (
+        schedule_failure_history IS NULL
+        OR jsonb_typeof(schedule_failure_history) = 'array'
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS job_facts_schedule_run_idx
+    ON pgjobdb.job_facts (tenant_id, schedule_id, schedule_run_id)
+    WHERE schedule_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS job_facts_parent_idx
+    ON pgjobdb.job_facts (tenant_id, parent_job_id)
+    WHERE parent_job_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS job_facts_metadata_idx
+    ON pgjobdb.job_facts USING GIN (app_metadata jsonb_path_ops);
+
+ALTER TABLE pgjobdb.jobs
+    ADD COLUMN IF NOT EXISTS route_job_type TEXT,
+    ADD COLUMN IF NOT EXISTS work_kind TEXT,
+    ADD COLUMN IF NOT EXISTS task_type TEXT,
+    ADD COLUMN IF NOT EXISTS resume_job_type TEXT,
+    ADD COLUMN IF NOT EXISTS task_input_ordinal BIGINT,
+    ADD COLUMN IF NOT EXISTS task_output_ordinal BIGINT,
+    ADD COLUMN IF NOT EXISTS task_input_hash TEXT,
+    ADD COLUMN IF NOT EXISTS alternate_job_type TEXT,
+    ADD COLUMN IF NOT EXISTS alternate_task_type TEXT,
+    ADD COLUMN IF NOT EXISTS lease_payload JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'pgjobdb.jobs'::regclass
+          AND conname = 'jobs_native_route_valid') THEN
+        ALTER TABLE pgjobdb.jobs
+            ADD CONSTRAINT jobs_native_route_valid CHECK (
+                (route_job_type IS NULL AND work_kind IS NULL
+                    AND task_type IS NULL AND resume_job_type IS NULL
+                    AND task_input_ordinal IS NULL AND task_output_ordinal IS NULL
+                    AND task_input_hash IS NULL)
+                OR (route_job_type IS NOT NULL AND route_job_type <> ''
+                    AND work_kind IS NOT NULL AND (
+                    (work_kind = 'JOB' AND task_type IS NULL
+                        AND resume_job_type IS NULL AND task_input_ordinal IS NULL
+                        AND task_output_ordinal IS NULL AND task_input_hash IS NULL)
+                    OR (work_kind = 'TASK' AND task_type IS NOT NULL
+                        AND task_type <> '' AND resume_job_type IS NOT NULL
+                        AND resume_job_type <> '' AND task_input_ordinal IS NOT NULL
+                        AND task_input_ordinal >= 0 AND task_output_ordinal IS NOT NULL
+                        AND task_output_ordinal >= 0 AND task_input_hash IS NOT NULL
+                        AND task_input_hash <> '')
+                ))
+            );
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'pgjobdb.jobs'::regclass
+          AND conname = 'jobs_native_payload_object') THEN
+        ALTER TABLE pgjobdb.jobs
+            ADD CONSTRAINT jobs_native_payload_object CHECK
+                (jsonb_typeof(lease_payload) = 'object');
+    END IF;
+END;
+$$;
+
+CREATE INDEX IF NOT EXISTS jobs_native_route_idx
+    ON pgjobdb.jobs (route_job_type, work_kind, task_type, available_at)
+    WHERE route_job_type IS NOT NULL;
+
+ALTER TABLE pgjobdb.jobs_archive
+    ADD COLUMN IF NOT EXISTS completion_error_kind TEXT,
+    ADD COLUMN IF NOT EXISTS completion_retryable BOOLEAN,
+    ADD COLUMN IF NOT EXISTS final_route_job_type TEXT,
+    ADD COLUMN IF NOT EXISTS final_work_kind TEXT,
+    ADD COLUMN IF NOT EXISTS final_task_type TEXT,
+    ADD COLUMN IF NOT EXISTS final_resume_job_type TEXT,
+    ADD COLUMN IF NOT EXISTS final_task_input_ordinal BIGINT,
+    ADD COLUMN IF NOT EXISTS final_task_output_ordinal BIGINT,
+    ADD COLUMN IF NOT EXISTS final_task_input_hash TEXT,
+    ADD COLUMN IF NOT EXISTS final_wait_for TEXT[],
+    ADD COLUMN IF NOT EXISTS final_available_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS final_lease_expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS final_cancel_requested BOOLEAN,
+    ADD COLUMN IF NOT EXISTS final_lease_payload JSONB;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'pgjobdb.jobs_archive'::regclass
+          AND conname = 'jobs_archive_native_snapshot_valid') THEN
+        ALTER TABLE pgjobdb.jobs_archive
+            ADD CONSTRAINT jobs_archive_native_snapshot_valid CHECK (
+                (final_route_job_type IS NULL AND final_work_kind IS NULL
+                    AND final_task_type IS NULL AND final_resume_job_type IS NULL
+                    AND final_task_input_ordinal IS NULL
+                    AND final_task_output_ordinal IS NULL
+                    AND final_task_input_hash IS NULL AND final_wait_for IS NULL
+                    AND final_available_at IS NULL AND final_cancel_requested IS NULL
+                    AND final_lease_payload IS NULL)
+                OR (final_route_job_type IS NOT NULL AND final_route_job_type <> ''
+                    AND final_work_kind IS NOT NULL
+                    AND final_wait_for IS NOT NULL AND final_available_at IS NOT NULL
+                    AND final_cancel_requested IS NOT NULL
+                    AND final_lease_payload IS NOT NULL
+                    AND jsonb_typeof(final_lease_payload) = 'object' AND (
+                        (final_work_kind = 'JOB' AND final_task_type IS NULL
+                            AND final_resume_job_type IS NULL
+                            AND final_task_input_ordinal IS NULL
+                            AND final_task_output_ordinal IS NULL
+                            AND final_task_input_hash IS NULL)
+                        OR (final_work_kind = 'TASK' AND final_task_type IS NOT NULL
+                            AND final_task_type <> '' AND final_resume_job_type IS NOT NULL
+                            AND final_resume_job_type <> ''
+                            AND final_task_input_ordinal IS NOT NULL
+                            AND final_task_input_ordinal >= 0
+                            AND final_task_output_ordinal IS NOT NULL
+                            AND final_task_output_ordinal >= 0
+                            AND final_task_input_hash IS NOT NULL
+                            AND final_task_input_hash <> '')
+                    ))
+            );
+    END IF;
+END;
+$$;
+
 COMMIT;

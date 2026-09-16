@@ -38,9 +38,19 @@ func (i Installer) Verify(ctx context.Context) error {
 	}
 	schema := i.schemaName()
 
-	for _, tbl := range []string{"jobs", "jobs_archive", "jobs_trace"} {
+	for _, tbl := range []string{"jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts"} {
 		if err := i.assertTable(ctx, schema, tbl); err != nil {
 			return err
+		}
+	}
+	for table, columns := range map[string][]string{
+		"jobs":         {"route_job_type", "work_kind", "lease_payload"},
+		"jobs_archive": {"final_route_job_type", "final_work_kind", "final_lease_payload"},
+	} {
+		for _, column := range columns {
+			if err := i.assertColumn(ctx, schema, table, column); err != nil {
+				return err
+			}
 		}
 	}
 	for _, fn := range []string{"submit_job", "get_work", "get_job_lease", "extend_lease", "reschedule_job", "complete_job"} {
@@ -80,6 +90,23 @@ SELECT EXISTS (
 	}
 	if !exists {
 		return fmt.Errorf("pgjobdb: missing table %s.%s", schema, table)
+	}
+	return nil
+}
+
+func (i Installer) assertColumn(ctx context.Context, schema, table, column string) error {
+	const stmt = `
+SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = $1 AND table_name = $2 AND column_name = $3
+)`
+	var exists bool
+	if err := i.DB.QueryRowContext(ctx, stmt, schema, table, column).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("pgjobdb: missing column %s.%s.%s", schema, table, column)
 	}
 	return nil
 }
