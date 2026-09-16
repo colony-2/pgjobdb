@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	pgjobdbsql "github.com/colony-2/pgjobdb"
 )
@@ -27,7 +26,7 @@ func (i Installer) Apply(ctx context.Context) error {
 		return err
 	}
 
-	_, err := i.DB.ExecContext(ctx, i.renderedSQL())
+	_, err := i.DB.ExecContext(ctx, pgjobdbsql.SQL)
 	return err
 }
 
@@ -106,20 +105,17 @@ func (i Installer) validateDatabase(ctx context.Context) error {
 		return i.assertInstallation(ctx, schema)
 	}
 
-	var chapterTable sql.NullString
-	if err := i.DB.QueryRowContext(ctx,
-		`SELECT to_regclass('jobdb_chapter_stories')::text`).Scan(&chapterTable); err != nil {
-		return fmt.Errorf("pgjobdb: inspect chapter state: %w", err)
+	var existingTable sql.NullString
+	if err := i.DB.QueryRowContext(ctx, `SELECT n.nspname || '.' || c.relname
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind IN ('r', 'p')
+			AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+			AND n.nspname NOT LIKE 'pg_toast%'
+		ORDER BY n.nspname, c.relname LIMIT 1`).Scan(&existingTable); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("pgjobdb: inspect existing tables: %w", err)
 	}
-	if chapterTable.Valid {
-		var hasChapters bool
-		if err := i.DB.QueryRowContext(ctx,
-			`SELECT EXISTS (SELECT 1 FROM jobdb_chapter_stories)`).Scan(&hasChapters); err != nil {
-			return fmt.Errorf("pgjobdb: inspect chapter rows: %w", err)
-		}
-		if hasChapters {
-			return fmt.Errorf("pgjobdb: existing JobDB chapter state found; use a new empty database")
-		}
+	if existingTable.Valid {
+		return fmt.Errorf("pgjobdb: existing table %s found; use a new empty database", existingTable.String)
 	}
 	return nil
 }
@@ -135,6 +131,9 @@ func (i Installer) validateSchemaName() error {
 			continue
 		}
 		return fmt.Errorf("pgjobdb: invalid schema name %q", schema)
+	}
+	if schema != "pgjobdb" {
+		return fmt.Errorf("pgjobdb: unsupported schema %q; use pgjobdb on a new empty database", schema)
 	}
 	return nil
 }
@@ -157,15 +156,6 @@ func (i Installer) assertInstallation(ctx context.Context, schema string) error 
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil
-}
-
-func (i Installer) renderedSQL() string {
-	schema := i.schemaName()
-	if schema == "pgjobdb" {
-		return pgjobdbsql.SQL
-	}
-	replacement := strings.ReplaceAll(pgjobdbsql.SQL, "pgjobdb", schema)
-	return replacement
 }
 
 func (i Installer) schemaName() string {

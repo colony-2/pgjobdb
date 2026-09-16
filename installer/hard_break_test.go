@@ -30,7 +30,7 @@ func TestInstallerRejectsLegacyState(t *testing.T) {
 				t.Fatal(err)
 			}
 			err := (pgjobdbinstaller.Installer{DB: db}).Apply(ctx)
-			if err == nil || !strings.Contains(err.Error(), "existing JobDB chapter state") {
+			if err == nil || !strings.Contains(err.Error(), "existing table public.jobdb_chapter_stories") {
 				t.Fatalf("expected chapter state rejection, got %v", err)
 			}
 		})
@@ -51,12 +51,20 @@ func TestInstallerRejectsLegacyState(t *testing.T) {
 			if _, err := db.ExecContext(ctx, `CREATE TABLE jobdb_chapter_stories (id INTEGER)`); err != nil {
 				t.Fatal(err)
 			}
-			installer := pgjobdbinstaller.Installer{DB: db}
-			if err := installer.Apply(ctx); err != nil {
-				t.Fatalf("expected empty chapter table to be accepted: %v", err)
+			err := (pgjobdbinstaller.Installer{DB: db}).Apply(ctx)
+			if err == nil || !strings.Contains(err.Error(), "existing table public.jobdb_chapter_stories") {
+				t.Fatalf("expected empty chapter table rejection, got %v", err)
 			}
-			if err := installer.Verify(ctx); err != nil {
-				t.Fatalf("verify: %v", err)
+		})
+	})
+	t.Run("unrelated table", func(t *testing.T) {
+		withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
+			if _, err := db.ExecContext(ctx, `CREATE TABLE unrelated (id INTEGER)`); err != nil {
+				t.Fatal(err)
+			}
+			err := (pgjobdbinstaller.Installer{DB: db}).Apply(ctx)
+			if err == nil || !strings.Contains(err.Error(), "existing table public.unrelated") {
+				t.Fatalf("expected nonempty database rejection, got %v", err)
 			}
 		})
 	})
@@ -67,5 +75,13 @@ func TestInstallerRejectsInvalidSchemaName(t *testing.T) {
 	if err := inst.Apply(context.Background()); err == nil ||
 		!strings.Contains(err.Error(), "invalid schema name") {
 		t.Fatalf("expected invalid schema name, got %v", err)
+	}
+}
+
+func TestInstallerRejectsAlternateSchema(t *testing.T) {
+	inst := pgjobdbinstaller.Installer{DB: new(sql.DB), Schema: "alternate"}
+	if err := inst.Apply(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "unsupported schema") {
+		t.Fatalf("expected unsupported schema error, got %v", err)
 	}
 }
