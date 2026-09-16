@@ -1,13 +1,12 @@
 # pgjobdb
 
-`pgjobdb` is the Postgres scheduler and optional runtime adapter for JobDB.
-Applications that choose another runtime do not need to import this module.
+`pgjobdb` is the typed Postgres scheduler used by JobDB's direct runtime.
+It has no dependency on JobDB.
 
-Import `github.com/colony-2/pgjobdb/runtime` to use the JobDB workflow
-runtime on Postgres. Its `New(ctx, db, cfg)` constructor initializes a new
-database and wraps a caller-owned `*sql.DB`; `OpenDSN(ctx, dsn, cfg)` owns the
-connection. Both require a `BlobStoreURI` for chapter artifacts. Call `Close`
-when finished.
+Import `github.com/colony-2/jobdb/pkg/jobdb/runtime/direct` to use the JobDB
+workflow runtime on Postgres. Its `NewSQLDB(ctx, db, cfg)` constructor wraps a
+caller-owned `*sql.DB`; `OpenDSN(ctx, dsn, cfg)` owns the connection. Both
+require a `BlobStoreURI` for chapter artifacts. Call `Close` when finished.
 
 The first deployment requires a brand-new empty Postgres database. Startup
 creates the `pgjobdb` schema and the JobDB chapter and schema tables. Later
@@ -17,10 +16,9 @@ that already contains user tables. There is no data migration or dual-read
 period.
 
 The root `github.com/colony-2/pgjobdb` package exposes typed scheduler
-operations. The optional `runtime` package composes those operations with
-JobDB's public workflow core. JobDB's `pkg/jobdb` and `runtime/core` packages
-do not import this module, so an application using another backend can import
-only that backend.
+operations. JobDB's direct runtime adapts those operations to its public
+workflow core. Applications using another backend can import only that
+backend and JobDB core.
 
 Run the current checks with:
 
@@ -29,11 +27,9 @@ go test ./...
 ```
 
 The JobDB and pgjobdb commits in this workspace are local. Until both are
-published, run checks with a temporary Go workspace containing the two
-checkouts and replacements for the pinned module versions. Do not commit
+published, check JobDB with a temporary Go workspace containing the two
+checkouts and a replacement for the pinned pgjobdb version. Do not commit
 absolute-path replacements to either module.
 
-Publish in this order: the JobDB core commit that adds the public runtime
-ports and facade, this pgjobdb module, then the JobDB direct wrapper that
-imports pgjobdb. The JobDB CLI uses that wrapper; applications can import
-`github.com/colony-2/pgjobdb/runtime` directly.
+Publish in this order: this pgjobdb module, then JobDB with the direct runtime
+that imports it. The JobDB CLI continues to provide the Postgres backend.
