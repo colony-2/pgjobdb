@@ -2927,7 +2927,8 @@ WHERE j.route_job_type IS NOT NULL
 UNION ALL
 SELECT
     f.tenant_id, f.job_id, 'ARCHIVED'::TEXT AS store,
-    CASE WHEN a.final_cancel_requested THEN 'CANCELLED' ELSE 'COMPLETED' END AS status,
+    CASE WHEN a.final_cancel_requested OR a.completion_status = 'cancelled'
+        THEN 'CANCELLED' ELSE 'COMPLETED' END AS status,
     f.job_type, a.final_route_job_type, a.final_work_kind,
     a.final_task_type, a.final_resume_job_type,
     a.final_task_input_ordinal, a.final_task_output_ordinal,
