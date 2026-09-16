@@ -64,6 +64,7 @@ func (i Installer) Verify(ctx context.Context) error {
 		"reschedule_job", "complete_job", "submit_native_job", "get_native_work",
 		"complete_native_job", "complete_native_unheld_job",
 		"validate_native_lease", "renew_native_lease", "cancel_native_job",
+		"reschedule_native_job",
 		"upsert_schedule", "pause_schedule",
 		"resume_schedule", "archive_schedule", "get_schedule", "list_schedules",
 	} {

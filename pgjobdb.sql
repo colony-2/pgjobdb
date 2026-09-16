@@ -2656,4 +2656,123 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION pgjobdb.reschedule_native_job(
+    p_tenant_id TEXT,
+    p_job_id TEXT,
+    p_lease_id TEXT,
+    p_worker_id TEXT,
+    p_route_job_type TEXT,
+    p_work_kind TEXT,
+    p_task_type TEXT,
+    p_resume_job_type TEXT,
+    p_task_input_ordinal BIGINT,
+    p_task_output_ordinal BIGINT,
+    p_task_input_hash TEXT,
+    p_wait_for TEXT[],
+    p_available_at TIMESTAMPTZ,
+    p_lease_payload JSONB,
+    p_set_alternate BOOLEAN,
+    p_alternate_job_type TEXT,
+    p_alternate_task_type TEXT,
+    p_alternate_after_seconds INTEGER
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_locked pgjobdb.jobs_with_status%ROWTYPE;
+    v_active pgjobdb.jobs%ROWTYPE;
+    v_wait_for TEXT[];
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    IF p_worker_id IS NULL OR p_worker_id = '' OR p_route_job_type IS NULL
+        OR p_route_job_type = '' THEN
+        RAISE EXCEPTION 'worker id and route job type are required';
+    END IF;
+    IF p_work_kind = 'JOB' THEN
+        IF p_task_type IS NOT NULL OR p_resume_job_type IS NOT NULL
+            OR p_task_input_ordinal IS NOT NULL OR p_task_output_ordinal IS NOT NULL
+            OR p_task_input_hash IS NOT NULL THEN
+            RAISE EXCEPTION 'job route cannot carry task coordinates';
+        END IF;
+    ELSIF p_work_kind = 'TASK' THEN
+        IF p_task_type IS NULL OR p_task_type = ''
+            OR p_resume_job_type IS NULL OR p_resume_job_type = ''
+            OR p_task_input_ordinal IS NULL OR p_task_input_ordinal < 0
+            OR p_task_output_ordinal IS NULL OR p_task_output_ordinal < 0
+            OR p_task_input_hash IS NULL OR p_task_input_hash = '' THEN
+            RAISE EXCEPTION 'task route requires complete coordinates';
+        END IF;
+    ELSE
+        RAISE EXCEPTION 'work kind must be JOB or TASK';
+    END IF;
+    IF p_lease_payload IS NOT NULL
+        AND jsonb_typeof(p_lease_payload) IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'lease payload must be a JSON object';
+    END IF;
+    IF p_set_alternate THEN
+        IF p_alternate_job_type IS NULL THEN
+            IF p_alternate_task_type IS NOT NULL OR p_alternate_after_seconds IS NOT NULL THEN
+                RAISE EXCEPTION 'cleared alternate route cannot have task or delay';
+            END IF;
+        ELSIF p_alternate_job_type = '' OR p_alternate_after_seconds IS NULL
+            OR p_alternate_after_seconds < 0
+            OR (p_alternate_task_type IS NOT NULL AND p_alternate_task_type = '') THEN
+            RAISE EXCEPTION 'invalid alternate route';
+        END IF;
+    END IF;
+    IF p_job_id = ANY(COALESCE(p_wait_for, ARRAY[]::TEXT[])) THEN
+        RAISE EXCEPTION 'job cannot wait for itself';
+    END IF;
+
+    IF p_lease_id IS NULL THEN
+        v_locked := pgjobdb._lock_job_for_status(
+            p_tenant_id, p_job_id, 'READY', NULL,
+            format('native job %s/%s is not unheld', p_tenant_id, p_job_id)
+        );
+    ELSE
+        v_locked := pgjobdb._lock_job_for_status(
+            p_tenant_id, p_job_id, 'ACTIVE', p_lease_id,
+            format('native lease not active for job %s/%s', p_tenant_id, p_job_id)
+        );
+    END IF;
+    SELECT * INTO v_active FROM pgjobdb.jobs j
+    WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id FOR UPDATE;
+    IF v_active.route_job_type IS NULL THEN
+        RAISE EXCEPTION 'native job state is missing';
+    END IF;
+    IF p_lease_id IS NOT NULL AND v_active.lease_worker_id IS DISTINCT FROM p_worker_id THEN
+        RAISE EXCEPTION 'native lease owner mismatch';
+    END IF;
+    IF v_active.cancel_requested THEN
+        RAISE EXCEPTION 'cancelled job cannot be rescheduled';
+    END IF;
+    v_wait_for := pgjobdb.normalize_wait_for(p_tenant_id, p_wait_for);
+
+    UPDATE pgjobdb.jobs j SET
+        route_job_type = p_route_job_type,
+        work_kind = p_work_kind,
+        task_type = p_task_type,
+        resume_job_type = p_resume_job_type,
+        task_input_ordinal = p_task_input_ordinal,
+        task_output_ordinal = p_task_output_ordinal,
+        task_input_hash = p_task_input_hash,
+        wait_for = v_wait_for,
+        available_at = COALESCE(p_available_at, v_now),
+        lease_payload = COALESCE(p_lease_payload, j.lease_payload),
+        alternate_job_type = CASE WHEN p_set_alternate
+            THEN p_alternate_job_type ELSE j.alternate_job_type END,
+        alternate_task_type = CASE WHEN p_set_alternate
+            THEN p_alternate_task_type ELSE j.alternate_task_type END,
+        alternate_after_seconds = CASE WHEN p_set_alternate
+            THEN p_alternate_after_seconds ELSE j.alternate_after_seconds END,
+        lease_id = NULL,
+        lease_worker_id = NULL,
+        lease_expires_at = '-infinity',
+        consecutive_expirations = 0
+    WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id;
+    RETURN TRUE;
+END;
+$$;
+
 COMMIT;

@@ -147,6 +147,22 @@ type Completion struct {
 	Retryable *bool
 }
 
+type AlternateRoute struct {
+	JobType  JobType
+	TaskType TaskType
+	After    time.Duration
+}
+
+type RescheduleRequest struct {
+	RouteJobType JobType
+	WorkKind     WorkKind
+	Task         *TaskWork
+	WaitFor      []JobID
+	AvailableAt  *time.Time
+	LeasePayload json.RawMessage
+	Alternate    *AlternateRoute
+}
+
 type ScheduleState string
 
 const (
