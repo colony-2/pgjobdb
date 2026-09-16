@@ -9,8 +9,18 @@ database and wraps a caller-owned `*sql.DB`; `OpenDSN(ctx, dsn, cfg)` owns the
 connection. Both require a `BlobStoreURI` for chapter artifacts. Call `Close`
 when finished.
 
-This repository is under construction. Its first deployment requires a new,
-empty Postgres database. It does not migrate or adopt existing `pgwf` data.
+The first deployment requires a brand-new empty Postgres database. Startup
+creates the `pgjobdb` schema and the JobDB chapter and schema tables. Later
+starts accept an initialized `pgjobdb` installation. Startup rejects old
+`pgwf` databases, other configured scheduler schemas, and a fresh database
+that already contains user tables. There is no data migration or dual-read
+period.
+
+The root `github.com/colony-2/pgjobdb` package exposes typed scheduler
+operations. The optional `runtime` package composes those operations with
+JobDB's public workflow core. JobDB's `pkg/jobdb` and `runtime/core` packages
+do not import this module, so an application using another backend can import
+only that backend.
 
 Run the current checks with:
 
@@ -18,7 +28,12 @@ Run the current checks with:
 go test ./...
 ```
 
-Until the pinned JobDB core commit is available remotely, run checks in a
-temporary Go workspace containing local `jobdb` and `pgjobdb` checkouts, with
-a workspace replacement for the pinned JobDB version. The workspace file is
-local to the developer and is not committed to this module.
+The JobDB and pgjobdb commits in this workspace are local. Until both are
+published, run checks with a temporary Go workspace containing the two
+checkouts and replacements for the pinned module versions. Do not commit
+absolute-path replacements to either module.
+
+Publish in this order: the JobDB core commit that adds the public runtime
+ports and facade, this pgjobdb module, then the JobDB direct wrapper that
+imports pgjobdb. The JobDB CLI uses that wrapper; applications can import
+`github.com/colony-2/pgjobdb/runtime` directly.
