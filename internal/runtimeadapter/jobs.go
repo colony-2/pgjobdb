@@ -61,17 +61,11 @@ func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest
 	for _, id := range req.ParentJobIDs {
 		opts.ParentJobIDs = append(opts.ParentJobIDs, pgjobdb.JobID(id))
 	}
-	for _, predicate := range req.MetadataEquals {
-		converted := pgjobdb.MetadataPredicate{Path: append([]string(nil), predicate.Path...)}
-		for _, value := range predicate.Values {
-			raw, err := json.Marshal(value)
-			if err != nil {
-				return runtimecore.ListJobsResponse{}, fmt.Errorf("encode metadata predicate: %w", err)
-			}
-			converted.Values = append(converted.Values, raw)
-		}
-		opts.MetadataPredicates = append(opts.MetadataPredicates, converted)
+	predicates, err := metadataPredicatesToPgjobdb(req.MetadataEquals)
+	if err != nil {
+		return runtimecore.ListJobsResponse{}, err
 	}
+	opts.MetadataPredicates = predicates
 	listed, err := pgjobdb.ListJobs(ctx, s.DB, opts)
 	if err != nil {
 		return runtimecore.ListJobsResponse{}, err
@@ -88,6 +82,22 @@ func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest
 		result.Jobs = append(result.Jobs, row)
 	}
 	return result, nil
+}
+
+func metadataPredicatesToPgjobdb(input []jobdb.MetadataPredicate) ([]pgjobdb.MetadataPredicate, error) {
+	out := make([]pgjobdb.MetadataPredicate, 0, len(input))
+	for _, predicate := range input {
+		converted := pgjobdb.MetadataPredicate{Path: append([]string(nil), predicate.Path...)}
+		for _, value := range predicate.Values {
+			raw, err := json.Marshal(value)
+			if err != nil {
+				return nil, fmt.Errorf("encode metadata predicate: %w", err)
+			}
+			converted.Values = append(converted.Values, raw)
+		}
+		out = append(out, converted)
+	}
+	return out, nil
 }
 
 func storedJobFromDetail(detail pgjobdb.JobDetail) (runtimecore.StoredJob, error) {
