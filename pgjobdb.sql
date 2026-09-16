@@ -2462,4 +2462,114 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION pgjobdb._complete_native_locked_job(
+    p_locked_job pgjobdb.jobs_with_status,
+    p_worker_id TEXT,
+    p_completion_status TEXT,
+    p_completion_detail TEXT,
+    p_error_kind TEXT,
+    p_retryable BOOLEAN
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_active pgjobdb.jobs%ROWTYPE;
+BEGIN
+    IF p_completion_status NOT IN
+        ('success', 'failed_app', 'failed_system', 'failed_timeout', 'cancelled') THEN
+        RAISE EXCEPTION 'invalid JobDB completion status';
+    END IF;
+    SELECT * INTO v_active FROM pgjobdb.jobs j
+    WHERE j.tenant_id = p_locked_job.tenant_id AND j.job_id = p_locked_job.job_id
+    FOR UPDATE;
+    IF NOT FOUND OR v_active.route_job_type IS NULL THEN
+        RAISE EXCEPTION 'native job state is missing';
+    END IF;
+
+    PERFORM pgjobdb._complete_locked_job(
+        p_locked_job, p_worker_id, p_completion_status, p_completion_detail
+    );
+    UPDATE pgjobdb.jobs_archive a SET
+        completion_error_kind = p_error_kind,
+        completion_retryable = p_retryable,
+        final_route_job_type = v_active.route_job_type,
+        final_work_kind = v_active.work_kind,
+        final_task_type = v_active.task_type,
+        final_resume_job_type = v_active.resume_job_type,
+        final_task_input_ordinal = v_active.task_input_ordinal,
+        final_task_output_ordinal = v_active.task_output_ordinal,
+        final_task_input_hash = v_active.task_input_hash,
+        final_wait_for = v_active.wait_for,
+        final_available_at = v_active.available_at,
+        final_lease_expires_at = v_active.lease_expires_at,
+        final_cancel_requested = v_active.cancel_requested,
+        final_lease_payload = v_active.lease_payload
+    WHERE a.tenant_id = v_active.tenant_id AND a.job_id = v_active.job_id;
+    RETURN TRUE;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.complete_native_job(
+    p_tenant_id TEXT,
+    p_job_id TEXT,
+    p_lease_id TEXT,
+    p_worker_id TEXT,
+    p_completion_status TEXT,
+    p_completion_detail TEXT DEFAULT NULL,
+    p_error_kind TEXT DEFAULT NULL,
+    p_retryable BOOLEAN DEFAULT NULL
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_job pgjobdb.jobs_with_status%ROWTYPE;
+BEGIN
+    IF p_worker_id IS NULL OR p_worker_id = '' THEN
+        RAISE EXCEPTION 'worker id is required';
+    END IF;
+    IF p_lease_id IS NULL OR p_lease_id = '' THEN
+        RAISE EXCEPTION 'lease id is required';
+    END IF;
+    v_job := pgjobdb._lock_job_for_status(
+        p_tenant_id, p_job_id, 'ACTIVE', p_lease_id,
+        format('native lease not active for job %s/%s', p_tenant_id, p_job_id)
+    );
+    RETURN pgjobdb._complete_native_locked_job(
+        v_job, p_worker_id, p_completion_status,
+        p_completion_detail, p_error_kind, p_retryable
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.complete_native_unheld_job(
+    p_tenant_id TEXT,
+    p_job_id TEXT,
+    p_worker_id TEXT,
+    p_completion_status TEXT,
+    p_completion_detail TEXT DEFAULT NULL,
+    p_error_kind TEXT DEFAULT NULL,
+    p_retryable BOOLEAN DEFAULT NULL
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_job pgjobdb.jobs_with_status%ROWTYPE;
+BEGIN
+    IF p_worker_id IS NULL OR p_worker_id = '' THEN
+        RAISE EXCEPTION 'worker id is required';
+    END IF;
+    v_job := pgjobdb._lock_job_for_status(
+        p_tenant_id, p_job_id, 'READY', NULL,
+        format('native job %s/%s is not unheld', p_tenant_id, p_job_id)
+    );
+    RETURN pgjobdb._complete_native_locked_job(
+        v_job, p_worker_id, p_completion_status,
+        p_completion_detail, p_error_kind, p_retryable
+    );
+END;
+$$;
+
 COMMIT;

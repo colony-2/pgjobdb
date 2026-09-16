@@ -123,6 +123,30 @@ type JobLease struct {
 	SchemaHash   string
 }
 
+type LeaseIdentity struct {
+	TenantID TenantID
+	JobID    JobID
+	LeaseID  string
+	WorkerID WorkerID
+}
+
+type CompletionStatus string
+
+const (
+	CompletionSuccess       CompletionStatus = "success"
+	CompletionFailedApp     CompletionStatus = "failed_app"
+	CompletionFailedSystem  CompletionStatus = "failed_system"
+	CompletionFailedTimeout CompletionStatus = "failed_timeout"
+	CompletionCancelled     CompletionStatus = "cancelled"
+)
+
+type Completion struct {
+	Status    CompletionStatus
+	Detail    string
+	ErrorKind string
+	Retryable *bool
+}
+
 type ScheduleState string
 
 const (
