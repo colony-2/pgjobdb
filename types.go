@@ -172,6 +172,85 @@ type CompleteTaskWorkRequest struct {
 	LeasePayload json.RawMessage
 }
 
+type JobStore string
+
+const (
+	JobStoreActive   JobStore = "ACTIVE"
+	JobStoreArchived JobStore = "ARCHIVED"
+)
+
+type JobStatus string
+
+const (
+	JobStatusReady          JobStatus = "READY"
+	JobStatusExpired        JobStatus = "EXPIRED"
+	JobStatusPendingJobs    JobStatus = "PENDING_JOBS"
+	JobStatusAwaitingFuture JobStatus = "AWAITING_FUTURE"
+	JobStatusActive         JobStatus = "ACTIVE"
+	JobStatusCrashConcern   JobStatus = "CRASH_CONCERN"
+	JobStatusCancelled      JobStatus = "CANCELLED"
+	JobStatusCompleted      JobStatus = "COMPLETED"
+)
+
+// JobDetail joins immutable job facts with current or final scheduler state.
+type JobDetail struct {
+	TenantID               TenantID          `json:"tenant_id"`
+	JobID                  JobID             `json:"job_id"`
+	Store                  JobStore          `json:"store"`
+	Status                 JobStatus         `json:"status"`
+	JobType                JobType           `json:"job_type"`
+	RouteJobType           JobType           `json:"route_job_type"`
+	WorkKind               WorkKind          `json:"work_kind"`
+	TaskType               TaskType          `json:"task_type"`
+	ResumeJobType          JobType           `json:"resume_job_type"`
+	TaskInputOrdinal       *int64            `json:"task_input_ordinal"`
+	TaskOutputOrdinal      *int64            `json:"task_output_ordinal"`
+	TaskInputHash          string            `json:"task_input_hash"`
+	AlternateJobType       JobType           `json:"alternate_job_type"`
+	AlternateTaskType      TaskType          `json:"alternate_task_type"`
+	AlternateAfterSeconds  *int32            `json:"alternate_after_seconds"`
+	WaitFor                []JobID           `json:"wait_for"`
+	AvailableAt            time.Time         `json:"available_at"`
+	LeaseExpiresAt         *time.Time        `json:"lease_expires_at"`
+	LeaseWorkerID          WorkerID          `json:"lease_worker_id"`
+	CancelRequested        bool              `json:"cancel_requested"`
+	LeasePayload           json.RawMessage   `json:"lease_payload"`
+	RunPolicy              RunPolicy         `json:"run_policy"`
+	AppMetadata            json.RawMessage   `json:"app_metadata"`
+	SchemaHash             string            `json:"schema_hash"`
+	ParentJobID            JobID             `json:"parent_job_id"`
+	CreatedAt              time.Time         `json:"created_at"`
+	ExpiresAt              *time.Time        `json:"expires_at"`
+	ArchivedAt             *time.Time        `json:"archived_at"`
+	CompletionStatus       *CompletionStatus `json:"completion_status"`
+	CompletionDetail       *string           `json:"completion_detail"`
+	CompletionErrorKind    *string           `json:"completion_error_kind"`
+	CompletionRetryable    *bool             `json:"completion_retryable"`
+	ScheduleID             string            `json:"schedule_id"`
+	ScheduleGeneration     *int64            `json:"schedule_generation"`
+	ScheduleSpecHash       string            `json:"schedule_spec_hash"`
+	ScheduledAt            *time.Time        `json:"scheduled_at"`
+	ScheduleRunID          string            `json:"schedule_run_id"`
+	ScheduleReason         string            `json:"schedule_reason"`
+	ScheduleManual         bool              `json:"schedule_manual"`
+	ScheduleBackfillID     string            `json:"schedule_backfill_id"`
+	SchedulePreviousJobID  JobID             `json:"schedule_previous_job_id"`
+	ScheduleFailureHistory json.RawMessage   `json:"schedule_failure_history"`
+}
+
+type JobStatusInfo struct {
+	TenantID         TenantID          `json:"tenant_id"`
+	JobID            JobID             `json:"job_id"`
+	Store            JobStore          `json:"store"`
+	Status           JobStatus         `json:"status"`
+	JobType          JobType           `json:"job_type"`
+	CreatedAt        time.Time         `json:"created_at"`
+	ArchivedAt       *time.Time        `json:"archived_at"`
+	CompletionStatus *CompletionStatus `json:"completion_status"`
+	CompletionDetail *string           `json:"completion_detail"`
+	CancelRequested  bool              `json:"cancel_requested"`
+}
+
 type ScheduleState string
 
 const (

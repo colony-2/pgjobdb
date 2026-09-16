@@ -2022,6 +2022,9 @@ ALTER TABLE pgjobdb.jobs_archive
     ADD COLUMN IF NOT EXISTS final_task_input_ordinal BIGINT,
     ADD COLUMN IF NOT EXISTS final_task_output_ordinal BIGINT,
     ADD COLUMN IF NOT EXISTS final_task_input_hash TEXT,
+    ADD COLUMN IF NOT EXISTS final_alternate_job_type TEXT,
+    ADD COLUMN IF NOT EXISTS final_alternate_task_type TEXT,
+    ADD COLUMN IF NOT EXISTS final_alternate_after_seconds INTEGER,
     ADD COLUMN IF NOT EXISTS final_wait_for TEXT[],
     ADD COLUMN IF NOT EXISTS final_available_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS final_lease_expires_at TIMESTAMPTZ,
@@ -2503,6 +2506,9 @@ BEGIN
         final_task_input_ordinal = v_active.task_input_ordinal,
         final_task_output_ordinal = v_active.task_output_ordinal,
         final_task_input_hash = v_active.task_input_hash,
+        final_alternate_job_type = v_active.alternate_job_type,
+        final_alternate_task_type = v_active.alternate_task_type,
+        final_alternate_after_seconds = v_active.alternate_after_seconds,
         final_wait_for = v_active.wait_for,
         final_available_at = v_active.available_at,
         final_lease_expires_at = v_active.lease_expires_at,
@@ -2823,6 +2829,82 @@ BEGIN
         FALSE, NULL, NULL, NULL
     );
 END;
+$$;
+
+CREATE OR REPLACE VIEW pgjobdb.native_jobs AS
+SELECT
+    f.tenant_id, f.job_id, 'ACTIVE'::TEXT AS store, s.status,
+    f.job_type, j.route_job_type, j.work_kind, j.task_type,
+    j.resume_job_type, j.task_input_ordinal, j.task_output_ordinal,
+    j.task_input_hash, j.alternate_job_type, j.alternate_task_type,
+    j.alternate_after_seconds, j.wait_for, j.available_at,
+    NULLIF(j.lease_expires_at, '-infinity'::TIMESTAMPTZ) AS lease_expires_at,
+    j.lease_worker_id, j.cancel_requested, j.lease_payload,
+    f.run_policy, f.app_metadata, f.schema_hash, f.parent_job_id,
+    f.created_at,
+    NULLIF(f.expires_at, 'infinity'::TIMESTAMPTZ) AS expires_at,
+    NULL::TIMESTAMPTZ AS archived_at,
+    NULL::TEXT AS completion_status, NULL::TEXT AS completion_detail,
+    NULL::TEXT AS completion_error_kind, NULL::BOOLEAN AS completion_retryable,
+    f.schedule_id, f.schedule_generation, f.schedule_spec_hash,
+    f.scheduled_at, f.schedule_run_id, f.schedule_reason,
+    f.schedule_manual, f.schedule_backfill_id,
+    f.schedule_previous_job_id, f.schedule_failure_history
+FROM pgjobdb.job_facts f
+JOIN pgjobdb.jobs j USING (tenant_id, job_id)
+JOIN pgjobdb.jobs_with_status s USING (tenant_id, job_id)
+WHERE j.route_job_type IS NOT NULL
+UNION ALL
+SELECT
+    f.tenant_id, f.job_id, 'ARCHIVED'::TEXT AS store,
+    CASE WHEN a.final_cancel_requested THEN 'CANCELLED' ELSE 'COMPLETED' END AS status,
+    f.job_type, a.final_route_job_type, a.final_work_kind,
+    a.final_task_type, a.final_resume_job_type,
+    a.final_task_input_ordinal, a.final_task_output_ordinal,
+    a.final_task_input_hash, a.final_alternate_job_type,
+    a.final_alternate_task_type, a.final_alternate_after_seconds,
+    a.final_wait_for, a.final_available_at,
+    NULLIF(a.final_lease_expires_at, '-infinity'::TIMESTAMPTZ),
+    a.final_lease_worker_id, a.final_cancel_requested,
+    a.final_lease_payload, f.run_policy, f.app_metadata,
+    f.schema_hash, f.parent_job_id, f.created_at,
+    NULLIF(f.expires_at, 'infinity'::TIMESTAMPTZ), a.archived_at,
+    a.completion_status, a.completion_detail,
+    a.completion_error_kind, a.completion_retryable,
+    f.schedule_id, f.schedule_generation, f.schedule_spec_hash,
+    f.scheduled_at, f.schedule_run_id, f.schedule_reason,
+    f.schedule_manual, f.schedule_backfill_id,
+    f.schedule_previous_job_id, f.schedule_failure_history
+FROM pgjobdb.job_facts f
+JOIN pgjobdb.jobs_archive a USING (tenant_id, job_id)
+WHERE a.final_route_job_type IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION pgjobdb.get_native_job(
+    p_tenant_id TEXT, p_job_id TEXT
+)
+RETURNS SETOF JSONB
+LANGUAGE sql STABLE
+AS $$
+    SELECT to_jsonb(n) FROM pgjobdb.native_jobs n
+    WHERE n.tenant_id = p_tenant_id AND n.job_id = p_job_id;
+$$;
+
+CREATE OR REPLACE FUNCTION pgjobdb.get_native_job_status(
+    p_tenant_id TEXT, p_job_id TEXT
+)
+RETURNS SETOF JSONB
+LANGUAGE sql STABLE
+AS $$
+    SELECT jsonb_build_object(
+        'tenant_id', n.tenant_id, 'job_id', n.job_id,
+        'store', n.store, 'status', n.status,
+        'job_type', n.job_type, 'created_at', n.created_at,
+        'archived_at', n.archived_at,
+        'completion_status', n.completion_status,
+        'completion_detail', n.completion_detail,
+        'cancel_requested', n.cancel_requested
+    ) FROM pgjobdb.native_jobs n
+    WHERE n.tenant_id = p_tenant_id AND n.job_id = p_job_id;
 $$;
 
 COMMIT;
