@@ -31,6 +31,10 @@ func TestPublicRuntimeInitializesFreshDatabase(t *testing.T) {
 		if err != nil || handle.JobKey.JobId != "fresh" {
 			t.Fatalf("submit through public runtime = %+v, %v", handle, err)
 		}
+		run, err := runtime.GetJobRun(ctx, jobdb.GetJobRunRequest{JobKey: handle.JobKey})
+		if err != nil || run.Job.JobKey != handle.JobKey {
+			t.Fatalf("get job run = %+v, %v", run, err)
+		}
 		if err := runtime.Close(ctx); err != nil {
 			t.Fatalf("close runtime: %v", err)
 		}

@@ -113,6 +113,11 @@ func OpenDSN(ctx context.Context, dsn string, cfg Config) (*Runtime, error) {
 	return runtime, nil
 }
 
+// GetJobRun assembles the public run view from scheduler and chapter records.
+func (r *Runtime) GetJobRun(ctx context.Context, req jobdb.GetJobRunRequest) (jobdb.GetJobRunResponse, error) {
+	return jobdb.GetJobRun(ctx, r, req)
+}
+
 // Close releases artifact storage and a connection opened by OpenDSN.
 func (r *Runtime) Close(ctx context.Context) error {
 	if r == nil {
