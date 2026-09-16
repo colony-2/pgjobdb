@@ -19,6 +19,8 @@ type Scheduler struct {
 	DB pgjobdb.DB
 }
 
+var _ runtimecore.Scheduler = Scheduler{}
+
 func (s Scheduler) GetJob(ctx context.Context, key jobdb.JobKey) (runtimecore.StoredJob, error) {
 	detail, err := pgjobdb.GetJob(ctx, s.DB, pgjobdb.TenantID(key.TenantId), pgjobdb.JobID(key.JobId))
 	if errors.Is(err, pgjobdb.ErrJobNotFound) {
