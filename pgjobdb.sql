@@ -1952,7 +1952,7 @@ CREATE TABLE IF NOT EXISTS pgjobdb.job_facts (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS job_facts_schedule_run_idx
-    ON pgjobdb.job_facts (tenant_id, schedule_id, schedule_run_id)
+    ON pgjobdb.job_facts (tenant_id, schedule_id, schedule_generation, schedule_run_id)
     WHERE schedule_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS job_facts_parent_idx
     ON pgjobdb.job_facts (tenant_id, parent_job_id)

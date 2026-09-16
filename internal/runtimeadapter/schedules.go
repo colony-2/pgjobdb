@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
 	"github.com/colony-2/pgjobdb"
+	"github.com/lib/pq"
 )
 
 func (s Scheduler) UpsertSchedule(ctx context.Context, req runtimecore.StoredScheduleMutation) (runtimecore.StoredSchedule, error) {
@@ -29,9 +31,19 @@ func (s Scheduler) UpsertSchedule(ctx context.Context, req runtimecore.StoredSch
 		ExpectedGeneration: req.ExpectedGeneration,
 	})
 	if err != nil {
-		return runtimecore.StoredSchedule{}, err
+		return runtimecore.StoredSchedule{}, translateScheduleMutationError(err)
 	}
 	return scheduleFromPgjobdb(*stored), nil
+}
+
+func translateScheduleMutationError(err error) error {
+	var pgErr *pq.Error
+	if errors.As(err, &pgErr) && pgErr.Code == "P0001" &&
+		(strings.Contains(pgErr.Message, "generation mismatch") ||
+			strings.Contains(pgErr.Message, "archived schedule")) {
+		return fmt.Errorf("%w: %s", jobdb.ErrConflict, pgErr.Message)
+	}
+	return err
 }
 
 func (s Scheduler) GetSchedule(ctx context.Context, key jobdb.ScheduleKey) (runtimecore.StoredSchedule, error) {
@@ -94,7 +106,7 @@ func (s Scheduler) MutateSchedule(ctx context.Context, req runtimecore.ScheduleS
 		return runtimecore.StoredSchedule{}, fmt.Errorf("unsupported schedule control state %q", req.State)
 	}
 	if err != nil {
-		return runtimecore.StoredSchedule{}, err
+		return runtimecore.StoredSchedule{}, translateScheduleMutationError(err)
 	}
 	return scheduleFromPgjobdb(*stored), nil
 }
