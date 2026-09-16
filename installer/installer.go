@@ -23,6 +23,9 @@ func (i Installer) Apply(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("pgjobdb: context is nil")
 	}
+	if err := i.validateDatabase(ctx); err != nil {
+		return err
+	}
 
 	_, err := i.DB.ExecContext(ctx, i.renderedSQL())
 	return err
@@ -36,9 +39,12 @@ func (i Installer) Verify(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("pgjobdb: context is nil")
 	}
+	if err := i.validateSchemaName(); err != nil {
+		return err
+	}
 	schema := i.schemaName()
 
-	for _, tbl := range []string{"jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts"} {
+	for _, tbl := range []string{"installation", "jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts"} {
 		if err := i.assertTable(ctx, schema, tbl); err != nil {
 			return err
 		}
@@ -57,6 +63,87 @@ func (i Installer) Verify(ctx context.Context) error {
 		if err := i.assertFunction(ctx, schema, fn); err != nil {
 			return err
 		}
+	}
+	if err := i.assertInstallation(ctx, schema); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (i Installer) validateDatabase(ctx context.Context) error {
+	if err := i.validateSchemaName(); err != nil {
+		return err
+	}
+	var oldScheduler bool
+	if err := i.DB.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM information_schema.schemata WHERE schema_name = 'pgwf'
+	)`).Scan(&oldScheduler); err != nil {
+		return fmt.Errorf("pgjobdb: inspect legacy scheduler: %w", err)
+	}
+	if oldScheduler {
+		return fmt.Errorf("pgjobdb: legacy pgwf schema found; use a new empty database")
+	}
+
+	schema := i.schemaName()
+	var initialized bool
+	if err := i.DB.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM information_schema.schemata WHERE schema_name = $1
+	)`, schema).Scan(&initialized); err != nil {
+		return fmt.Errorf("pgjobdb: inspect schema: %w", err)
+	}
+	if initialized {
+		return i.assertInstallation(ctx, schema)
+	}
+
+	var chapterTable sql.NullString
+	if err := i.DB.QueryRowContext(ctx,
+		`SELECT to_regclass('jobdb_chapter_stories')::text`).Scan(&chapterTable); err != nil {
+		return fmt.Errorf("pgjobdb: inspect chapter state: %w", err)
+	}
+	if chapterTable.Valid {
+		var hasChapters bool
+		if err := i.DB.QueryRowContext(ctx,
+			`SELECT EXISTS (SELECT 1 FROM jobdb_chapter_stories)`).Scan(&hasChapters); err != nil {
+			return fmt.Errorf("pgjobdb: inspect chapter rows: %w", err)
+		}
+		if hasChapters {
+			return fmt.Errorf("pgjobdb: existing JobDB chapter state found; use a new empty database")
+		}
+	}
+	return nil
+}
+
+func (i Installer) validateSchemaName() error {
+	schema := i.schemaName()
+	if len(schema) == 0 || len(schema) > 63 {
+		return fmt.Errorf("pgjobdb: invalid schema name %q", schema)
+	}
+	for offset, char := range schema {
+		if (char >= 'a' && char <= 'z') || char == '_' ||
+			(offset > 0 && char >= '0' && char <= '9') {
+			continue
+		}
+		return fmt.Errorf("pgjobdb: invalid schema name %q", schema)
+	}
+	return nil
+}
+
+func (i Installer) assertInstallation(ctx context.Context, schema string) error {
+	var marker sql.NullString
+	if err := i.DB.QueryRowContext(ctx,
+		`SELECT to_regclass($1)::text`, schema+".installation").Scan(&marker); err != nil {
+		return fmt.Errorf("pgjobdb: inspect installation marker: %w", err)
+	}
+	if !marker.Valid {
+		return fmt.Errorf("pgjobdb: schema %s has no installation marker", schema)
+	}
+	var version int
+	query := "SELECT format_version FROM " + schema + ".installation WHERE name = $1"
+	if err := i.DB.QueryRowContext(ctx, query, schema).Scan(&version); err != nil {
+		return fmt.Errorf("pgjobdb: read installation marker: %w", err)
+	}
+	if version != 1 {
+		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil
 }

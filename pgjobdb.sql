@@ -4,6 +4,16 @@ CREATE SCHEMA IF NOT EXISTS pgjobdb;
 
 SET search_path = pgjobdb, public;
 
+CREATE TABLE IF NOT EXISTS pgjobdb.installation (
+    name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
+    format_version INTEGER NOT NULL CHECK (format_version = 1),
+    installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+INSERT INTO pgjobdb.installation (name, format_version)
+VALUES ('pgjobdb', 1)
+ON CONFLICT (name) DO NOTHING;
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE SEQUENCE IF NOT EXISTS pgjobdb.jobs_trace_id_seq;
