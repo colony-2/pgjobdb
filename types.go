@@ -282,6 +282,21 @@ type ListJobsResult struct {
 	NextPageToken string
 }
 
+type ListScheduleRunsOptions struct {
+	TenantID        TenantID
+	ScheduleID      string
+	ScheduledAfter  *time.Time
+	ScheduledBefore *time.Time
+	Statuses        []JobStatus
+	PageSize        int
+	PageToken       string
+}
+
+type ListScheduleRunsResult struct {
+	Runs          []JobDetail
+	NextPageToken string
+}
+
 type ScheduleState string
 
 const (

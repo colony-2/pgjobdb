@@ -2989,4 +2989,42 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION pgjobdb.list_native_schedule_runs(
+    p_tenant_id TEXT,
+    p_schedule_id TEXT,
+    p_scheduled_after TIMESTAMPTZ,
+    p_scheduled_before TIMESTAMPTZ,
+    p_statuses TEXT[],
+    p_before_scheduled_at TIMESTAMPTZ,
+    p_before_job_id TEXT,
+    p_limit INTEGER
+)
+RETURNS SETOF JSONB
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF p_tenant_id IS NULL OR p_tenant_id = '' OR
+        p_schedule_id IS NULL OR p_schedule_id = '' THEN
+        RAISE EXCEPTION 'tenant id and schedule id are required';
+    END IF;
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
+        RAISE EXCEPTION 'schedule run page limit must be between 1 and 1000';
+    END IF;
+    IF (p_before_scheduled_at IS NULL) <> (p_before_job_id IS NULL) THEN
+        RAISE EXCEPTION 'schedule run cursor fields must be provided together';
+    END IF;
+    RETURN QUERY
+    SELECT to_jsonb(n) FROM pgjobdb.native_jobs n
+    WHERE n.tenant_id = p_tenant_id AND n.schedule_id = p_schedule_id
+      AND n.scheduled_at IS NOT NULL
+      AND (p_scheduled_after IS NULL OR n.scheduled_at >= p_scheduled_after)
+      AND (p_scheduled_before IS NULL OR n.scheduled_at <= p_scheduled_before)
+      AND (p_statuses IS NULL OR n.status = ANY(p_statuses))
+      AND (p_before_scheduled_at IS NULL OR
+        (n.scheduled_at, n.job_id) < (p_before_scheduled_at, p_before_job_id))
+    ORDER BY n.scheduled_at DESC, n.job_id DESC
+    LIMIT p_limit;
+END;
+$$;
+
 COMMIT;
