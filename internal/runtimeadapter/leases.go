@@ -3,11 +3,14 @@ package runtimeadapter
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
 	"github.com/colony-2/pgjobdb"
+	"github.com/lib/pq"
 )
 
 func (s Scheduler) AcquireWork(ctx context.Context, req runtimecore.WorkRequest) ([]runtimecore.LeaseSnapshot, error) {
@@ -59,11 +62,8 @@ func (s Scheduler) AcquireJobLease(ctx context.Context, req runtimecore.JobLease
 
 func (s Scheduler) ValidateLease(ctx context.Context, identity runtimecore.LeaseIdentity) (runtimecore.LeaseSnapshot, error) {
 	lease, err := pgjobdb.ValidateLease(ctx, s.DB, identityToPgjobdb(identity))
-	if errors.Is(err, pgjobdb.ErrLeaseLost) {
-		return runtimecore.LeaseSnapshot{}, jobdb.ErrExecutionLeaseLost
-	}
 	if err != nil {
-		return runtimecore.LeaseSnapshot{}, err
+		return runtimecore.LeaseSnapshot{}, translateLeaseError(err)
 	}
 	return leaseFromPgjobdb(*lease, 0)
 }
@@ -71,13 +71,25 @@ func (s Scheduler) ValidateLease(ctx context.Context, identity runtimecore.Lease
 func (s Scheduler) KeepAliveLease(ctx context.Context, mutation runtimecore.LeaseMutation) (runtimecore.LeaseSnapshot, error) {
 	lease, err := pgjobdb.KeepAliveLease(ctx, s.DB,
 		identityToPgjobdb(mutation.Identity), mutation.Duration)
-	if errors.Is(err, pgjobdb.ErrLeaseLost) {
-		return runtimecore.LeaseSnapshot{}, jobdb.ErrExecutionLeaseLost
-	}
 	if err != nil {
-		return runtimecore.LeaseSnapshot{}, err
+		return runtimecore.LeaseSnapshot{}, translateLeaseError(err)
 	}
 	return leaseFromPgjobdb(*lease, mutation.Duration)
+}
+
+func translateLeaseError(err error) error {
+	if errors.Is(err, pgjobdb.ErrLeaseLost) {
+		return jobdb.ErrExecutionLeaseLost
+	}
+	var pgErr *pq.Error
+	if errors.As(err, &pgErr) && pgErr.Code == "P0001" &&
+		(strings.Contains(pgErr.Message, "lease not found") ||
+			strings.Contains(pgErr.Message, "lease not active") ||
+			strings.Contains(pgErr.Message, "lease owner mismatch") ||
+			strings.Contains(pgErr.Message, "cannot extend the lease")) {
+		return fmt.Errorf("%w: %s", jobdb.ErrExecutionLeaseLost, pgErr.Message)
+	}
+	return err
 }
 
 func workSelectorToPgjobdb(selector runtimecore.WorkSelector) pgjobdb.WorkSelector {

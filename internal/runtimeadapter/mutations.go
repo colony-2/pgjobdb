@@ -67,7 +67,7 @@ func (s Scheduler) CompleteLease(ctx context.Context, mutation runtimecore.Compl
 		Status: pgjobdb.CompletionStatus(mutation.Status), Detail: mutation.Detail,
 		ErrorKind: mutation.ErrorKind, Retryable: mutation.Retryable,
 	}); err != nil {
-		return runtimecore.StoredJob{}, err
+		return runtimecore.StoredJob{}, translateLeaseError(err)
 	}
 	return s.GetJob(ctx, mutation.Identity.JobKey)
 }
@@ -95,7 +95,7 @@ func (s Scheduler) RescheduleLease(ctx context.Context, mutation runtimecore.Res
 		}
 	}
 	if err := pgjobdb.RescheduleJob(ctx, s.DB, identityToPgjobdb(mutation.Identity), request); err != nil {
-		return runtimecore.StoredJob{}, err
+		return runtimecore.StoredJob{}, translateLeaseError(err)
 	}
 	return s.GetJob(ctx, mutation.Identity.JobKey)
 }
