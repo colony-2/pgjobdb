@@ -15,7 +15,60 @@ type DB interface {
 
 type TenantID string
 type JobID string
+type WorkerID string
 type JobType string
+
+type RetryPolicy struct {
+	InitialIntervalMillis  int64    `json:"initial_interval_millis,omitempty"`
+	BackoffCoefficient     float64  `json:"backoff_coefficient,omitempty"`
+	MaximumIntervalMillis  int64    `json:"maximum_interval_millis,omitempty"`
+	MaximumAttempts        int32    `json:"maximum_attempts,omitempty"`
+	NonRetryableErrorTypes []string `json:"non_retryable_error_types,omitempty"`
+}
+
+type RunPolicy struct {
+	Retry                   RetryPolicy `json:"retry,omitempty"`
+	InvocationTimeoutMillis *int64      `json:"invocation_timeout_millis,omitempty"`
+	TotalTimeoutMillis      *int64      `json:"total_timeout_millis,omitempty"`
+}
+
+type ScheduleOccurrence struct {
+	ScheduleID     string          `json:"schedule_id"`
+	Generation     int64           `json:"generation"`
+	SpecHash       string          `json:"spec_hash"`
+	ScheduledAt    time.Time       `json:"scheduled_at"`
+	RunID          string          `json:"run_id"`
+	Reason         string          `json:"reason,omitempty"`
+	Manual         bool            `json:"manual,omitempty"`
+	BackfillID     string          `json:"backfill_id,omitempty"`
+	PreviousJobID  string          `json:"previous_job_id,omitempty"`
+	FailureHistory json.RawMessage `json:"failure_history,omitempty"`
+}
+
+type RuntimeMetadata struct {
+	SchemaHash  string
+	ParentJobID JobID
+	Schedule    *ScheduleOccurrence
+}
+
+type SubmitJobRequest struct {
+	TenantID     TenantID
+	JobID        JobID
+	WorkerID     WorkerID
+	JobType      JobType
+	RunPolicy    RunPolicy
+	AppMetadata  json.RawMessage
+	Runtime      RuntimeMetadata
+	WaitFor      []JobID
+	LeasePayload json.RawMessage
+	AvailableAt  *time.Time
+	ExpiresAt    *time.Time
+}
+
+type SubmitJobResult struct {
+	JobID   JobID
+	Created bool
+}
 
 type ScheduleState string
 

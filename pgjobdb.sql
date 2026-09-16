@@ -2267,4 +2267,112 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION pgjobdb.submit_native_job(
+    p_tenant_id TEXT,
+    p_job_id TEXT,
+    p_worker_id TEXT,
+    p_job_type TEXT,
+    p_run_policy JSONB,
+    p_app_metadata JSONB,
+    p_schema_hash TEXT,
+    p_parent_job_id TEXT,
+    p_schedule JSONB,
+    p_wait_for TEXT[],
+    p_available_at TIMESTAMPTZ,
+    p_expires_at TIMESTAMPTZ,
+    p_lease_payload JSONB
+)
+RETURNS TABLE(job_id TEXT, created BOOLEAN)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_inserted INTEGER;
+    v_existing pgjobdb.job_facts%ROWTYPE;
+    v_schedule_id TEXT := p_schedule->>'schedule_id';
+    v_schedule_generation BIGINT := (p_schedule->>'generation')::BIGINT;
+    v_schedule_spec_hash TEXT := p_schedule->>'spec_hash';
+    v_scheduled_at TIMESTAMPTZ := (p_schedule->>'scheduled_at')::TIMESTAMPTZ;
+    v_schedule_run_id TEXT := p_schedule->>'run_id';
+    v_expires_at TIMESTAMPTZ := COALESCE(p_expires_at, 'infinity');
+BEGIN
+    IF p_tenant_id IS NULL OR p_tenant_id = '' OR p_job_id IS NULL OR p_job_id = ''
+        OR p_worker_id IS NULL OR p_worker_id = '' OR p_job_type IS NULL
+        OR p_job_type = '' THEN
+        RAISE EXCEPTION 'tenant, job, worker, and job type are required';
+    END IF;
+    IF jsonb_typeof(p_run_policy) IS DISTINCT FROM 'object'
+        OR jsonb_typeof(p_app_metadata) IS DISTINCT FROM 'object'
+        OR jsonb_typeof(p_lease_payload) IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'run policy, app metadata, and lease payload must be JSON objects';
+    END IF;
+    IF p_schedule IS NOT NULL AND jsonb_typeof(p_schedule) IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'schedule occurrence must be a JSON object';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pgjobdb.jobs_archive a
+        WHERE a.tenant_id = p_tenant_id AND a.job_id = p_job_id) THEN
+        RAISE EXCEPTION 'completed job id cannot be resubmitted';
+    END IF;
+
+    INSERT INTO pgjobdb.job_facts (
+        tenant_id, job_id, job_type, run_policy, app_metadata, schema_hash,
+        parent_job_id, schedule_id, schedule_generation, schedule_spec_hash,
+        scheduled_at, schedule_run_id, schedule_reason, schedule_manual,
+        schedule_backfill_id, schedule_previous_job_id,
+        schedule_failure_history, created_by_worker_id, expires_at
+    ) VALUES (
+        p_tenant_id, p_job_id, p_job_type, p_run_policy, p_app_metadata,
+        p_schema_hash, p_parent_job_id, v_schedule_id, v_schedule_generation,
+        v_schedule_spec_hash, v_scheduled_at, v_schedule_run_id,
+        p_schedule->>'reason', COALESCE((p_schedule->>'manual')::BOOLEAN, FALSE),
+        p_schedule->>'backfill_id', p_schedule->>'previous_job_id',
+        p_schedule->'failure_history', p_worker_id, v_expires_at
+    ) ON CONFLICT ON CONSTRAINT job_facts_pkey DO NOTHING;
+    GET DIAGNOSTICS v_inserted = ROW_COUNT;
+
+    IF v_inserted = 0 THEN
+        SELECT * INTO v_existing FROM pgjobdb.job_facts f
+        WHERE f.tenant_id = p_tenant_id AND f.job_id = p_job_id;
+        IF v_existing.job_type IS DISTINCT FROM p_job_type
+            OR v_existing.run_policy IS DISTINCT FROM p_run_policy
+            OR v_existing.app_metadata IS DISTINCT FROM p_app_metadata
+            OR v_existing.schema_hash IS DISTINCT FROM p_schema_hash
+            OR v_existing.parent_job_id IS DISTINCT FROM p_parent_job_id
+            OR v_existing.schedule_id IS DISTINCT FROM v_schedule_id
+            OR v_existing.schedule_generation IS DISTINCT FROM v_schedule_generation
+            OR v_existing.schedule_spec_hash IS DISTINCT FROM v_schedule_spec_hash
+            OR v_existing.scheduled_at IS DISTINCT FROM v_scheduled_at
+            OR v_existing.schedule_run_id IS DISTINCT FROM v_schedule_run_id
+            OR v_existing.schedule_reason IS DISTINCT FROM p_schedule->>'reason'
+            OR v_existing.schedule_manual IS DISTINCT FROM
+                COALESCE((p_schedule->>'manual')::BOOLEAN, FALSE)
+            OR v_existing.schedule_backfill_id IS DISTINCT FROM
+                p_schedule->>'backfill_id'
+            OR v_existing.schedule_previous_job_id IS DISTINCT FROM
+                p_schedule->>'previous_job_id'
+            OR v_existing.schedule_failure_history IS DISTINCT FROM
+                p_schedule->'failure_history'
+            OR v_existing.expires_at IS DISTINCT FROM v_expires_at THEN
+            RAISE EXCEPTION 'job id already exists with different immutable facts';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pgjobdb.jobs j
+            WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id) THEN
+            RAISE EXCEPTION 'job facts exist without active scheduler state';
+        END IF;
+        RETURN QUERY SELECT p_job_id, FALSE;
+        RETURN;
+    END IF;
+
+    INSERT INTO pgjobdb.jobs (
+        tenant_id, job_id, next_need, wait_for, available_at, expires_at,
+        route_job_type, work_kind, lease_payload
+    ) VALUES (
+        p_tenant_id, p_job_id, '__pgjobdb_native__',
+        pgjobdb.normalize_wait_for(p_tenant_id, p_wait_for),
+        COALESCE(p_available_at, clock_timestamp()), v_expires_at,
+        p_job_type, 'JOB', p_lease_payload
+    );
+    RETURN QUERY SELECT p_job_id, TRUE;
+END;
+$$;
+
 COMMIT;
