@@ -2775,4 +2775,54 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION pgjobdb.complete_native_task_work(
+    p_tenant_id TEXT,
+    p_job_id TEXT,
+    p_worker_id TEXT,
+    p_job_type TEXT,
+    p_task_type TEXT,
+    p_resume_job_type TEXT,
+    p_input_ordinal BIGINT,
+    p_output_ordinal BIGINT,
+    p_input_hash TEXT,
+    p_lease_payload JSONB DEFAULT NULL
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_job pgjobdb.jobs%ROWTYPE;
+BEGIN
+    IF p_worker_id IS NULL OR p_worker_id = '' THEN
+        RAISE EXCEPTION 'worker id is required';
+    END IF;
+    SELECT * INTO v_job FROM pgjobdb.jobs j
+    WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'native waiting task not found';
+    END IF;
+    IF v_job.lease_expires_at > clock_timestamp() THEN
+        RAISE EXCEPTION 'waiting task has an active lease';
+    END IF;
+    IF v_job.cancel_requested THEN
+        RAISE EXCEPTION 'cancelled waiting task cannot be completed';
+    END IF;
+    IF v_job.work_kind IS DISTINCT FROM 'TASK'
+        OR v_job.route_job_type IS DISTINCT FROM p_job_type
+        OR v_job.task_type IS DISTINCT FROM p_task_type
+        OR v_job.resume_job_type IS DISTINCT FROM p_resume_job_type
+        OR v_job.task_input_ordinal IS DISTINCT FROM p_input_ordinal
+        OR v_job.task_output_ordinal IS DISTINCT FROM p_output_ordinal
+        OR v_job.task_input_hash IS DISTINCT FROM p_input_hash THEN
+        RAISE EXCEPTION 'waiting task coordinates do not match';
+    END IF;
+    RETURN pgjobdb.reschedule_native_job(
+        p_tenant_id, p_job_id, NULL, p_worker_id,
+        p_resume_job_type, 'JOB', NULL, NULL, NULL, NULL, NULL,
+        ARRAY[]::TEXT[], clock_timestamp(), p_lease_payload,
+        FALSE, NULL, NULL, NULL
+    );
+END;
+$$;
+
 COMMIT;

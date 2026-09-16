@@ -163,6 +163,15 @@ type RescheduleRequest struct {
 	Alternate    *AlternateRoute
 }
 
+type CompleteTaskWorkRequest struct {
+	TenantID     TenantID
+	JobID        JobID
+	WorkerID     WorkerID
+	JobType      JobType
+	Task         TaskWork
+	LeasePayload json.RawMessage
+}
+
 type ScheduleState string
 
 const (
