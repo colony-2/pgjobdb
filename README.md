@@ -3,6 +3,12 @@
 `pgjobdb` is the Postgres scheduler and optional runtime adapter for JobDB.
 Applications that choose another runtime do not need to import this module.
 
+Import `github.com/colony-2/pgjobdb/runtime` to use the JobDB workflow
+runtime on Postgres. Its `New(ctx, db, cfg)` constructor initializes a new
+database and wraps a caller-owned `*sql.DB`; `OpenDSN(ctx, dsn, cfg)` owns the
+connection. Both require a `BlobStoreURI` for chapter artifacts. Call `Close`
+when finished.
+
 This repository is under construction. Its first deployment requires a new,
 empty Postgres database. It does not migrate or adopt existing `pgwf` data.
 

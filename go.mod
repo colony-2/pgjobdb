@@ -3,7 +3,7 @@ module github.com/colony-2/pgjobdb
 go 1.25.5
 
 require (
-	github.com/colony-2/jobdb v0.0.17-0.20260916204053-eda49626423a
+	github.com/colony-2/jobdb v0.0.17-0.20260916210729-1394175361fc
 	github.com/fergusstrange/embedded-postgres v1.32.0
 	github.com/lib/pq v1.10.9
 )
