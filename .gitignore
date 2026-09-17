@@ -2,3 +2,6 @@
 *.test
 *.out
 coverage.txt
+dist/
+.container-build/
+container-rejection.log

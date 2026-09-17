@@ -1,0 +1,104 @@
+project_name: pgjobdb
+version: 2
+
+builds:
+  - id: jobdb
+    binary: jobdb
+    main: ./cmd/jobdb
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+dockers_v2:
+  - id: jobdb-image
+    dockerfile: Dockerfile
+    ids:
+      - jobdb
+    images:
+      - ghcr.io/colony-2/pgjobdb
+    tags:
+      - "{{ .Tag }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    sbom: true
+    annotations:
+      "index,manifest:org.opencontainers.image.title": "pgjobdb"
+      "index,manifest:org.opencontainers.image.description": "Durable job runtime server"
+      "index,manifest:org.opencontainers.image.source": "https://github.com/colony-2/pgjobdb"
+      "index,manifest:org.opencontainers.image.url": "https://github.com/colony-2/pgjobdb"
+      "index,manifest:org.opencontainers.image.licenses": "Apache-2.0"
+      "index,manifest:org.opencontainers.image.version": "{{ .Version }}"
+      "index,manifest:org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "index,manifest:org.opencontainers.image.created": "{{ .Date }}"
+
+docker_signs:
+  - id: jobdb-image-keyless
+    cmd: cosign
+    artifacts: ""
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - --yes
+    output: true
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - README.md
+      - LICENSE
+      - docs/*
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - 'typo'
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: colony-2
+    name: pgjobdb
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## pgjobdb {{.Version}}
+
+    Release of the pgjobdb Postgres runtime
+
+  footer: |
+    **Full Changelog**: https://github.com/colony-2/pgjobdb/compare/{{ .PreviousTag }}...{{ .Tag }}
