@@ -42,13 +42,13 @@ func getWork(ctx context.Context, db DB, worker WorkerID, selector WorkSelector,
 	}
 	jobTypes := make([]string, 0, len(selector.JobTypes))
 	for _, jobType := range selector.JobTypes {
-		if jobType == "" {
+		if !validTypeName(jobType) {
 			return nil, fmt.Errorf("pgjobdb: selector job type is required")
 		}
 		jobTypes = append(jobTypes, string(jobType))
 	}
 	for _, task := range selector.Tasks {
-		if task.JobType == "" || task.TaskType == "" {
+		if !validTypeName(task.JobType) || !validTypeName(task.TaskType) {
 			return nil, fmt.Errorf("pgjobdb: task selector job and task types are required")
 		}
 	}

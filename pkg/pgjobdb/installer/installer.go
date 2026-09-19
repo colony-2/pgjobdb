@@ -153,7 +153,7 @@ func (i Installer) assertInstallation(ctx context.Context, schema string) error 
 	if err := i.DB.QueryRowContext(ctx, query, schema).Scan(&version); err != nil {
 		return fmt.Errorf("pgjobdb: read installation marker: %w", err)
 	}
-	if version != 2 {
+	if version != 3 {
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil

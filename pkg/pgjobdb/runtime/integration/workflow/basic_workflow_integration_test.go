@@ -148,7 +148,7 @@ func userInputWatcher(ctx context.Context, engine workflow.Engine, tenantIDs []s
 		default:
 		}
 
-		handles, err := engine.FindTasksWaitingForCapability(ctx, pipeJobName, userInputTaskName, tenantIDs)
+		handles, err := engine.FindTasksWaitingForRoute(ctx, pipeJobName, userInputTaskName, tenantIDs)
 		if err != nil {
 			// If the database is shutting down or context will end soon, just back off.
 			select {

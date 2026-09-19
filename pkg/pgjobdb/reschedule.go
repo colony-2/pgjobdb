@@ -38,7 +38,7 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 	if err := validateScheduleDB(ctx, db); err != nil {
 		return err
 	}
-	if req.RouteJobType == "" {
+	if !validTypeName(req.RouteJobType) {
 		return fmt.Errorf("pgjobdb: route job type is required")
 	}
 	var taskType, resumeType, inputOrdinal, outputOrdinal, inputHash any
@@ -48,8 +48,8 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 			return fmt.Errorf("pgjobdb: job route cannot carry task coordinates")
 		}
 	case WorkKindTask:
-		if req.Task == nil || req.Task.TaskType == "" ||
-			req.Task.ResumeJobType == "" || req.Task.InputOrdinal < 0 ||
+		if req.Task == nil || !validTypeName(req.Task.TaskType) ||
+			!validTypeName(req.Task.ResumeJobType) || req.Task.InputOrdinal < 0 ||
 			req.Task.OutputOrdinal < 0 || req.Task.InputHash == "" {
 			return fmt.Errorf("pgjobdb: task route requires complete coordinates")
 		}
@@ -77,6 +77,9 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 				return fmt.Errorf("pgjobdb: cleared alternate route cannot have task or delay")
 			}
 		} else {
+			if !validTypeName(req.Alternate.JobType) || (req.Alternate.TaskType != "" && !validTypeName(req.Alternate.TaskType)) {
+				return fmt.Errorf("pgjobdb: invalid alternate route identifiers")
+			}
 			if req.Alternate.TaskType != "" && req.WorkKind != WorkKindTask {
 				return fmt.Errorf("pgjobdb: alternate task route requires task coordinates")
 			}

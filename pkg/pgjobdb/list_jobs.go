@@ -68,7 +68,7 @@ func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult
 	}
 	jobTypes := make([]string, 0, len(opts.JobTypes))
 	for _, jobType := range opts.JobTypes {
-		if jobType == "" {
+		if !validTypeName(jobType) {
 			return nil, fmt.Errorf("pgjobdb: job type filter cannot be empty")
 		}
 		jobTypes = append(jobTypes, string(jobType))
@@ -78,7 +78,7 @@ func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult
 		tasks = []TaskSelector{}
 	}
 	for _, task := range tasks {
-		if task.JobType == "" || task.TaskType == "" {
+		if !validTypeName(task.JobType) || !validTypeName(task.TaskType) {
 			return nil, fmt.Errorf("pgjobdb: task selector needs job and task types")
 		}
 	}

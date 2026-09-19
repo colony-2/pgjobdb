@@ -14,7 +14,7 @@ func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 	if err := validateScheduleDB(ctx, db); err != nil {
 		return nil, err
 	}
-	if req.TenantID == "" || req.JobID == "" || req.WorkerID == "" || req.JobType == "" {
+	if req.TenantID == "" || req.JobID == "" || req.WorkerID == "" || !validTypeName(req.JobType) {
 		return nil, fmt.Errorf("pgjobdb: tenant, job, worker, and job type are required")
 	}
 	if req.RunPolicy.Retry.InitialIntervalMillis < 0 ||

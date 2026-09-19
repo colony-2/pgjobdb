@@ -27,7 +27,7 @@ func UpsertSchedule(ctx context.Context, db DB, req UpsertScheduleRequest) (*Sch
 	if req.State != ScheduleStateActive && req.State != ScheduleStatePaused {
 		return nil, fmt.Errorf("pgjobdb: schedule upsert requires ACTIVE or PAUSED state")
 	}
-	if req.SpecHash == "" || req.TargetJobType == "" || req.OverlapPolicy == "" {
+	if req.SpecHash == "" || !validTypeName(req.TargetJobType) || req.OverlapPolicy == "" {
 		return nil, fmt.Errorf("pgjobdb: schedule spec hash, target job type, and overlap policy are required")
 	}
 	for name, raw := range map[string]json.RawMessage{

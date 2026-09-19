@@ -31,7 +31,7 @@ func TestPublicRuntimeLeaseTransport(t *testing.T) {
 			t.Fatal(err)
 		}
 		lease, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
-			JobKey: root.JobKey, WorkerID: "worker", Capabilities: []string{"collect"},
+			JobKey: root.JobKey, WorkerID: "worker", Routes: []jobdb.Route{{JobType: "collect"}},
 		})
 		if err != nil || lease == nil {
 			t.Fatalf("lease root = %+v, %v", lease, err)
@@ -49,7 +49,7 @@ func TestPublicRuntimeLeaseTransport(t *testing.T) {
 			t.Fatalf("submit child = %+v, %v", child, err)
 		}
 		if err := runtime.RescheduleJobWithLeaseByID(ctx, root.JobKey, lease.LeaseID(),
-			"worker", jobdb.RescheduleExecutionRequest{NextNeed: "collect"}); err != nil {
+			"worker", jobdb.RescheduleExecutionRequest{NextRoute: jobdb.Route{JobType: "collect"}}); err != nil {
 			t.Fatalf("reschedule lease: %v", err)
 		}
 		if err := runtime.KeepAliveLeaseByID(ctx, root.JobKey, lease.LeaseID(),
@@ -57,7 +57,7 @@ func TestPublicRuntimeLeaseTransport(t *testing.T) {
 			t.Fatalf("renew stale lease = %v", err)
 		}
 		again, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
-			JobKey: root.JobKey, WorkerID: "worker-2", Capabilities: []string{"collect"},
+			JobKey: root.JobKey, WorkerID: "worker-2", Routes: []jobdb.Route{{JobType: "collect"}},
 		})
 		if err != nil || again == nil {
 			t.Fatalf("lease rescheduled job = %+v, %v", again, err)

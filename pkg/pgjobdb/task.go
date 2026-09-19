@@ -13,8 +13,8 @@ func CompleteTaskWork(ctx context.Context, db DB, req CompleteTaskWorkRequest) e
 		return err
 	}
 	if req.TenantID == "" || req.JobID == "" || req.WorkerID == "" ||
-		req.JobType == "" || req.Task.TaskType == "" ||
-		req.Task.ResumeJobType == "" || req.Task.InputOrdinal < 0 ||
+		!validTypeName(req.JobType) || !validTypeName(req.Task.TaskType) ||
+		!validTypeName(req.Task.ResumeJobType) || req.Task.InputOrdinal < 0 ||
 		req.Task.OutputOrdinal < 0 || req.Task.InputHash == "" {
 		return fmt.Errorf("pgjobdb: complete task requires full route and coordinates")
 	}

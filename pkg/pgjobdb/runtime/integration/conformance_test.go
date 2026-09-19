@@ -11,13 +11,13 @@ import (
 )
 
 func TestPostgresRuntimeConformance(t *testing.T) {
-	capabilities := runtimetest.Capabilities{
+	routes := runtimetest.Capabilities{
 		Leases: true, Schedules: true, SchemaRegistry: true, RuntimeStorage: true,
 	}
 	runtimetest.RunWorkflowRuntimeConformance(t,
 		runtimetest.Harness{
 			Name:         "postgres",
-			Capabilities: capabilities,
+			Capabilities: routes,
 			New: func(tb testing.TB) runtimetest.Fixture {
 				embedded := startConformanceRuntime(tb)
 				return runtimetest.Fixture{
@@ -28,7 +28,7 @@ func TestPostgresRuntimeConformance(t *testing.T) {
 		},
 		runtimetest.Harness{
 			Name:         "remote-postgres",
-			Capabilities: capabilities,
+			Capabilities: routes,
 			New: func(tb testing.TB) runtimetest.Fixture {
 				embedded := startConformanceRuntime(tb)
 				server := httptest.NewServer(remoteruntime.NewServer(embedded.Runtime))

@@ -61,7 +61,7 @@ func seedContainerSmokeData(t *testing.T, ctx context.Context, runtime jobdb.Wor
 	lease, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
 		JobKey:        handle.JobKey,
 		WorkerID:      "container-smoke-worker",
-		Capabilities:  []string{containerSmokeJobType},
+		Routes:        []jobdb.Route{{JobType: containerSmokeJobType}},
 		LeaseDuration: 5 * time.Minute,
 	})
 	if err != nil {

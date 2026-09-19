@@ -43,14 +43,14 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 			t.Fatal(err)
 		}
 		lease, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
-			JobKey: root.JobKey, WorkerID: "worker", Capabilities: []string{"collect"},
+			JobKey: root.JobKey, WorkerID: "worker", Routes: []jobdb.Route{{JobType: "collect"}},
 		})
 		if err != nil || lease == nil {
 			t.Fatalf("lease root = %+v, %v", lease, err)
 		}
 		if err := lease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{
-			NextNeed: "collect:download",
-			TaskWait: &jobdb.TaskWait{InputOrdinal: 0, OutputOrdinal: 1, ResumeNeed: "collect", InputHash: "sha256:input"},
+			NextRoute: jobdb.Route{JobType: "collect", TaskType: "download"},
+			TaskWait:  &jobdb.TaskWait{InputOrdinal: 0, OutputOrdinal: 1, ResumeJobType: "collect", InputHash: "sha256:input"},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 			t.Fatal(err)
 		}
 		req := jobdb.CompleteTaskIfWaitingRequest{
-			JobKey: root.JobKey, Capability: "collect:download", ResumeNeed: "collect",
+			JobKey: root.JobKey, Route: jobdb.Route{JobType: "collect", TaskType: "download"}, ResumeJobType: "collect",
 			OutputOrdinal: 1, InputHash: "sha256:input", Data: output,
 		}
 		wrong := req
@@ -69,7 +69,7 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 			t.Fatalf("wrong input hash = %v", err)
 		}
 		taskLease, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
-			JobKey: root.JobKey, WorkerID: "task-worker", Capabilities: []string{"collect:download"},
+			JobKey: root.JobKey, WorkerID: "task-worker", Routes: []jobdb.Route{{JobType: "collect", TaskType: "download"}},
 		})
 		if err != nil || taskLease == nil {
 			t.Fatalf("lease task = %+v, %v", taskLease, err)
@@ -78,7 +78,7 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 			t.Fatalf("completion during active lease = %v", err)
 		}
 		if err := taskLease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{
-			NextNeed: "collect:download", TaskWait: taskLease.ExecutionState().TaskWait,
+			NextRoute: jobdb.Route{JobType: "collect", TaskType: "download"}, TaskWait: taskLease.ExecutionState().TaskWait,
 		}); err != nil {
 			t.Fatalf("return task to queue: %v", err)
 		}
@@ -100,9 +100,9 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 			t.Fatalf("task artifact key = %+v, %v", key, err)
 		}
 		resumed, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
-			JobKey: root.JobKey, WorkerID: "job-worker", Capabilities: []string{"collect"},
+			JobKey: root.JobKey, WorkerID: "job-worker", Routes: []jobdb.Route{{JobType: "collect"}},
 		})
-		if err != nil || resumed == nil || resumed.Capability() != "collect" {
+		if err != nil || resumed == nil || resumed.Route() != (jobdb.Route{JobType: "collect"}) {
 			t.Fatalf("resumed job lease = %+v, %v", resumed, err)
 		}
 	})

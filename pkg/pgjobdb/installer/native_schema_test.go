@@ -43,26 +43,26 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 		}
 
 		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.jobs
-			(tenant_id, job_id, next_need, route_job_type, work_kind, task_type)
-			VALUES ('tenant', 'invalid', 'collect:task', 'collect', 'TASK', 'task')`); err == nil {
+			(tenant_id, job_id, route_job_type, work_kind, task_type)
+			VALUES ('tenant', 'invalid', 'collect', 'TASK', 'task')`); err == nil {
 			t.Fatal("expected incomplete task coordinates to fail")
 		}
 		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.jobs
-			(tenant_id, job_id, next_need, route_job_type, work_kind, task_type,
+			(tenant_id, job_id, route_job_type, work_kind, task_type,
 			resume_job_type, task_input_ordinal, task_output_ordinal,
 			task_input_hash)
-			VALUES ('tenant', 'job-1', 'collect:task', 'collect', 'TASK', 'task',
+			VALUES ('tenant', 'job-1', 'collect', 'TASK', 'task',
 			'collect', 1, 2, 'sha256:input')`); err != nil {
 			t.Fatalf("insert typed task route: %v", err)
 		}
 
 		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.jobs_archive
-			(tenant_id, job_id, next_need, created_at, completion_status,
+			(tenant_id, job_id, created_at, completion_status,
 			final_route_job_type, final_work_kind, final_task_type,
 			final_resume_job_type, final_task_input_ordinal,
 			final_task_output_ordinal, final_task_input_hash,
 			final_wait_for, final_available_at, final_cancel_requested)
-			VALUES ('tenant', 'job-1', 'collect:task', now(), 'failed_app',
+			VALUES ('tenant', 'job-1', now(), 'failed_app',
 			'collect', 'TASK', 'task', 'collect', 1, 2, 'sha256:input',
 			ARRAY['prerequisite'], now(), TRUE)`); err != nil {
 			t.Fatalf("insert archived task snapshot: %v", err)

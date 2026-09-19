@@ -46,9 +46,9 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 			t.Fatal(err)
 		}
 		lease, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
-			JobKey: root.JobKey, WorkerID: "worker", Capabilities: []string{"collect"},
+			JobKey: root.JobKey, WorkerID: "worker", Routes: []jobdb.Route{{JobType: "collect"}},
 		})
-		if err != nil || lease == nil || lease.Capability() != "collect" {
+		if err != nil || lease == nil || lease.Route() != (jobdb.Route{JobType: "collect"}) {
 			t.Fatalf("lease root = %+v, %v", lease, err)
 		}
 		if lease.ExecutionState().RunPolicy.Retry.MaximumAttempts != 3 {
@@ -66,26 +66,26 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 			t.Fatalf("child parent = %+v, %v", childRow, err)
 		}
 		if err := lease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{
-			NextNeed:      "collect:download",
-			TaskWait:      &jobdb.TaskWait{InputOrdinal: 0, OutputOrdinal: 1, ResumeNeed: "collect", InputHash: "sha256:input"},
-			AlternateNeed: "collect", AlternateAfter: durationPtr(10 * time.Second),
+			NextRoute:      jobdb.Route{JobType: "collect", TaskType: "download"},
+			TaskWait:       &jobdb.TaskWait{InputOrdinal: 0, OutputOrdinal: 1, ResumeJobType: "collect", InputHash: "sha256:input"},
+			AlternateRoute: &jobdb.Route{JobType: "collect"}, AlternateAfter: durationPtr(10 * time.Second),
 		}); err != nil {
 			t.Fatalf("route external task: %v", err)
 		}
 		taskLease, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
 			JobKey: root.JobKey, WorkerID: "task-worker",
-			Capabilities: []string{"collect:download"},
+			Routes: []jobdb.Route{{JobType: "collect", TaskType: "download"}},
 		})
-		if err != nil || taskLease == nil || taskLease.Capability() != "collect:download" {
+		if err != nil || taskLease == nil || taskLease.Route() != (jobdb.Route{JobType: "collect", TaskType: "download"}) {
 			t.Fatalf("task lease = %+v, %v", taskLease, err)
 		}
 		if err := taskLease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{
-			NextNeed: "collect",
+			NextRoute: jobdb.Route{JobType: "collect"},
 		}); err != nil {
 			t.Fatalf("resume job route: %v", err)
 		}
 		jobLease, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
-			JobKey: root.JobKey, WorkerID: "worker", Capabilities: []string{"collect"},
+			JobKey: root.JobKey, WorkerID: "worker", Routes: []jobdb.Route{{JobType: "collect"}},
 		})
 		if err != nil || jobLease == nil {
 			t.Fatalf("resumed job lease = %+v, %v", jobLease, err)
@@ -114,7 +114,7 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 			t.Fatalf("stale child submission = %v", err)
 		}
 		polled, err := runtime.PollWork(ctx, jobdb.PollWorkRequest{
-			TenantId: "tenant", WorkerID: "worker", Capabilities: []string{"collect"}, Limit: 2,
+			TenantId: "tenant", WorkerID: "worker", Routes: []jobdb.Route{{JobType: "collect"}}, Limit: 2,
 		})
 		if err != nil || len(polled) != 1 || polled[0].Job().JobKey != child.JobKey {
 			t.Fatalf("poll remaining child work = %+v, %v", polled, err)

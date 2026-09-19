@@ -6,7 +6,7 @@ SET LOCAL search_path = pgjobdb, public;
 
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 2 THEN
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 3 THEN
    RAISE EXCEPTION 'unsupported pgjobdb format; create a fresh database';
   END IF;
  END IF;
@@ -14,12 +14,12 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 2),
+    format_version INTEGER NOT NULL CHECK (format_version = 3),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
 INSERT INTO pgjobdb.installation (name, format_version)
-VALUES ('pgjobdb', 2)
+VALUES ('pgjobdb', 3)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -29,8 +29,6 @@ CREATE SEQUENCE IF NOT EXISTS pgjobdb.jobs_trace_id_seq;
 CREATE TABLE IF NOT EXISTS pgjobdb.jobs (
     tenant_id TEXT NOT NULL,
     job_id TEXT NOT NULL,
-    next_need TEXT NOT NULL,
-    alternate_next_need TEXT,
     alternate_after_seconds INTEGER,
     wait_for TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
     payload JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -85,8 +83,6 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs_archive (
     archived_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     tenant_id TEXT NOT NULL,
     job_id TEXT NOT NULL,
-    next_need TEXT NOT NULL,
-    alternate_next_need TEXT,
     alternate_after_seconds INTEGER,
     wait_for TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
     payload JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -168,7 +164,7 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs_trace (
 
 -- Performance indexes for multi-tenant operations
 CREATE INDEX IF NOT EXISTS idx_jobs_tenant_ready_work
-ON pgjobdb.jobs(tenant_id, next_need, created_at)
+ON pgjobdb.jobs(tenant_id, route_job_type, task_type, created_at)
 WHERE NOT cancel_requested;
 
 CREATE INDEX IF NOT EXISTS idx_jobs_tenant_waitfor
@@ -250,17 +246,7 @@ ready_calc AS (
         END AS ready_since
     FROM status_calc sc
 )
-SELECT
-    rc.*,
-    CASE
-        WHEN rc.status = 'READY'
-             AND rc.alternate_next_need IS NOT NULL
-             AND rc.alternate_after_seconds IS NOT NULL
-             AND rc.ready_since IS NOT NULL
-             AND clock_timestamp() >= rc.ready_since + make_interval(secs => rc.alternate_after_seconds)
-            THEN rc.alternate_next_need
-        ELSE rc.next_need
-    END AS effective_next_need
+SELECT rc.*
 FROM ready_calc rc;
 
 CREATE OR REPLACE FUNCTION pgjobdb.is_trace_enabled()
@@ -353,20 +339,17 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION pgjobdb._notify_need(
-    p_next_need TEXT,
-    p_job_id TEXT
+-- A fixed channel avoids encoding identifiers in PostgreSQL channel names.
+CREATE OR REPLACE FUNCTION pgjobdb._notify_work(
+    p_tenant_id TEXT, p_job_id TEXT, p_job_type TEXT, p_task_type TEXT
 )
-RETURNS VOID
-LANGUAGE plpgsql
-AS $$
+RETURNS VOID LANGUAGE plpgsql AS $$
 BEGIN
-    IF p_next_need IS NULL OR p_job_id IS NULL THEN
-        RETURN;
-    END IF;
-
     IF pgjobdb.is_notify_enabled() THEN
-        PERFORM pg_notify(format('pgjobdb.need.%s', p_next_need), p_job_id);
+        PERFORM pg_notify('pgjobdb.work', json_build_object(
+            'tenantId', p_tenant_id, 'jobId', p_job_id,
+            'route', json_build_object('jobType', p_job_type, 'taskType', COALESCE(p_task_type, ''))
+        )::TEXT);
     END IF;
 END;
 $$;
@@ -413,8 +396,6 @@ BEGIN
     INSERT INTO pgjobdb.jobs_archive (
         tenant_id,
         job_id,
-        next_need,
-        alternate_next_need,
         alternate_after_seconds,
         wait_for,
         payload,
@@ -433,8 +414,6 @@ BEGIN
     VALUES (
         p_locked_job.tenant_id,
         p_locked_job.job_id,
-        p_locked_job.next_need,
-        p_locked_job.alternate_next_need,
         p_locked_job.alternate_after_seconds,
         p_locked_job.wait_for,
         p_locked_job.payload,
@@ -464,7 +443,7 @@ CREATE OR REPLACE FUNCTION pgjobdb._update_waiters_for_completion_bulk(
     p_tenant_id TEXT,
     p_completed_jobs TEXT[]
 )
-RETURNS TABLE(job_id TEXT, next_need TEXT, became_unblocked BOOLEAN)
+RETURNS TABLE(job_id TEXT, route_job_type TEXT, task_type TEXT, became_unblocked BOOLEAN)
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -500,7 +479,7 @@ BEGIN
               AND j.job_id = t.job_id
             RETURNING
                 j.job_id,
-                j.next_need,
+                j.route_job_type, j.task_type,
                 j.available_at,
                 (COALESCE(array_length(j.wait_for, 1), 0) = 0) AS now_unblocked,
                 j.cancel_requested,
@@ -513,11 +492,12 @@ BEGIN
            AND v_row.available_at <= v_now
            AND NOT v_row.cancel_requested
            AND v_row.expires_at > v_now THEN
-            PERFORM pgjobdb._notify_need(v_row.next_need, v_row.job_id);
+            PERFORM pgjobdb._notify_work(p_tenant_id, v_row.job_id, v_row.route_job_type, v_row.task_type);
         END IF;
 
         job_id := v_row.job_id;
-        next_need := v_row.next_need;
+        route_job_type := v_row.route_job_type;
+        task_type := v_row.task_type;
         became_unblocked := v_row.now_unblocked;
         RETURN NEXT;
     END LOOP;
@@ -528,7 +508,7 @@ CREATE OR REPLACE FUNCTION pgjobdb._update_waiters_for_completion(
     p_tenant_id TEXT,
     p_completed_job_id TEXT
 )
-RETURNS TABLE(job_id TEXT, next_need TEXT, became_unblocked BOOLEAN)
+RETURNS TABLE(job_id TEXT, route_job_type TEXT, task_type TEXT, became_unblocked BOOLEAN)
 LANGUAGE plpgsql
 AS $$
 BEGIN
@@ -862,8 +842,6 @@ BEGIN
         INSERT INTO pgjobdb.jobs_archive (
             tenant_id,
             job_id,
-            next_need,
-            alternate_next_need,
             alternate_after_seconds,
             wait_for,
             payload,
@@ -882,8 +860,6 @@ BEGIN
         SELECT
             j.tenant_id,
             j.job_id,
-            j.next_need,
-            j.alternate_next_need,
             j.alternate_after_seconds,
             j.wait_for,
             j.payload,
@@ -1473,10 +1449,10 @@ BEGIN
     END IF;
 
     INSERT INTO pgjobdb.jobs (
-        tenant_id, job_id, next_need, wait_for, available_at, expires_at,
+        tenant_id, job_id, wait_for, available_at, expires_at,
         route_job_type, work_kind
     ) VALUES (
-        p_tenant_id, p_job_id, '__pgjobdb_native__',
+        p_tenant_id, p_job_id,
         pgjobdb.normalize_wait_for(p_tenant_id, p_wait_for),
         COALESCE(p_available_at, clock_timestamp()), v_expires_at,
         p_job_type, 'JOB'

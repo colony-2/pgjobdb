@@ -45,7 +45,7 @@ func TestNativeRuntimeCoreSchedulePreflight(t *testing.T) {
 			t.Fatalf("upsert = %+v, %v", info, err)
 		}
 		initial, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
-			JobKey: *info.NextJobKey, WorkerID: "worker", Capabilities: []string{"collect"},
+			JobKey: *info.NextJobKey, WorkerID: "worker", Routes: []jobdb.Route{{JobType: "collect"}},
 		})
 		if err != nil || initial == nil {
 			job, jobErr := runtime.GetJob(ctx, *info.NextJobKey)
@@ -66,7 +66,7 @@ func TestNativeRuntimeCoreSchedulePreflight(t *testing.T) {
 			t.Fatal(err)
 		}
 		blocked, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
-			JobKey: manual.JobKey, WorkerID: "worker", Capabilities: []string{"collect"},
+			JobKey: manual.JobKey, WorkerID: "worker", Routes: []jobdb.Route{{JobType: "collect"}},
 		})
 		if err != nil || blocked != nil {
 			t.Fatalf("paused occurrence lease = %+v, %v", blocked, err)
