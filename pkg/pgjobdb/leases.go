@@ -127,7 +127,7 @@ func scanJobLease(row scheduleScanner, worker WorkerID) (*JobLease, error) {
 	if err := row.Scan(&tenant, &job, &lease.LeaseID, &lease.ExpiresAt,
 		&jobType, &route, &workKind, &taskType, &resumeType,
 		&inputOrdinal, &outputOrdinal, &inputHash, &policy, &payload,
-		&lease.LeasePayloadVisible,
+		&lease.ClientPayloadRevision,
 		&schemaHash); err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func scanJobLease(row scheduleScanner, worker WorkerID) (*JobLease, error) {
 	lease.JobType, lease.RouteJobType, lease.WorkKind = JobType(jobType), JobType(route), WorkKind(workKind)
 	lease.ExpiresAt = lease.ExpiresAt.UTC()
 	lease.SchemaHash = schemaHash.String
-	lease.LeasePayload = append(json.RawMessage(nil), payload...)
+	lease.ClientPayload = append(json.RawMessage(nil), payload...)
 	if err := json.Unmarshal(policy, &lease.RunPolicy); err != nil {
 		return nil, fmt.Errorf("pgjobdb: decode run policy: %w", err)
 	}

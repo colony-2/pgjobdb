@@ -3,6 +3,7 @@ package workflow_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -43,7 +44,14 @@ func TestBasicWorkflowIntegration(t *testing.T) {
 
 	go engine1.Run(ctx)
 	go engine2.Run(ctx)
-	go userInputWatcher(ctx, t, engine1, []string{tenantID})
+	watcherResult := make(chan error, 1)
+	go func() { watcherResult <- userInputWatcher(ctx, engine1, []string{tenantID}) }()
+	defer func() {
+		cancel()
+		if err := <-watcherResult; err != nil {
+			t.Error(err)
+		}
+	}()
 
 	initial := jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 1})
 	jobKey, err := engine1.SubmitJob(ctx, jobdb.SubmitJob{
@@ -132,11 +140,11 @@ func (doubleTask) Run(ctx workflow.TaskContext, input jobdb.TaskData) (jobdb.Tas
 const userInputTaskName = "userInput"
 
 // userInputWatcher completes externally-handled tasks that no engine claims.
-func userInputWatcher(ctx context.Context, t *testing.T, engine workflow.Engine, tenantIDs []string) {
+func userInputWatcher(ctx context.Context, engine workflow.Engine, tenantIDs []string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		default:
 		}
 
@@ -145,7 +153,7 @@ func userInputWatcher(ctx context.Context, t *testing.T, engine workflow.Engine,
 			// If the database is shutting down or context will end soon, just back off.
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			case <-time.After(100 * time.Millisecond):
 				continue
 			}
@@ -153,12 +161,18 @@ func userInputWatcher(ctx context.Context, t *testing.T, engine workflow.Engine,
 		for _, h := range handles {
 			data, err := h.Data()
 			if err != nil {
-				t.Fatalf("watcher failed to get data: %v", err)
+				if ctx.Err() != nil {
+					return nil
+				}
+				return fmt.Errorf("watcher failed to get data: %w", err)
 			}
 			n := taskNumber(data)
 			output := jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": n + 3})
 			if err := h.Finish(ctx, output); err != nil {
-				t.Fatalf("watcher failed to finish task: %v", err)
+				if ctx.Err() != nil {
+					return nil
+				}
+				return fmt.Errorf("watcher failed to finish task: %w", err)
 			}
 		}
 		time.Sleep(50 * time.Millisecond)

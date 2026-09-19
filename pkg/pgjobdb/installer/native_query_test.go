@@ -42,10 +42,14 @@ func TestNativeGetJobKeepsArchivedFields(t *testing.T) {
 			TaskType: "download", ResumeJobType: "collect",
 			InputOrdinal: 7, OutputOrdinal: 8, InputHash: "sha256:task",
 		}
-		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "task", "worker",
+		owner, err := pgjobdb.GetJobLease(ctx, db, "tenant", "task", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}, pgjobdb.GetJobLeaseOptions{})
+		if err != nil || owner == nil {
+			t.Fatalf("lease: %v", err)
+		}
+		if err := owner.Reschedule(ctx, db,
 			pgjobdb.RescheduleRequest{
 				RouteJobType: "collect", WorkKind: pgjobdb.WorkKindTask,
-				Task: task, LeasePayload: json.RawMessage(`{"opaque":true}`),
+				Task: task, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", ExpectedRevision: ptrRevision(0), Value: json.RawMessage(`{"opaque":true}`)},
 				Alternate: &pgjobdb.AlternateRoute{
 					JobType: "fallback", TaskType: "download", After: time.Minute,
 				},
@@ -73,7 +77,7 @@ func TestNativeGetJobKeepsArchivedFields(t *testing.T) {
 			archived.AlternateTaskType != "download" ||
 			archived.AlternateAfterSeconds == nil ||
 			*archived.AlternateAfterSeconds != 60 ||
-			string(archived.LeasePayload) != `{"opaque": true}` ||
+			string(archived.ClientPayload) != `{"opaque":true}` ||
 			archived.CompletionStatus == nil ||
 			*archived.CompletionStatus != pgjobdb.CompletionFailedApp ||
 			archived.CompletionErrorKind == nil ||

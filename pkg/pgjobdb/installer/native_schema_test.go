@@ -50,9 +50,9 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.jobs
 			(tenant_id, job_id, next_need, route_job_type, work_kind, task_type,
 			resume_job_type, task_input_ordinal, task_output_ordinal,
-			task_input_hash, lease_payload)
+			task_input_hash)
 			VALUES ('tenant', 'job-1', 'collect:task', 'collect', 'TASK', 'task',
-			'collect', 1, 2, 'sha256:input', '{"opaque":true}')`); err != nil {
+			'collect', 1, 2, 'sha256:input')`); err != nil {
 			t.Fatalf("insert typed task route: %v", err)
 		}
 
@@ -61,27 +61,26 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 			final_route_job_type, final_work_kind, final_task_type,
 			final_resume_job_type, final_task_input_ordinal,
 			final_task_output_ordinal, final_task_input_hash,
-			final_wait_for, final_available_at, final_cancel_requested,
-			final_lease_payload, final_lease_payload_visible)
+			final_wait_for, final_available_at, final_cancel_requested)
 			VALUES ('tenant', 'job-1', 'collect:task', now(), 'failed_app',
 			'collect', 'TASK', 'task', 'collect', 1, 2, 'sha256:input',
-			ARRAY['prerequisite'], now(), TRUE, '{"opaque":true}', TRUE)`); err != nil {
+			ARRAY['prerequisite'], now(), TRUE)`); err != nil {
 			t.Fatalf("insert archived task snapshot: %v", err)
 		}
-		var route, workKind, waitFor, payload string
+		var route, workKind, waitFor string
 		var cancelled bool
 		if err := db.QueryRowContext(ctx, `SELECT final_route_job_type,
-			final_work_kind, final_wait_for[1], final_lease_payload::text,
+			final_work_kind, final_wait_for[1],
 			final_cancel_requested FROM pgjobdb.jobs_archive
 			WHERE tenant_id = 'tenant' AND job_id = 'job-1'`).Scan(
-			&route, &workKind, &waitFor, &payload, &cancelled,
+			&route, &workKind, &waitFor, &cancelled,
 		); err != nil {
 			t.Fatalf("read archived task snapshot: %v", err)
 		}
 		if route != "collect" || workKind != "TASK" || waitFor != "prerequisite" ||
-			payload != `{"opaque": true}` || !cancelled {
-			t.Fatalf("archive snapshot mismatch: %q %q %q %q %v",
-				route, workKind, waitFor, payload, cancelled)
+			!cancelled {
+			t.Fatalf("archive snapshot mismatch: %q %q %q %v",
+				route, workKind, waitFor, cancelled)
 		}
 	})
 }

@@ -18,29 +18,18 @@ func CompleteTaskWork(ctx context.Context, db DB, req CompleteTaskWorkRequest) e
 		req.Task.OutputOrdinal < 0 || req.Task.InputHash == "" {
 		return fmt.Errorf("pgjobdb: complete task requires full route and coordinates")
 	}
-	var payload any
-	var payloadVisible any
-	if req.ClearLeasePayload {
-		if req.LeasePayload != nil {
-			return fmt.Errorf("pgjobdb: cleared lease payload cannot include application JSON")
-		}
-		payloadVisible = false
-	}
-	if req.LeasePayload != nil {
-		if !isJSONObject(req.LeasePayload) {
-			return fmt.Errorf("pgjobdb: lease payload must be a JSON object")
-		}
-		payload = string(req.LeasePayload)
-		payloadVisible = true
+	mode, value, revision, err := clientUpdateArgs(req.ClientPayloadUpdate, false)
+	if err != nil {
+		return err
 	}
 	var completed bool
 	if err := db.QueryRowContext(ctx, `SELECT pgjobdb.complete_native_task_work(
-		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		string(req.TenantID), string(req.JobID), string(req.WorkerID),
 		string(req.JobType), string(req.Task.TaskType),
 		string(req.Task.ResumeJobType), req.Task.InputOrdinal,
-		req.Task.OutputOrdinal, req.Task.InputHash, payload, payloadVisible).Scan(&completed); err != nil {
-		return err
+		req.Task.OutputOrdinal, req.Task.InputHash, mode, value, revision).Scan(&completed); err != nil {
+		return clientPayloadError(err)
 	}
 	if !completed {
 		return fmt.Errorf("pgjobdb: complete native task work returned false")

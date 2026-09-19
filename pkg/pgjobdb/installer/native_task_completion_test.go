@@ -29,7 +29,7 @@ func TestNativeTaskCompletionComparesCoordinates(t *testing.T) {
 		req := pgjobdb.CompleteTaskWorkRequest{
 			TenantID: "tenant", JobID: "job", WorkerID: "external",
 			JobType: "collect", Task: task,
-			LeasePayload: json.RawMessage(`{"external":true}`),
+			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", ExpectedRevision: ptrRevision(0), Value: json.RawMessage(`{"external":true}`)},
 		}
 		wrong := req
 		wrong.Task.InputHash = "sha256:wrong"
@@ -65,13 +65,13 @@ func TestNativeTaskCompletionComparesCoordinates(t *testing.T) {
 		var taskType sql.NullString
 		var payload string
 		if err := db.QueryRowContext(ctx, `SELECT work_kind, task_type,
-			lease_payload::text FROM pgjobdb.jobs
+			(SELECT client_payload::text FROM pgjobdb.job_client_state c WHERE c.tenant_id=jobs.tenant_id AND c.job_id=jobs.job_id) FROM pgjobdb.jobs
 			WHERE tenant_id = 'tenant' AND job_id = 'job'`).Scan(
 			&kind, &taskType, &payload,
 		); err != nil {
 			t.Fatalf("read resumed job: %v", err)
 		}
-		if kind != "JOB" || taskType.Valid || payload != `{"external": true}` {
+		if kind != "JOB" || taskType.Valid || payload != `{"external":true}` {
 			t.Fatalf("resumed job = %q %+v %q", kind, taskType, payload)
 		}
 		selector := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}

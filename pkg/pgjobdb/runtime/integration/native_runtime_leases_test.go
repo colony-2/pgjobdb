@@ -18,7 +18,7 @@ func TestNativeSchedulerAdapterLeasesTypedWork(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
 			TenantID: "tenant", JobID: "job", WorkerID: "submitter", JobType: "collect",
-			LeasePayload: json.RawMessage(`{}`),
+			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{}`)},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -30,7 +30,7 @@ func TestNativeSchedulerAdapterLeasesTypedWork(t *testing.T) {
 			Limit: 2, LeaseDuration: time.Minute,
 		})
 		if err != nil || len(leased) != 1 || leased[0].WorkKind != runtimecore.WorkKindJob ||
-			!leased[0].LeasePayloadVisible || string(leased[0].LeasePayload) != `{}` {
+			leased[0].ClientPayload == nil || string(leased[0].ClientPayload) != `{}` {
 			t.Fatalf("typed work = %+v, %v", leased, err)
 		}
 		identity := leased[0].Identity

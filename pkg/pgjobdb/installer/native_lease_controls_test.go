@@ -54,8 +54,8 @@ func TestNativeLeaseControls(t *testing.T) {
 			t.Fatal("expected cancelled job renewal to fail")
 		}
 		if err := lease.Complete(ctx, db,
-			pgjobdb.Completion{Status: pgjobdb.CompletionCancelled}); err != nil {
-			t.Fatalf("complete cancelled job: %v", err)
+			pgjobdb.Completion{Status: pgjobdb.CompletionCancelled}); err == nil {
+			t.Fatal("cancelled lease accepted completion")
 		}
 		if _, err := pgjobdb.ValidateLease(ctx, db, lease.Identity()); !errors.Is(err, pgjobdb.ErrLeaseLost) {
 			t.Fatalf("completed lease validation = %v", err)

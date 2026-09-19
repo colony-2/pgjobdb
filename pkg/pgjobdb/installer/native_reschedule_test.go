@@ -34,8 +34,8 @@ func TestNativeRescheduleTypedState(t *testing.T) {
 				TaskType: "download", ResumeJobType: "collect",
 				InputOrdinal: 4, OutputOrdinal: 5, InputHash: "sha256:input",
 			},
-			LeasePayload: json.RawMessage(`{"app":"data"}`),
-			Alternate:    &pgjobdb.AlternateRoute{JobType: "fallback", After: time.Hour},
+			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", ExpectedRevision: ptrRevision(0), Value: json.RawMessage(`{"app":"data"}`)},
+			Alternate:           &pgjobdb.AlternateRoute{JobType: "fallback", After: time.Hour},
 		}
 		if err := pgjobdb.RescheduleJob(ctx, db, wrong, taskRoute); err == nil {
 			t.Fatal("expected wrong worker reschedule to fail")
@@ -51,7 +51,7 @@ func TestNativeRescheduleTypedState(t *testing.T) {
 		var alternateAfter int
 		if err := db.QueryRowContext(ctx, `SELECT work_kind, task_type,
 			task_input_ordinal, task_output_ordinal, alternate_job_type,
-			alternate_after_seconds, lease_payload::text FROM pgjobdb.jobs
+			alternate_after_seconds, (SELECT client_payload::text FROM pgjobdb.job_client_state c WHERE c.tenant_id=jobs.tenant_id AND c.job_id=jobs.job_id) FROM pgjobdb.jobs
 			WHERE tenant_id = 'tenant' AND job_id = 'job'`).Scan(
 			&workKind, &taskType, &input, &output, &alternate,
 			&alternateAfter, &payload,
@@ -60,7 +60,7 @@ func TestNativeRescheduleTypedState(t *testing.T) {
 		}
 		if workKind != "TASK" || taskType != "download" || input != 4 ||
 			output != 5 || alternate != "fallback" || alternateAfter != 3600 ||
-			payload != `{"app": "data"}` {
+			payload != `{"app":"data"}` {
 			t.Fatalf("task route = %q %q %d %d %q %d %q",
 				workKind, taskType, input, output, alternate, alternateAfter, payload)
 		}
@@ -75,7 +75,7 @@ func TestNativeRescheduleTypedState(t *testing.T) {
 		jobRoute := pgjobdb.RescheduleRequest{
 			RouteJobType: "collect", WorkKind: pgjobdb.WorkKindJob,
 			WaitFor: []pgjobdb.JobID{"blocker"}, AvailableAt: &future,
-			Alternate: &pgjobdb.AlternateRoute{},
+			Alternate: nil,
 		}
 		if err := taskLease.Reschedule(ctx, db, jobRoute); err != nil {
 			t.Fatalf("reschedule task to blocked job: %v", err)
@@ -114,6 +114,7 @@ func TestNativeRescheduleTypedState(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("submit unheld job: %v", err)
 		}
+		taskRoute.ClientPayloadUpdate = nil
 		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "unheld",
 			"worker", taskRoute); err != nil {
 			t.Fatalf("reschedule unheld job: %v", err)

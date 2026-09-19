@@ -3,7 +3,6 @@ package integration_test
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -41,7 +40,7 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 			t.Fatal(err)
 		}
 		root, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
-			TenantId: "tenant", JobID: "root", JobType: "collect", Data: data,
+			TenantId: "tenant", JobID: "root", JobType: "collect", Data: data, RunPolicy: jobdb.RunPolicy{Retry: jobdb.RetryPolicy{MaximumAttempts: 3}},
 		}})
 		if err != nil {
 			t.Fatal(err)
@@ -52,10 +51,10 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 		if err != nil || lease == nil || lease.Capability() != "collect" {
 			t.Fatalf("lease root = %+v, %v", lease, err)
 		}
-		var visible map[string]json.RawMessage
-		if err := json.Unmarshal(lease.Payload(), &visible); err != nil || visible["run_policy"] == nil {
-			t.Fatalf("generated lease payload = %s, %v", lease.Payload(), err)
+		if lease.ExecutionState().RunPolicy.Retry.MaximumAttempts != 3 {
+			t.Fatalf("lease state = %+v", lease.ExecutionState())
 		}
+
 		child, err := lease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
 			TenantId: "tenant", JobID: "child", JobType: "collect", Data: data,
 		}})
@@ -68,7 +67,7 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 		}
 		if err := lease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{
 			NextNeed:      "collect:download",
-			Payload:       json.RawMessage(`{"run_policy":{"retry":{"maximum_attempts":1}},"task_wait":{"in":0,"out":1,"next":"collect","input_hash":"sha256:input"}}`),
+			TaskWait:      &jobdb.TaskWait{InputOrdinal: 0, OutputOrdinal: 1, ResumeNeed: "collect", InputHash: "sha256:input"},
 			AlternateNeed: "collect", AlternateAfter: durationPtr(10 * time.Second),
 		}); err != nil {
 			t.Fatalf("route external task: %v", err)
@@ -81,7 +80,7 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 			t.Fatalf("task lease = %+v, %v", taskLease, err)
 		}
 		if err := taskLease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{
-			NextNeed: "collect", Payload: taskLease.Payload(),
+			NextNeed: "collect",
 		}); err != nil {
 			t.Fatalf("resume job route: %v", err)
 		}

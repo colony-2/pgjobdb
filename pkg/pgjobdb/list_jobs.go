@@ -187,14 +187,19 @@ func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult
 	defer rows.Close()
 	result := &ListJobsResult{Jobs: make([]JobDetail, 0, opts.PageSize)}
 	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
+		var raw, payload []byte
+		var revision int64
+		var initialDigest string
+		if err := rows.Scan(&raw, &payload, &revision, &initialDigest); err != nil {
 			return nil, err
 		}
 		var item JobDetail
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return nil, fmt.Errorf("pgjobdb: decode listed job: %w", err)
 		}
+		item.ClientPayload = append(json.RawMessage(nil), payload...)
+		item.ClientPayloadRevision = revision
+		item.InitialPayloadDigest = initialDigest
 		result.Jobs = append(result.Jobs, item)
 	}
 	if err := rows.Err(); err != nil {

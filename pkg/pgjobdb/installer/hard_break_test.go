@@ -85,3 +85,18 @@ func TestInstallerRejectsAlternateSchema(t *testing.T) {
 		t.Fatalf("expected unsupported schema error, got %v", err)
 	}
 }
+
+func TestInstallerRejectsPreviousClientPayloadFormat(t *testing.T) {
+	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
+		if _, err := db.ExecContext(ctx, `CREATE SCHEMA pgjobdb;CREATE TABLE pgjobdb.installation(name TEXT PRIMARY KEY,format_version INTEGER);INSERT INTO pgjobdb.installation VALUES ('pgjobdb',1)`); err != nil {
+			t.Fatal(err)
+		}
+		if err := (pgjobdbinstaller.Installer{DB: db}).Apply(ctx); err == nil || !strings.Contains(err.Error(), "unsupported schema format 1") {
+			t.Fatalf("old format accepted: %v", err)
+		}
+		var version int
+		if err := db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version); err != nil || version != 1 {
+			t.Fatalf("old format changed: %d %v", version, err)
+		}
+	})
+}

@@ -122,9 +122,8 @@ func leaseFromPgjobdb(lease pgjobdb.JobLease, requestedDuration time.Duration) (
 		},
 		JobType: string(lease.JobType), RouteJobType: string(lease.RouteJobType),
 		WorkKind: runtimecore.WorkKind(lease.WorkKind), RunPolicy: policy,
-		LeasePayload:        append([]byte(nil), lease.LeasePayload...),
-		LeasePayloadVisible: lease.LeasePayloadVisible,
-		SchemaHash:          lease.SchemaHash, Duration: duration,
+		ClientPayload: append([]byte(nil), lease.ClientPayload...), ClientPayloadRevision: lease.ClientPayloadRevision,
+		SchemaHash: lease.SchemaHash, Duration: duration,
 	}
 	if lease.WorkKind == pgjobdb.WorkKindTask && lease.Task != nil {
 		snapshot.TaskWork = &runtimecore.TaskWork{

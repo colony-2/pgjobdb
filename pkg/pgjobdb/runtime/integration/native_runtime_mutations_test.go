@@ -40,9 +40,9 @@ func TestNativeSchedulerAdapterMutatesTypedJob(t *testing.T) {
 			InputOrdinal: 1, OutputOrdinal: 2, InputHash: "sha256:input"}
 		waiting, err := adapter.RescheduleLease(ctx, runtimecore.RescheduleMutation{
 			Identity: identity, RouteJobType: "collect", WorkKind: runtimecore.WorkKindTask,
-			TaskWork: &task, LeasePayload: json.RawMessage(`{}`),
+			TaskWork: &task, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", ExpectedRevision: ptrRevision(0), Value: json.RawMessage(`{}`)},
 		})
-		if err != nil || waiting.TaskWork == nil || !waiting.LeasePayloadVisible {
+		if err != nil || waiting.TaskWork == nil || waiting.ClientPayload == nil {
 			t.Fatalf("route task = %+v, %v", waiting, err)
 		}
 		taskSnapshot, err := adapter.GetWaitingTask(ctx, key)
@@ -51,9 +51,9 @@ func TestNativeSchedulerAdapterMutatesTypedJob(t *testing.T) {
 		}
 		resumed, err := adapter.CompleteTaskWork(ctx, runtimecore.CompleteTaskWorkMutation{
 			JobKey: key, WorkerID: "external", Task: taskSnapshot,
-			ClearLeasePayload: true,
+			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", ExpectedRevision: ptrRevision(1)},
 		})
-		if err != nil || resumed.WorkKind != runtimecore.WorkKindJob || resumed.LeasePayloadVisible {
+		if err != nil || resumed.WorkKind != runtimecore.WorkKindJob || (resumed.ClientPayload != nil) {
 			t.Fatalf("resume job = %+v, %v", resumed, err)
 		}
 		lease, err = pgjobdb.GetJobLease(ctx, db, "tenant", "job", "worker",
@@ -68,7 +68,7 @@ func TestNativeSchedulerAdapterMutatesTypedJob(t *testing.T) {
 		})
 		if err != nil || archived.Store != jobdb.JobStoreArchived ||
 			archived.Completion == nil || archived.Completion.Detail != "done" ||
-			archived.LeasePayloadVisible {
+			(archived.ClientPayload != nil) {
 			t.Fatalf("complete job = %+v, %v", archived, err)
 		}
 	})

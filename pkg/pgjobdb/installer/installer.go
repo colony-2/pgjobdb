@@ -43,14 +43,15 @@ func (i Installer) Verify(ctx context.Context) error {
 	}
 	schema := i.schemaName()
 
-	for _, tbl := range []string{"installation", "jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts"} {
+	for _, tbl := range []string{"installation", "jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts", "job_client_state"} {
 		if err := i.assertTable(ctx, schema, tbl); err != nil {
 			return err
 		}
 	}
 	for table, columns := range map[string][]string{
-		"jobs":         {"route_job_type", "work_kind", "lease_payload", "lease_payload_visible", "lease_worker_id"},
-		"jobs_archive": {"final_route_job_type", "final_work_kind", "final_lease_payload", "final_lease_payload_visible"},
+		"job_client_state": {"client_payload", "revision", "initial_payload_digest"},
+		"jobs":             {"route_job_type", "work_kind", "lease_worker_id"},
+		"jobs_archive":     {"final_route_job_type", "final_work_kind"},
 	} {
 		for _, column := range columns {
 			if err := i.assertColumn(ctx, schema, table, column); err != nil {
@@ -152,7 +153,7 @@ func (i Installer) assertInstallation(ctx context.Context, schema string) error 
 	if err := i.DB.QueryRowContext(ctx, query, schema).Scan(&version); err != nil {
 		return fmt.Errorf("pgjobdb: read installation marker: %w", err)
 	}
-	if version != 1 {
+	if version != 2 {
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil

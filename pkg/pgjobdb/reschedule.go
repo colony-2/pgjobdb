@@ -22,6 +22,9 @@ func RescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 
 func RescheduleUnheldJob(ctx context.Context, db DB, tenant TenantID, job JobID,
 	worker WorkerID, req RescheduleRequest) error {
+	if req.ClientPayloadUpdate != nil {
+		return fmt.Errorf("pgjobdb: client payload updates require a lease or complete-task authorization")
+	}
 	if tenant == "" || job == "" || worker == "" {
 		return fmt.Errorf("pgjobdb: tenant, job, and worker ids are required")
 	}
@@ -63,20 +66,9 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 		}
 		waitFor = append(waitFor, string(id))
 	}
-	var payload any
-	var payloadVisible any
-	if req.ClearLeasePayload {
-		if req.LeasePayload != nil {
-			return fmt.Errorf("pgjobdb: cleared lease payload cannot include application JSON")
-		}
-		payloadVisible = false
-	}
-	if req.LeasePayload != nil {
-		if !isJSONObject(req.LeasePayload) {
-			return fmt.Errorf("pgjobdb: lease payload must be a JSON object")
-		}
-		payload = string(req.LeasePayload)
-		payloadVisible = true
+	mode, value, revision, err := clientUpdateArgs(req.ClientPayloadUpdate, false)
+	if err != nil {
+		return err
 	}
 	var alternateJob, alternateTask, alternateAfter any
 	if req.Alternate != nil {
@@ -110,11 +102,11 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 		nilIfBlank(identity.LeaseID), string(identity.WorkerID),
 		string(req.RouteJobType), string(req.WorkKind),
 		taskType, resumeType, inputOrdinal, outputOrdinal, inputHash,
-		pq.Array(waitFor), optionalTime(req.AvailableAt), payload,
-		req.Alternate != nil, alternateJob, alternateTask, alternateAfter,
-		payloadVisible,
+		pq.Array(waitFor), optionalTime(req.AvailableAt),
+		alternateJob, alternateTask, alternateAfter,
+		mode, value, revision,
 	).Scan(&updated); err != nil {
-		return err
+		return clientPayloadError(err)
 	}
 	if !updated {
 		return fmt.Errorf("pgjobdb: reschedule native job returned false")

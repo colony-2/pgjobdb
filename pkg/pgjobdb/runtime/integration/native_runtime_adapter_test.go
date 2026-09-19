@@ -20,8 +20,8 @@ func TestNativeSchedulerAdapterReadsArchivedTask(t *testing.T) {
 			RunPolicy: pgjobdb.RunPolicy{Retry: pgjobdb.RetryPolicy{
 				InitialIntervalMillis: 250, MaximumAttempts: 4,
 			}},
-			AppMetadata:  json.RawMessage(`{"source":"api"}`),
-			LeasePayload: json.RawMessage(`{}`),
+			AppMetadata:         json.RawMessage(`{"source":"api"}`),
+			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{}`)},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -41,7 +41,7 @@ func TestNativeSchedulerAdapterReadsArchivedTask(t *testing.T) {
 		row, err := adapter.GetJob(ctx, key)
 		if err != nil || row.Store != jobdb.JobStoreArchived ||
 			row.TaskWork == nil || row.TaskWork.InputOrdinal != 1 ||
-			!row.LeasePayloadVisible || string(row.LeasePayload) != `{}` ||
+			row.ClientPayload == nil || string(row.ClientPayload) != `{}` ||
 			row.RunPolicy.Retry.InitialInterval.ToDuration() != 250*time.Millisecond ||
 			row.Completion == nil || row.Completion.Status != "success" {
 			t.Fatalf("adapted archived job = %+v, %v", row, err)

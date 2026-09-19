@@ -4,14 +4,22 @@ CREATE SCHEMA IF NOT EXISTS pgjobdb;
 
 SET LOCAL search_path = pgjobdb, public;
 
+DO $$ BEGIN
+ IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 2 THEN
+   RAISE EXCEPTION 'unsupported pgjobdb format; create a fresh database';
+  END IF;
+ END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 1),
+    format_version INTEGER NOT NULL CHECK (format_version = 2),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
 INSERT INTO pgjobdb.installation (name, format_version)
-VALUES ('pgjobdb', 1)
+VALUES ('pgjobdb', 2)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -42,49 +50,36 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs (
     CONSTRAINT jobs_payload_size_limit CHECK (pg_column_size(payload) <= 512),
     CONSTRAINT jobs_metadata_is_object CHECK (jsonb_typeof(metadata) = 'object'),
     CONSTRAINT jobs_metadata_size_limit CHECK (pg_column_size(metadata) <= 8192),
-    CONSTRAINT jobs_alternate_after_seconds_nonnegative CHECK (alternate_after_seconds IS NULL OR alternate_after_seconds >= 0)
+    CONSTRAINT jobs_alternate_after_seconds_nonnegative CHECK (alternate_after_seconds IS NULL OR alternate_after_seconds >= 0),
+    route_job_type TEXT,
+    work_kind TEXT,
+    task_type TEXT,
+    resume_job_type TEXT,
+    task_input_ordinal BIGINT,
+    task_output_ordinal BIGINT,
+    task_input_hash TEXT,
+    alternate_job_type TEXT,
+    alternate_task_type TEXT,
+    lease_worker_id TEXT,
+    CONSTRAINT jobs_native_route_valid CHECK (
+                (route_job_type IS NULL AND work_kind IS NULL
+                    AND task_type IS NULL AND resume_job_type IS NULL
+                    AND task_input_ordinal IS NULL AND task_output_ordinal IS NULL
+                    AND task_input_hash IS NULL)
+                OR (route_job_type IS NOT NULL AND route_job_type <> ''
+                    AND work_kind IS NOT NULL AND (
+                    (work_kind = 'JOB' AND task_type IS NULL
+                        AND resume_job_type IS NULL AND task_input_ordinal IS NULL
+                        AND task_output_ordinal IS NULL AND task_input_hash IS NULL)
+                    OR (work_kind = 'TASK' AND task_type IS NOT NULL
+                        AND task_type <> '' AND resume_job_type IS NOT NULL
+                        AND resume_job_type <> '' AND task_input_ordinal IS NOT NULL
+                        AND task_input_ordinal >= 0 AND task_output_ordinal IS NOT NULL
+                        AND task_output_ordinal >= 0 AND task_input_hash IS NOT NULL
+                        AND task_input_hash <> '')
+                ))
+            )
 );
-
-ALTER TABLE pgjobdb.jobs
-ADD COLUMN IF NOT EXISTS metadata JSONB;
-
-ALTER TABLE pgjobdb.jobs
-ALTER COLUMN metadata SET DEFAULT '{}'::JSONB;
-
-UPDATE pgjobdb.jobs
-SET metadata = '{}'::JSONB
-WHERE metadata IS NULL;
-
-ALTER TABLE pgjobdb.jobs
-ALTER COLUMN metadata SET NOT NULL;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'jobs_metadata_is_object'
-          AND conrelid = 'pgjobdb.jobs'::regclass
-    ) THEN
-        ALTER TABLE pgjobdb.jobs
-        ADD CONSTRAINT jobs_metadata_is_object CHECK (jsonb_typeof(metadata) = 'object');
-    END IF;
-END;
-$$;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'jobs_metadata_size_limit'
-          AND conrelid = 'pgjobdb.jobs'::regclass
-    ) THEN
-        ALTER TABLE pgjobdb.jobs
-        ADD CONSTRAINT jobs_metadata_size_limit CHECK (pg_column_size(metadata) <= 8192);
-    END IF;
-END;
-$$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.jobs_archive (
     archived_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
@@ -111,126 +106,54 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs_archive (
     CONSTRAINT jobs_archive_payload_size_limit CHECK (pg_column_size(payload) <= 512),
     CONSTRAINT jobs_archive_metadata_is_object CHECK (jsonb_typeof(metadata) = 'object'),
     CONSTRAINT jobs_archive_metadata_size_limit CHECK (pg_column_size(metadata) <= 8192),
-    CONSTRAINT jobs_archive_alternate_after_seconds_nonnegative CHECK (alternate_after_seconds IS NULL OR alternate_after_seconds >= 0)
+    CONSTRAINT jobs_archive_alternate_after_seconds_nonnegative CHECK (alternate_after_seconds IS NULL OR alternate_after_seconds >= 0),
+    completion_error_kind TEXT,
+    completion_retryable BOOLEAN,
+    final_route_job_type TEXT,
+    final_work_kind TEXT,
+    final_task_type TEXT,
+    final_resume_job_type TEXT,
+    final_task_input_ordinal BIGINT,
+    final_task_output_ordinal BIGINT,
+    final_task_input_hash TEXT,
+    final_alternate_job_type TEXT,
+    final_alternate_task_type TEXT,
+    final_alternate_after_seconds INTEGER,
+    final_wait_for TEXT[],
+    final_available_at TIMESTAMPTZ,
+    final_lease_expires_at TIMESTAMPTZ,
+    final_lease_worker_id TEXT,
+    final_cancel_requested BOOLEAN,
+    CONSTRAINT jobs_archive_native_snapshot_valid CHECK (
+                (final_route_job_type IS NULL AND final_work_kind IS NULL
+                    AND final_task_type IS NULL AND final_resume_job_type IS NULL
+                    AND final_task_input_ordinal IS NULL
+                    AND final_task_output_ordinal IS NULL
+                    AND final_task_input_hash IS NULL AND final_wait_for IS NULL
+                    AND final_available_at IS NULL AND final_cancel_requested IS NULL
+)
+                OR (final_route_job_type IS NOT NULL AND final_route_job_type <> ''
+                    AND final_work_kind IS NOT NULL
+                    AND final_wait_for IS NOT NULL AND final_available_at IS NOT NULL
+                    AND final_cancel_requested IS NOT NULL
+                    AND (
+                        (final_work_kind = 'JOB' AND final_task_type IS NULL
+                            AND final_resume_job_type IS NULL
+                            AND final_task_input_ordinal IS NULL
+                            AND final_task_output_ordinal IS NULL
+                            AND final_task_input_hash IS NULL)
+                        OR (final_work_kind = 'TASK' AND final_task_type IS NOT NULL
+                            AND final_task_type <> '' AND final_resume_job_type IS NOT NULL
+                            AND final_resume_job_type <> ''
+                            AND final_task_input_ordinal IS NOT NULL
+                            AND final_task_input_ordinal >= 0
+                            AND final_task_output_ordinal IS NOT NULL
+                            AND final_task_output_ordinal >= 0
+                            AND final_task_input_hash IS NOT NULL
+                            AND final_task_input_hash <> '')
+                    ))
+            )
 );
-
-ALTER TABLE pgjobdb.jobs_archive
-ADD COLUMN IF NOT EXISTS metadata JSONB;
-
-ALTER TABLE pgjobdb.jobs_archive
-ALTER COLUMN metadata SET DEFAULT '{}'::JSONB;
-
-UPDATE pgjobdb.jobs_archive
-SET metadata = '{}'::JSONB
-WHERE metadata IS NULL;
-
-ALTER TABLE pgjobdb.jobs_archive
-ALTER COLUMN metadata SET NOT NULL;
-
-ALTER TABLE pgjobdb.jobs_archive
-ADD COLUMN IF NOT EXISTS completion_status TEXT;
-
-ALTER TABLE pgjobdb.jobs_archive
-ALTER COLUMN completion_status SET DEFAULT 'succeeded';
-
-UPDATE pgjobdb.jobs_archive
-SET completion_status = CASE
-    WHEN cancel_requested THEN 'cancelled'
-    ELSE 'succeeded'
-END
-WHERE completion_status IS NULL;
-
-ALTER TABLE pgjobdb.jobs_archive
-ALTER COLUMN completion_status SET NOT NULL;
-
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'pgjobdb'
-          AND table_name = 'jobs_archive'
-          AND column_name = 'failure_detail'
-    ) THEN
-        IF NOT EXISTS (
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'pgjobdb'
-              AND table_name = 'jobs_archive'
-              AND column_name = 'completion_detail'
-        ) THEN
-            ALTER TABLE pgjobdb.jobs_archive
-            RENAME COLUMN failure_detail TO completion_detail;
-        ELSE
-            UPDATE pgjobdb.jobs_archive
-            SET completion_detail = COALESCE(completion_detail, failure_detail)
-            WHERE failure_detail IS NOT NULL;
-
-            ALTER TABLE pgjobdb.jobs_archive
-            DROP COLUMN failure_detail;
-        END IF;
-    END IF;
-END;
-$$;
-
-ALTER TABLE pgjobdb.jobs_archive
-ADD COLUMN IF NOT EXISTS completion_detail TEXT;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'jobs_archive_metadata_is_object'
-          AND conrelid = 'pgjobdb.jobs_archive'::regclass
-    ) THEN
-        ALTER TABLE pgjobdb.jobs_archive
-        ADD CONSTRAINT jobs_archive_metadata_is_object CHECK (jsonb_typeof(metadata) = 'object');
-    END IF;
-END;
-$$;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'jobs_archive_metadata_size_limit'
-          AND conrelid = 'pgjobdb.jobs_archive'::regclass
-    ) THEN
-        ALTER TABLE pgjobdb.jobs_archive
-        ADD CONSTRAINT jobs_archive_metadata_size_limit CHECK (pg_column_size(metadata) <= 8192);
-    END IF;
-END;
-$$;
-
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'jobs_archive_completion_status_valid'
-          AND conrelid = 'pgjobdb.jobs_archive'::regclass
-    ) THEN
-        ALTER TABLE pgjobdb.jobs_archive
-        DROP CONSTRAINT jobs_archive_completion_status_valid;
-    END IF;
-END;
-$$;
-
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'jobs_archive_failure_detail_requires_failed'
-          AND conrelid = 'pgjobdb.jobs_archive'::regclass
-    ) THEN
-        ALTER TABLE pgjobdb.jobs_archive
-        DROP CONSTRAINT jobs_archive_failure_detail_requires_failed;
-    END IF;
-END;
-$$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.jobs_trace (
     trace_id BIGINT PRIMARY KEY DEFAULT nextval('pgjobdb.jobs_trace_id_seq'),
@@ -265,10 +188,6 @@ ON pgjobdb.jobs_archive USING GIN (metadata);
 CREATE INDEX IF NOT EXISTS idx_trace_tenant_job_event
 ON pgjobdb.jobs_trace(tenant_id, job_id, event_at DESC);
 
-DROP VIEW IF EXISTS pgjobdb.jobs_with_status CASCADE;
-DROP INDEX IF EXISTS pgjobdb.idx_jobs_tenant_active_singleton;
-ALTER TABLE pgjobdb.jobs DROP COLUMN IF EXISTS singleton_key;
-ALTER TABLE pgjobdb.jobs_archive DROP COLUMN IF EXISTS singleton_key;
 
 CREATE OR REPLACE FUNCTION pgjobdb.crash_concern_threshold()
 RETURNS INTEGER
@@ -1061,8 +980,7 @@ BEGIN
 END;
 $$;
 
--- JobDB-native facts and schedule state. The copied generic procedures remain
--- available while the native procedures are introduced in the next step.
+-- Immutable JobDB facts and schedule state.
 CREATE TABLE IF NOT EXISTS pgjobdb.schedules (
     tenant_id TEXT NOT NULL,
     schedule_id TEXT NOT NULL,
@@ -1138,121 +1056,17 @@ CREATE INDEX IF NOT EXISTS job_facts_metadata_idx
 CREATE INDEX IF NOT EXISTS job_facts_created_idx
     ON pgjobdb.job_facts (created_at DESC, tenant_id DESC, job_id DESC);
 
-ALTER TABLE pgjobdb.jobs
-    ADD COLUMN IF NOT EXISTS route_job_type TEXT,
-    ADD COLUMN IF NOT EXISTS work_kind TEXT,
-    ADD COLUMN IF NOT EXISTS task_type TEXT,
-    ADD COLUMN IF NOT EXISTS resume_job_type TEXT,
-    ADD COLUMN IF NOT EXISTS task_input_ordinal BIGINT,
-    ADD COLUMN IF NOT EXISTS task_output_ordinal BIGINT,
-    ADD COLUMN IF NOT EXISTS task_input_hash TEXT,
-    ADD COLUMN IF NOT EXISTS alternate_job_type TEXT,
-    ADD COLUMN IF NOT EXISTS alternate_task_type TEXT,
-    ADD COLUMN IF NOT EXISTS lease_worker_id TEXT,
-    ADD COLUMN IF NOT EXISTS lease_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
-    ADD COLUMN IF NOT EXISTS lease_payload_visible BOOLEAN NOT NULL DEFAULT FALSE;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'pgjobdb.jobs'::regclass
-          AND conname = 'jobs_native_route_valid') THEN
-        ALTER TABLE pgjobdb.jobs
-            ADD CONSTRAINT jobs_native_route_valid CHECK (
-                (route_job_type IS NULL AND work_kind IS NULL
-                    AND task_type IS NULL AND resume_job_type IS NULL
-                    AND task_input_ordinal IS NULL AND task_output_ordinal IS NULL
-                    AND task_input_hash IS NULL)
-                OR (route_job_type IS NOT NULL AND route_job_type <> ''
-                    AND work_kind IS NOT NULL AND (
-                    (work_kind = 'JOB' AND task_type IS NULL
-                        AND resume_job_type IS NULL AND task_input_ordinal IS NULL
-                        AND task_output_ordinal IS NULL AND task_input_hash IS NULL)
-                    OR (work_kind = 'TASK' AND task_type IS NOT NULL
-                        AND task_type <> '' AND resume_job_type IS NOT NULL
-                        AND resume_job_type <> '' AND task_input_ordinal IS NOT NULL
-                        AND task_input_ordinal >= 0 AND task_output_ordinal IS NOT NULL
-                        AND task_output_ordinal >= 0 AND task_input_hash IS NOT NULL
-                        AND task_input_hash <> '')
-                ))
-            );
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'pgjobdb.jobs'::regclass
-          AND conname = 'jobs_native_payload_object') THEN
-        ALTER TABLE pgjobdb.jobs
-            ADD CONSTRAINT jobs_native_payload_object CHECK
-                (jsonb_typeof(lease_payload) = 'object');
-    END IF;
-END;
-$$;
+
+
 
 CREATE INDEX IF NOT EXISTS jobs_native_route_idx
     ON pgjobdb.jobs (route_job_type, work_kind, task_type, available_at)
     WHERE route_job_type IS NOT NULL;
 
-ALTER TABLE pgjobdb.jobs_archive
-    ADD COLUMN IF NOT EXISTS completion_error_kind TEXT,
-    ADD COLUMN IF NOT EXISTS completion_retryable BOOLEAN,
-    ADD COLUMN IF NOT EXISTS final_route_job_type TEXT,
-    ADD COLUMN IF NOT EXISTS final_work_kind TEXT,
-    ADD COLUMN IF NOT EXISTS final_task_type TEXT,
-    ADD COLUMN IF NOT EXISTS final_resume_job_type TEXT,
-    ADD COLUMN IF NOT EXISTS final_task_input_ordinal BIGINT,
-    ADD COLUMN IF NOT EXISTS final_task_output_ordinal BIGINT,
-    ADD COLUMN IF NOT EXISTS final_task_input_hash TEXT,
-    ADD COLUMN IF NOT EXISTS final_alternate_job_type TEXT,
-    ADD COLUMN IF NOT EXISTS final_alternate_task_type TEXT,
-    ADD COLUMN IF NOT EXISTS final_alternate_after_seconds INTEGER,
-    ADD COLUMN IF NOT EXISTS final_wait_for TEXT[],
-    ADD COLUMN IF NOT EXISTS final_available_at TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS final_lease_expires_at TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS final_lease_worker_id TEXT,
-    ADD COLUMN IF NOT EXISTS final_cancel_requested BOOLEAN,
-    ADD COLUMN IF NOT EXISTS final_lease_payload JSONB,
-    ADD COLUMN IF NOT EXISTS final_lease_payload_visible BOOLEAN;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'pgjobdb.jobs_archive'::regclass
-          AND conname = 'jobs_archive_native_snapshot_valid') THEN
-        ALTER TABLE pgjobdb.jobs_archive
-            ADD CONSTRAINT jobs_archive_native_snapshot_valid CHECK (
-                (final_route_job_type IS NULL AND final_work_kind IS NULL
-                    AND final_task_type IS NULL AND final_resume_job_type IS NULL
-                    AND final_task_input_ordinal IS NULL
-                    AND final_task_output_ordinal IS NULL
-                    AND final_task_input_hash IS NULL AND final_wait_for IS NULL
-                    AND final_available_at IS NULL AND final_cancel_requested IS NULL
-                    AND final_lease_payload IS NULL
-                    AND final_lease_payload_visible IS NULL)
-                OR (final_route_job_type IS NOT NULL AND final_route_job_type <> ''
-                    AND final_work_kind IS NOT NULL
-                    AND final_wait_for IS NOT NULL AND final_available_at IS NOT NULL
-                    AND final_cancel_requested IS NOT NULL
-                    AND final_lease_payload IS NOT NULL
-                    AND final_lease_payload_visible IS NOT NULL
-                    AND jsonb_typeof(final_lease_payload) = 'object' AND (
-                        (final_work_kind = 'JOB' AND final_task_type IS NULL
-                            AND final_resume_job_type IS NULL
-                            AND final_task_input_ordinal IS NULL
-                            AND final_task_output_ordinal IS NULL
-                            AND final_task_input_hash IS NULL)
-                        OR (final_work_kind = 'TASK' AND final_task_type IS NOT NULL
-                            AND final_task_type <> '' AND final_resume_job_type IS NOT NULL
-                            AND final_resume_job_type <> ''
-                            AND final_task_input_ordinal IS NOT NULL
-                            AND final_task_input_ordinal >= 0
-                            AND final_task_output_ordinal IS NOT NULL
-                            AND final_task_output_ordinal >= 0
-                            AND final_task_input_hash IS NOT NULL
-                            AND final_task_input_hash <> '')
-                    ))
-            );
-    END IF;
-END;
-$$;
+
+
 
 CREATE OR REPLACE FUNCTION pgjobdb.upsert_schedule(
     p_tenant_id TEXT,
@@ -1454,6 +1268,115 @@ BEGIN
 END;
 $$;
 
+CREATE TABLE IF NOT EXISTS pgjobdb.job_client_state (
+ tenant_id TEXT NOT NULL,
+ job_id TEXT NOT NULL,
+ client_payload JSON,
+ revision BIGINT NOT NULL CHECK (revision >= 0),
+ initial_payload_digest TEXT NOT NULL,
+ PRIMARY KEY (tenant_id,job_id),
+ FOREIGN KEY (tenant_id,job_id) REFERENCES pgjobdb.job_facts(tenant_id,job_id) ON DELETE CASCADE,
+ CHECK (client_payload IS NULL OR octet_length(client_payload::text)<=65536)
+);
+
+-- Canonical value identity, also validating duplicates, depth and Unicode.
+-- Numeric coefficients/exponents are normalized as text: the JSON number itself
+-- is never converted to PostgreSQL numeric (which has a smaller range).
+CREATE OR REPLACE FUNCTION pgjobdb._client_json_string(p_text TEXT)
+RETURNS TEXT LANGUAGE sql IMMUTABLE STRICT AS $$
+ SELECT replace(replace(replace(replace(replace(to_json(p_text)::text,
+ '<', E'\\u003c'), '>', E'\\u003e'), '&', E'\\u0026'), chr(8232), E'\\u2028'), chr(8233), E'\\u2029');
+$$;
+CREATE OR REPLACE FUNCTION pgjobdb._canonical_client_json(p_value JSON,p_depth INTEGER DEFAULT 0,p_normalize_numbers BOOLEAN DEFAULT TRUE)
+RETURNS TEXT LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE kind TEXT; result TEXT; item RECORD; s TEXT; coefficient TEXT; exponent NUMERIC:=0; negative BOOLEAN; pos INTEGER; n INTEGER;
+BEGIN
+ IF p_value IS NULL THEN RETURN 'absent'; END IF;
+ IF octet_length(p_value::text)>65536 THEN RAISE EXCEPTION 'client payload exceeds size limit' USING ERRCODE='JCP03'; END IF;
+ kind:=json_typeof(p_value);
+ IF kind IN ('object','array') AND p_depth>=128 THEN RAISE EXCEPTION 'client payload nesting limit' USING ERRCODE='JCP01'; END IF;
+ IF kind='object' THEN
+  IF EXISTS(SELECT key FROM json_each(p_value) GROUP BY key HAVING count(*)>1) THEN RAISE EXCEPTION 'duplicate client payload object name' USING ERRCODE='JCP01'; END IF;
+  result:='';
+  FOR item IN SELECT key,value FROM json_each(p_value) ORDER BY key COLLATE "C" LOOP
+   IF result<>'' THEN result:=result||','; END IF;
+   result:=result||pgjobdb._client_json_string(item.key)||':'||pgjobdb._canonical_client_json(item.value,p_depth+1,p_normalize_numbers);
+  END LOOP;
+  RETURN '{'||result||'}';
+ ELSIF kind='array' THEN
+  result:='';
+  FOR item IN SELECT value FROM json_array_elements(p_value) LOOP
+   IF result<>'' THEN result:=result||','; END IF;
+   result:=result||pgjobdb._canonical_client_json(item.value,p_depth+1,p_normalize_numbers);
+  END LOOP;
+  RETURN '['||result||']';
+ ELSIF kind='string' THEN
+  RETURN pgjobdb._client_json_string(p_value#>>'{}');
+ ELSIF kind='number' THEN
+  IF NOT p_normalize_numbers THEN RETURN btrim(p_value::text);END IF;
+  s:=lower(btrim(p_value::text));negative:=left(s,1)='-';IF negative THEN s:=substr(s,2);END IF;
+  pos:=strpos(s,'e');IF pos>0 THEN exponent:=substr(s,pos+1)::numeric;s:=substr(s,1,pos-1);END IF;
+  pos:=strpos(s,'.');IF pos>0 THEN exponent:=exponent-(length(s)-pos);s:=replace(s,'.','');END IF;
+  s:=ltrim(s,'0');IF s='' THEN RETURN '0';END IF;
+  n:=length(s);s:=rtrim(s,'0');exponent:=exponent+n-length(s);
+  RETURN CASE WHEN negative THEN '-' ELSE '' END||s||'e'||exponent::text;
+ ELSE RETURN btrim(p_value::text);
+ END IF;
+END;
+$$;
+CREATE OR REPLACE FUNCTION pgjobdb._merge_client_json(p_target JSON,p_patch JSON)
+RETURNS JSON LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE result TEXT:=''; item RECORD; merged_value JSON;
+BEGIN
+ IF json_typeof(p_patch) IS DISTINCT FROM 'object' THEN RETURN p_patch; END IF;
+ IF json_typeof(p_target) IS DISTINCT FROM 'object' THEN p_target:='{}'::JSON; END IF;
+ FOR item IN SELECT t.key,t.value FROM json_each(p_target) t WHERE NOT EXISTS(SELECT 1 FROM json_each(p_patch) p WHERE p.key=t.key) LOOP
+  IF result<>'' THEN result:=result||',';END IF;
+  result:=result||to_json(item.key)::text||':'||item.value::text;
+ END LOOP;
+ FOR item IN SELECT key,value FROM json_each(p_patch) LOOP
+  IF json_typeof(item.value)='null' THEN CONTINUE;END IF;
+  merged_value:=pgjobdb._merge_client_json(p_target->item.key,item.value);
+  IF result<>'' THEN result:=result||',';END IF;
+  result:=result||to_json(item.key)::text||':'||merged_value::text;
+ END LOOP;
+ RETURN ('{'||result||'}')::JSON;
+END;
+$$;
+CREATE OR REPLACE FUNCTION pgjobdb._client_update_value(p_current JSON,p_mode TEXT,p_value JSON)
+RETURNS JSON LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE result JSON;
+BEGIN
+ IF p_mode IS NULL THEN
+  IF p_value IS NOT NULL THEN RAISE EXCEPTION 'client update mode required' USING ERRCODE='JCP01';END IF;
+  RETURN p_current;
+ END IF;
+ PERFORM pgjobdb._canonical_client_json(p_value);
+ IF p_mode='reset' THEN result:=p_value;
+ ELSIF p_mode='patch' AND p_value IS NOT NULL THEN
+  result:=pgjobdb._canonical_client_json(pgjobdb._merge_client_json(p_current,p_value),0,FALSE)::JSON;
+ ELSE RAISE EXCEPTION 'invalid client payload update' USING ERRCODE='JCP01';END IF;
+ PERFORM pgjobdb._canonical_client_json(result);
+ RETURN result;
+END;
+$$;
+-- Caller holds and authorizes the scheduler job row first.
+CREATE OR REPLACE FUNCTION pgjobdb._update_client_payload(p_tenant TEXT,p_job TEXT,p_mode TEXT,p_value JSON,p_expected BIGINT)
+RETURNS VOID LANGUAGE plpgsql AS $$
+DECLARE state pgjobdb.job_client_state%ROWTYPE; value JSON;
+BEGIN
+ IF p_mode IS NULL THEN
+  IF p_value IS NOT NULL OR p_expected IS NOT NULL THEN RAISE EXCEPTION 'invalid preserve update' USING ERRCODE='JCP01';END IF;
+  RETURN;
+ END IF;
+ SELECT * INTO STRICT state FROM pgjobdb.job_client_state WHERE tenant_id=p_tenant AND job_id=p_job FOR UPDATE;
+ IF p_expected IS NULL OR p_expected<0 THEN RAISE EXCEPTION 'expected revision required' USING ERRCODE='JCP01';END IF;
+ IF state.revision<>p_expected OR state.revision=9223372036854775807 THEN RAISE EXCEPTION 'client payload revision conflict' USING ERRCODE='JCP02';END IF;
+ value:=pgjobdb._client_update_value(state.client_payload,p_mode,p_value);
+ UPDATE pgjobdb.job_client_state SET client_payload=value,revision=state.revision+1 WHERE tenant_id=p_tenant AND job_id=p_job;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION pgjobdb.submit_native_job(
     p_tenant_id TEXT,
     p_job_id TEXT,
@@ -1467,14 +1390,16 @@ CREATE OR REPLACE FUNCTION pgjobdb.submit_native_job(
     p_wait_for TEXT[],
     p_available_at TIMESTAMPTZ,
     p_expires_at TIMESTAMPTZ,
-    p_lease_payload JSONB,
-    p_lease_payload_visible BOOLEAN
+    p_client_mode TEXT,
+    p_client_value JSON
 )
 RETURNS TABLE(job_id TEXT, created BOOLEAN)
 LANGUAGE plpgsql
 AS $$
 DECLARE
     v_inserted INTEGER;
+    v_initial JSON;
+    v_digest TEXT;
     v_existing pgjobdb.job_facts%ROWTYPE;
     v_schedule_id TEXT := p_schedule->>'schedule_id';
     v_schedule_generation BIGINT := (p_schedule->>'generation')::BIGINT;
@@ -1489,18 +1414,14 @@ BEGIN
         RAISE EXCEPTION 'tenant, job, worker, and job type are required';
     END IF;
     IF jsonb_typeof(p_run_policy) IS DISTINCT FROM 'object'
-        OR jsonb_typeof(p_app_metadata) IS DISTINCT FROM 'object'
-        OR jsonb_typeof(p_lease_payload) IS DISTINCT FROM 'object'
-        OR p_lease_payload_visible IS NULL THEN
-        RAISE EXCEPTION 'run policy, app metadata, and lease payload must be JSON objects';
+        OR jsonb_typeof(p_app_metadata) IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'run policy and app metadata must be JSON objects';
     END IF;
     IF p_schedule IS NOT NULL AND jsonb_typeof(p_schedule) IS DISTINCT FROM 'object' THEN
         RAISE EXCEPTION 'schedule occurrence must be a JSON object';
     END IF;
-    IF EXISTS (SELECT 1 FROM pgjobdb.jobs_archive a
-        WHERE a.tenant_id = p_tenant_id AND a.job_id = p_job_id) THEN
-        RAISE EXCEPTION 'completed job id cannot be resubmitted';
-    END IF;
+    v_initial:=pgjobdb._client_update_value(NULL,p_client_mode,p_client_value);
+    v_digest:=encode(sha256(convert_to(pgjobdb._canonical_client_json(v_initial),'UTF8')),'hex');
 
     INSERT INTO pgjobdb.job_facts (
         tenant_id, job_id, job_type, run_policy, app_metadata, schema_hash,
@@ -1543,9 +1464,9 @@ BEGIN
             OR v_existing.expires_at IS DISTINCT FROM v_expires_at THEN
             RAISE EXCEPTION 'job id already exists with different immutable facts';
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pgjobdb.jobs j
-            WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id) THEN
-            RAISE EXCEPTION 'job facts exist without active scheduler state';
+        IF NOT EXISTS (SELECT 1 FROM pgjobdb.job_client_state c
+            WHERE c.tenant_id = p_tenant_id AND c.job_id = p_job_id AND c.initial_payload_digest=v_digest) THEN
+            RAISE EXCEPTION 'initial client payload differs or is missing';
         END IF;
         RETURN QUERY SELECT p_job_id, FALSE;
         RETURN;
@@ -1553,13 +1474,14 @@ BEGIN
 
     INSERT INTO pgjobdb.jobs (
         tenant_id, job_id, next_need, wait_for, available_at, expires_at,
-        route_job_type, work_kind, lease_payload, lease_payload_visible
+        route_job_type, work_kind
     ) VALUES (
         p_tenant_id, p_job_id, '__pgjobdb_native__',
         pgjobdb.normalize_wait_for(p_tenant_id, p_wait_for),
         COALESCE(p_available_at, clock_timestamp()), v_expires_at,
-        p_job_type, 'JOB', p_lease_payload, p_lease_payload_visible
+        p_job_type, 'JOB'
     );
+    INSERT INTO pgjobdb.job_client_state VALUES(p_tenant_id,p_job_id,v_initial,CASE WHEN v_initial IS NULL THEN 0 ELSE 1 END,v_digest);
     RETURN QUERY SELECT p_job_id, TRUE;
 END;
 $$;
@@ -1584,7 +1506,7 @@ RETURNS TABLE(
     job_type TEXT, route_job_type TEXT, work_kind TEXT, task_type TEXT,
     resume_job_type TEXT, task_input_ordinal BIGINT,
     task_output_ordinal BIGINT, task_input_hash TEXT,
-    run_policy JSONB, lease_payload JSONB, lease_payload_visible BOOLEAN,
+    run_policy JSONB, client_payload JSON, client_payload_revision BIGINT,
     schema_hash TEXT
 )
 LANGUAGE plpgsql
@@ -1614,7 +1536,7 @@ BEGIN
             route.effective_work_kind,
             route.effective_task_type
         FROM pgjobdb.jobs j
-        JOIN pgjobdb.job_facts f USING (tenant_id, job_id)
+        JOIN pgjobdb.job_facts f USING (tenant_id, job_id) JOIN pgjobdb.job_client_state c USING (tenant_id,job_id)
         CROSS JOIN LATERAL (
             SELECT COALESCE(
                 j.alternate_job_type IS NOT NULL
@@ -1692,9 +1614,8 @@ BEGIN
         CASE WHEN l.effective_work_kind = 'TASK' THEN l.effective_task_type
             ELSE l.task_type END,
         l.resume_job_type, l.task_input_ordinal, l.task_output_ordinal,
-        l.task_input_hash, f.run_policy, l.lease_payload,
-        l.lease_payload_visible, f.schema_hash
-    FROM leased l JOIN pgjobdb.job_facts f USING (tenant_id, job_id);
+        l.task_input_hash, f.run_policy, c.client_payload, c.revision, f.schema_hash
+    FROM leased l JOIN pgjobdb.job_facts f USING (tenant_id, job_id) JOIN pgjobdb.job_client_state c USING (tenant_id,job_id);
 END;
 $$;
 
@@ -1743,9 +1664,7 @@ BEGIN
         final_available_at = v_active.available_at,
         final_lease_expires_at = v_active.lease_expires_at,
         final_lease_worker_id = v_active.lease_worker_id,
-        final_cancel_requested = v_active.cancel_requested,
-        final_lease_payload = v_active.lease_payload,
-        final_lease_payload_visible = v_active.lease_payload_visible
+        final_cancel_requested = v_active.cancel_requested
     WHERE a.tenant_id = v_active.tenant_id AND a.job_id = v_active.job_id;
     RETURN TRUE;
 END;
@@ -1757,9 +1676,10 @@ CREATE OR REPLACE FUNCTION pgjobdb.complete_native_job(
     p_lease_id TEXT,
     p_worker_id TEXT,
     p_completion_status TEXT,
-    p_completion_detail TEXT DEFAULT NULL,
-    p_error_kind TEXT DEFAULT NULL,
-    p_retryable BOOLEAN DEFAULT NULL
+    p_completion_detail TEXT,
+    p_error_kind TEXT,
+    p_retryable BOOLEAN,
+ p_client_mode TEXT, p_client_value JSON, p_client_expected BIGINT
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -1782,6 +1702,8 @@ BEGIN
         p_tenant_id, p_job_id, 'ACTIVE', p_lease_id,
         format('native lease not active for job %s/%s', p_tenant_id, p_job_id)
     );
+    IF v_job.lease_expires_at<=clock_timestamp() OR v_job.cancel_requested THEN RAISE EXCEPTION 'native lease not active';END IF;
+    PERFORM pgjobdb._update_client_payload(p_tenant_id,p_job_id,p_client_mode,p_client_value,p_client_expected);
     RETURN pgjobdb._complete_native_locked_job(
         v_job, p_worker_id, p_completion_status,
         p_completion_detail, p_error_kind, p_retryable
@@ -1829,7 +1751,7 @@ RETURNS TABLE(
     job_type TEXT, route_job_type TEXT, work_kind TEXT, task_type TEXT,
     resume_job_type TEXT, task_input_ordinal BIGINT,
     task_output_ordinal BIGINT, task_input_hash TEXT,
-    run_policy JSONB, lease_payload JSONB, lease_payload_visible BOOLEAN,
+    run_policy JSONB, client_payload JSON, client_payload_revision BIGINT,
     schema_hash TEXT
 )
 LANGUAGE plpgsql
@@ -1842,13 +1764,12 @@ BEGIN
     SELECT j.tenant_id, j.job_id, j.lease_id, j.lease_expires_at,
         f.job_type, j.route_job_type, j.work_kind, j.task_type,
         j.resume_job_type, j.task_input_ordinal, j.task_output_ordinal,
-        j.task_input_hash, f.run_policy, j.lease_payload,
-        j.lease_payload_visible, f.schema_hash
-    FROM pgjobdb.jobs j JOIN pgjobdb.job_facts f USING (tenant_id, job_id)
+        j.task_input_hash, f.run_policy, c.client_payload, c.revision, f.schema_hash
+    FROM pgjobdb.jobs j JOIN pgjobdb.job_facts f USING (tenant_id, job_id) JOIN pgjobdb.job_client_state c USING (tenant_id,job_id)
     WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id
       AND j.lease_id = p_lease_id AND j.lease_expires_at > clock_timestamp()
       AND j.lease_worker_id = p_worker_id
-      AND j.route_job_type IS NOT NULL;
+      AND j.route_job_type IS NOT NULL AND NOT j.cancel_requested;
 END;
 $$;
 
@@ -1909,12 +1830,10 @@ CREATE OR REPLACE FUNCTION pgjobdb.reschedule_native_job(
     p_task_input_hash TEXT,
     p_wait_for TEXT[],
     p_available_at TIMESTAMPTZ,
-    p_lease_payload JSONB,
-    p_set_alternate BOOLEAN,
     p_alternate_job_type TEXT,
     p_alternate_task_type TEXT,
     p_alternate_after_seconds INTEGER,
-    p_lease_payload_visible BOOLEAN
+    p_client_mode TEXT, p_client_value JSON, p_client_expected BIGINT
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -1946,16 +1865,7 @@ BEGIN
     ELSE
         RAISE EXCEPTION 'work kind must be JOB or TASK';
     END IF;
-    IF p_lease_payload IS NOT NULL
-        AND jsonb_typeof(p_lease_payload) IS DISTINCT FROM 'object' THEN
-        RAISE EXCEPTION 'lease payload must be a JSON object';
-    END IF;
-    IF (p_lease_payload IS NOT NULL
-            AND p_lease_payload_visible IS DISTINCT FROM TRUE)
-        OR (p_lease_payload IS NULL AND p_lease_payload_visible IS TRUE) THEN
-        RAISE EXCEPTION 'lease payload visibility and value disagree';
-    END IF;
-    IF p_set_alternate THEN
+    BEGIN
         IF p_alternate_job_type IS NULL THEN
             IF p_alternate_task_type IS NOT NULL OR p_alternate_after_seconds IS NOT NULL THEN
                 RAISE EXCEPTION 'cleared alternate route cannot have task or delay';
@@ -1968,12 +1878,13 @@ BEGIN
         IF p_alternate_task_type IS NOT NULL AND p_work_kind <> 'TASK' THEN
             RAISE EXCEPTION 'alternate task route requires task coordinates';
         END IF;
-    END IF;
+    END;
     IF p_job_id = ANY(COALESCE(p_wait_for, ARRAY[]::TEXT[])) THEN
         RAISE EXCEPTION 'job cannot wait for itself';
     END IF;
 
     IF p_lease_id IS NULL THEN
+        IF p_client_mode IS NOT NULL OR p_client_value IS NOT NULL OR p_client_expected IS NOT NULL THEN RAISE EXCEPTION 'client payload updates require a lease or complete-task authorization' USING ERRCODE='JCP01';END IF;
         v_locked := pgjobdb._lock_job_for_status(
             p_tenant_id, p_job_id, 'READY', NULL,
             format('native job %s/%s is not unheld', p_tenant_id, p_job_id)
@@ -1995,6 +1906,8 @@ BEGIN
     IF v_active.cancel_requested THEN
         RAISE EXCEPTION 'cancelled job cannot be rescheduled';
     END IF;
+    IF p_lease_id IS NOT NULL AND v_active.lease_expires_at<=clock_timestamp() THEN RAISE EXCEPTION 'native lease not active';END IF;
+    PERFORM pgjobdb._update_client_payload(p_tenant_id,p_job_id,p_client_mode,p_client_value,p_client_expected);
     v_wait_for := pgjobdb.normalize_wait_for(p_tenant_id, p_wait_for);
 
     UPDATE pgjobdb.jobs j SET
@@ -2007,15 +1920,9 @@ BEGIN
         task_input_hash = p_task_input_hash,
         wait_for = v_wait_for,
         available_at = COALESCE(p_available_at, v_now),
-        lease_payload = CASE WHEN p_lease_payload_visible IS FALSE
-            THEN '{}'::JSONB ELSE COALESCE(p_lease_payload, j.lease_payload) END,
-        lease_payload_visible = COALESCE(p_lease_payload_visible, j.lease_payload_visible),
-        alternate_job_type = CASE WHEN p_set_alternate
-            THEN p_alternate_job_type ELSE j.alternate_job_type END,
-        alternate_task_type = CASE WHEN p_set_alternate
-            THEN p_alternate_task_type ELSE j.alternate_task_type END,
-        alternate_after_seconds = CASE WHEN p_set_alternate
-            THEN p_alternate_after_seconds ELSE j.alternate_after_seconds END,
+        alternate_job_type = p_alternate_job_type,
+        alternate_task_type = p_alternate_task_type,
+        alternate_after_seconds = p_alternate_after_seconds,
         lease_id = NULL,
         lease_worker_id = NULL,
         lease_expires_at = '-infinity',
@@ -2035,8 +1942,7 @@ CREATE OR REPLACE FUNCTION pgjobdb.complete_native_task_work(
     p_input_ordinal BIGINT,
     p_output_ordinal BIGINT,
     p_input_hash TEXT,
-    p_lease_payload JSONB,
-    p_lease_payload_visible BOOLEAN
+    p_client_mode TEXT, p_client_value JSON, p_client_expected BIGINT
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -2067,11 +1973,12 @@ BEGIN
         OR v_job.task_input_hash IS DISTINCT FROM p_input_hash THEN
         RAISE EXCEPTION 'waiting task coordinates do not match';
     END IF;
+    PERFORM pgjobdb._update_client_payload(p_tenant_id,p_job_id,p_client_mode,p_client_value,p_client_expected);
     RETURN pgjobdb.reschedule_native_job(
         p_tenant_id, p_job_id, NULL, p_worker_id,
         p_resume_job_type, 'JOB', NULL, NULL, NULL, NULL, NULL,
-        ARRAY[]::TEXT[], clock_timestamp(), p_lease_payload,
-        FALSE, NULL, NULL, NULL, p_lease_payload_visible
+        ARRAY[]::TEXT[], clock_timestamp(),
+        NULL, NULL, NULL, NULL,NULL,NULL
     );
 END;
 $$;
@@ -2084,8 +1991,7 @@ SELECT
     j.task_input_hash, j.alternate_job_type, j.alternate_task_type,
     j.alternate_after_seconds, j.wait_for, j.available_at,
     NULLIF(j.lease_expires_at, '-infinity'::TIMESTAMPTZ) AS lease_expires_at,
-    j.lease_worker_id, j.cancel_requested, j.lease_payload,
-    j.lease_payload_visible,
+    j.lease_worker_id, j.cancel_requested,
     f.run_policy, f.app_metadata, f.schema_hash, f.parent_job_id,
     f.created_at,
     NULLIF(f.expires_at, 'infinity'::TIMESTAMPTZ) AS expires_at,
@@ -2113,7 +2019,6 @@ SELECT
     a.final_wait_for, a.final_available_at,
     NULLIF(a.final_lease_expires_at, '-infinity'::TIMESTAMPTZ),
     a.final_lease_worker_id, a.final_cancel_requested,
-    a.final_lease_payload, a.final_lease_payload_visible,
     f.run_policy, f.app_metadata,
     f.schema_hash, f.parent_job_id, f.created_at,
     NULLIF(f.expires_at, 'infinity'::TIMESTAMPTZ), a.archived_at,
@@ -2130,10 +2035,10 @@ WHERE a.final_route_job_type IS NOT NULL;
 CREATE OR REPLACE FUNCTION pgjobdb.get_native_job(
     p_tenant_id TEXT, p_job_id TEXT
 )
-RETURNS SETOF JSONB
+RETURNS TABLE(job_details JSONB,client_payload JSON,client_payload_revision BIGINT,initial_payload_digest TEXT)
 LANGUAGE sql STABLE
 AS $$
-    SELECT to_jsonb(n) FROM pgjobdb.native_jobs n
+    SELECT to_jsonb(n),c.client_payload,c.revision,c.initial_payload_digest FROM pgjobdb.native_jobs n JOIN pgjobdb.job_client_state c USING(tenant_id,job_id)
     WHERE n.tenant_id = p_tenant_id AND n.job_id = p_job_id;
 $$;
 
@@ -2172,7 +2077,7 @@ CREATE OR REPLACE FUNCTION pgjobdb.list_native_jobs(
     p_before_job_id TEXT,
     p_limit INTEGER
 )
-RETURNS SETOF JSONB
+RETURNS TABLE(job_details JSONB,client_payload JSON,client_payload_revision BIGINT,initial_payload_digest TEXT)
 LANGUAGE plpgsql
 AS $$
 BEGIN
@@ -2196,7 +2101,7 @@ BEGIN
     END IF;
 
     RETURN QUERY
-    SELECT to_jsonb(n) FROM pgjobdb.native_jobs n
+    SELECT to_jsonb(n),c.client_payload,c.revision,c.initial_payload_digest FROM pgjobdb.native_jobs n JOIN pgjobdb.job_client_state c USING(tenant_id,job_id)
     WHERE n.tenant_id = ANY(p_tenant_ids)
       AND (p_statuses IS NULL OR n.status = ANY(p_statuses))
       AND (p_stores IS NULL OR n.store = ANY(p_stores))
@@ -2245,7 +2150,7 @@ CREATE OR REPLACE FUNCTION pgjobdb.list_native_schedule_runs(
     p_before_job_id TEXT,
     p_limit INTEGER
 )
-RETURNS SETOF JSONB
+RETURNS TABLE(job_details JSONB, client_payload JSON, client_payload_revision BIGINT, initial_payload_digest TEXT)
 LANGUAGE plpgsql
 AS $$
 BEGIN
@@ -2260,7 +2165,7 @@ BEGIN
         RAISE EXCEPTION 'schedule run cursor fields must be provided together';
     END IF;
     RETURN QUERY
-    SELECT to_jsonb(n) FROM pgjobdb.native_jobs n
+    SELECT to_jsonb(n),c.client_payload,c.revision,c.initial_payload_digest FROM pgjobdb.native_jobs n JOIN pgjobdb.job_client_state c USING (tenant_id,job_id)
     WHERE n.tenant_id = p_tenant_id AND n.schedule_id = p_schedule_id
       AND n.scheduled_at IS NOT NULL
       AND (p_scheduled_after IS NULL OR n.scheduled_at >= p_scheduled_after)

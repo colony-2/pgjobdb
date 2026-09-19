@@ -17,9 +17,11 @@ func GetJob(ctx context.Context, db DB, tenant TenantID, job JobID) (*JobDetail,
 	if tenant == "" || job == "" {
 		return nil, fmt.Errorf("pgjobdb: tenant id and job id are required")
 	}
-	var raw []byte
+	var raw, payload []byte
+	var revision int64
+	var initialDigest string
 	err := db.QueryRowContext(ctx, `SELECT * FROM pgjobdb.get_native_job($1, $2)`,
-		string(tenant), string(job)).Scan(&raw)
+		string(tenant), string(job)).Scan(&raw, &payload, &revision, &initialDigest)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrJobNotFound
 	}
@@ -30,6 +32,9 @@ func GetJob(ctx context.Context, db DB, tenant TenantID, job JobID) (*JobDetail,
 	if err := json.Unmarshal(raw, &detail); err != nil {
 		return nil, fmt.Errorf("pgjobdb: decode native job: %w", err)
 	}
+	detail.ClientPayload = append(json.RawMessage(nil), payload...)
+	detail.ClientPayloadRevision = revision
+	detail.InitialPayloadDigest = initialDigest
 	return &detail, nil
 }
 

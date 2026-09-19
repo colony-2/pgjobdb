@@ -13,7 +13,7 @@ func TestNativeCompletionPreservesFinalState(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, req := range []pgjobdb.SubmitJobRequest{
 			{TenantID: "tenant", JobID: "root", WorkerID: "submitter",
-				JobType: "collect", LeasePayload: json.RawMessage(`{"attempt":1}`)},
+				JobType: "collect", ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"attempt":1}`)}},
 			{TenantID: "tenant", JobID: "child", WorkerID: "submitter",
 				JobType: "collect", WaitFor: []pgjobdb.JobID{"root"}},
 		} {
@@ -44,7 +44,7 @@ func TestNativeCompletionPreservesFinalState(t *testing.T) {
 		var route, kind, status, payload string
 		var cancelled bool
 		if err := db.QueryRowContext(ctx, `SELECT final_route_job_type,
-			final_work_kind, completion_status, final_lease_payload::text,
+			final_work_kind, completion_status, (SELECT c.client_payload::text FROM pgjobdb.job_client_state c WHERE c.tenant_id=jobs_archive.tenant_id AND c.job_id=jobs_archive.job_id),
 			final_cancel_requested FROM pgjobdb.jobs_archive
 			WHERE tenant_id = 'tenant' AND job_id = 'root'`).Scan(
 			&route, &kind, &status, &payload, &cancelled,
@@ -52,7 +52,7 @@ func TestNativeCompletionPreservesFinalState(t *testing.T) {
 			t.Fatalf("read root archive: %v", err)
 		}
 		if route != "collect" || kind != "JOB" || status != "success" ||
-			payload != `{"attempt": 1}` || cancelled {
+			payload != `{"attempt":1}` || cancelled {
 			t.Fatalf("root archive = %q %q %q %q %v",
 				route, kind, status, payload, cancelled)
 		}
@@ -71,8 +71,7 @@ func TestNativeCompletionPreservesFinalState(t *testing.T) {
 		if _, err := db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET
 			work_kind = 'TASK', task_type = 'download',
 			resume_job_type = 'collect', task_input_ordinal = 3,
-			task_output_ordinal = 4, task_input_hash = 'sha256:task',
-			lease_payload = '{"work":"item"}'
+			task_output_ordinal = 4, task_input_hash = 'sha256:task'
 			WHERE tenant_id = 'tenant' AND job_id = 'child'`); err != nil {
 			t.Fatalf("route child to task: %v", err)
 		}
@@ -87,6 +86,12 @@ func TestNativeCompletionPreservesFinalState(t *testing.T) {
 			SET cancel_requested = TRUE
 			WHERE tenant_id = 'tenant' AND job_id = 'child'`); err != nil {
 			t.Fatalf("request cancellation: %v", err)
+		}
+		if err := taskLease.Complete(ctx, db, pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}); err == nil {
+			t.Fatal("cancelled lease accepted completion")
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET cancel_requested=FALSE WHERE tenant_id='tenant' AND job_id='child'`); err != nil {
+			t.Fatal(err)
 		}
 		retryable := false
 		if err := taskLease.Complete(ctx, db, pgjobdb.Completion{
@@ -110,7 +115,7 @@ func TestNativeCompletionPreservesFinalState(t *testing.T) {
 			t.Fatalf("read child archive: %v", err)
 		}
 		if taskType != "download" || input != 3 || output != 4 ||
-			inputHash != "sha256:task" || !cancelled ||
+			inputHash != "sha256:task" || cancelled ||
 			detail != "task failed" || errorKind != "DownloadError" || retryFlag {
 			t.Fatalf("child archive = %q %d %d %q %v %q %q %v",
 				taskType, input, output, inputHash, cancelled, detail, errorKind, retryFlag)

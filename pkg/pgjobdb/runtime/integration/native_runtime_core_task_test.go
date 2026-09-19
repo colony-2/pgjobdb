@@ -3,7 +3,6 @@ package integration_test
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -51,7 +50,7 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 		}
 		if err := lease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{
 			NextNeed: "collect:download",
-			Payload:  json.RawMessage(`{"run_policy":{"retry":{"maximum_attempts":1}},"task_wait":{"in":0,"out":1,"next":"collect","input_hash":"sha256:input"}}`),
+			TaskWait: &jobdb.TaskWait{InputOrdinal: 0, OutputOrdinal: 1, ResumeNeed: "collect", InputHash: "sha256:input"},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -79,7 +78,7 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 			t.Fatalf("completion during active lease = %v", err)
 		}
 		if err := taskLease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{
-			NextNeed: "collect:download", Payload: taskLease.Payload(),
+			NextNeed: "collect:download", TaskWait: taskLease.ExecutionState().TaskWait,
 		}); err != nil {
 			t.Fatalf("return task to queue: %v", err)
 		}

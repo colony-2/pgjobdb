@@ -33,7 +33,7 @@ func TestNativeSubmitJob(t *testing.T) {
 					FailureHistory: json.RawMessage(`{"bits":"101","windowSize":3}`),
 				},
 			},
-			LeasePayload: json.RawMessage(`{"opaque":true}`),
+			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"opaque":true}`)},
 		}
 		result, err := pgjobdb.SubmitJob(ctx, db, req)
 		if err != nil || !result.Created || result.JobID != "job-1" {
@@ -45,7 +45,7 @@ func TestNativeSubmitJob(t *testing.T) {
 			j.work_kind, f.schema_hash, f.parent_job_id, f.schedule_id,
 			f.schedule_run_id, f.run_policy::text, f.app_metadata::text,
 			f.schedule_failure_history::text,
-			j.lease_payload::text
+			(SELECT c.client_payload::text FROM pgjobdb.job_client_state c WHERE c.tenant_id=j.tenant_id AND c.job_id=j.job_id)
 			FROM pgjobdb.job_facts f JOIN pgjobdb.jobs j USING (tenant_id, job_id)
 			WHERE f.tenant_id = 'tenant' AND f.job_id = 'job-1'`).Scan(
 			&jobType, &route, &workKind, &schemaHash, &parentID, &scheduleID,
@@ -58,7 +58,7 @@ func TestNativeSubmitJob(t *testing.T) {
 			scheduleID != "daily" || runID != "run-1" ||
 			metadata != `{"source": "api"}` ||
 			failureHistory != `{"bits": "101", "windowSize": 3}` ||
-			leasePayload != `{"opaque": true}` {
+			leasePayload != `{"opaque":true}` {
 			t.Fatalf("native job fields = %q %q %q %q %q %q %q %q %q",
 				jobType, route, workKind, schemaHash, parentID, scheduleID,
 				runID, metadata, leasePayload)

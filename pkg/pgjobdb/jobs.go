@@ -37,13 +37,12 @@ func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 	if len(appMetadata) == 0 {
 		appMetadata = json.RawMessage(`{}`)
 	}
-	leasePayload := req.LeasePayload
-	leasePayloadVisible := len(leasePayload) > 0
-	if len(leasePayload) == 0 {
-		leasePayload = json.RawMessage(`{}`)
+	if !isJSONObject(appMetadata) {
+		return nil, fmt.Errorf("pgjobdb: app metadata must be a JSON object")
 	}
-	if !isJSONObject(appMetadata) || !isJSONObject(leasePayload) {
-		return nil, fmt.Errorf("pgjobdb: app metadata and lease payload must be JSON objects")
+	mode, value, _, err := clientUpdateArgs(req.ClientPayloadUpdate, true)
+	if err != nil {
+		return nil, err
 	}
 	var schedule any
 	if occurrence := req.Runtime.Schedule; occurrence != nil {
@@ -81,9 +80,9 @@ func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 		string(req.JobType), string(policy), string(appMetadata),
 		nilIfBlank(req.Runtime.SchemaHash), nilIfBlank(string(req.Runtime.ParentJobID)),
 		schedule, pq.Array(waitFor), optionalTime(req.AvailableAt),
-		optionalTime(req.ExpiresAt), string(leasePayload), leasePayloadVisible).Scan(&returnedID, &result.Created)
+		optionalTime(req.ExpiresAt), mode, value).Scan(&returnedID, &result.Created)
 	if err != nil {
-		return nil, err
+		return nil, clientPayloadError(err)
 	}
 	result.JobID = JobID(returnedID)
 	return &result, nil

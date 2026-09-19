@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/colony-2/jobdb/pkg/jobdb/clientpayload"
 )
 
 // DB is the database surface required by pgjobdb's typed operations.
@@ -52,17 +54,17 @@ type RuntimeMetadata struct {
 }
 
 type SubmitJobRequest struct {
-	TenantID     TenantID
-	JobID        JobID
-	WorkerID     WorkerID
-	JobType      JobType
-	RunPolicy    RunPolicy
-	AppMetadata  json.RawMessage
-	Runtime      RuntimeMetadata
-	WaitFor      []JobID
-	LeasePayload json.RawMessage
-	AvailableAt  *time.Time
-	ExpiresAt    *time.Time
+	TenantID            TenantID
+	JobID               JobID
+	WorkerID            WorkerID
+	JobType             JobType
+	RunPolicy           RunPolicy
+	AppMetadata         json.RawMessage
+	Runtime             RuntimeMetadata
+	WaitFor             []JobID
+	ClientPayloadUpdate *ClientPayloadUpdate
+	AvailableAt         *time.Time
+	ExpiresAt           *time.Time
 }
 
 type SubmitJobResult struct {
@@ -111,21 +113,19 @@ type TaskWork struct {
 }
 
 type JobLease struct {
-	TenantID     TenantID
-	JobID        JobID
-	LeaseID      string
-	WorkerID     WorkerID
-	ExpiresAt    time.Time
-	JobType      JobType
-	RouteJobType JobType
-	WorkKind     WorkKind
-	Task         *TaskWork
-	RunPolicy    RunPolicy
-	LeasePayload json.RawMessage
-	// LeasePayloadVisible distinguishes an explicit {} application payload
-	// from the generated lease payload view.
-	LeasePayloadVisible bool
-	SchemaHash          string
+	TenantID              TenantID
+	JobID                 JobID
+	LeaseID               string
+	WorkerID              WorkerID
+	ExpiresAt             time.Time
+	JobType               JobType
+	RouteJobType          JobType
+	WorkKind              WorkKind
+	Task                  *TaskWork
+	RunPolicy             RunPolicy
+	ClientPayload         json.RawMessage
+	ClientPayloadRevision int64
+	SchemaHash            string
 }
 
 type LeaseIdentity struct {
@@ -146,10 +146,11 @@ const (
 )
 
 type Completion struct {
-	Status    CompletionStatus
-	Detail    string
-	ErrorKind string
-	Retryable *bool
+	ClientPayloadUpdate *ClientPayloadUpdate
+	Status              CompletionStatus
+	Detail              string
+	ErrorKind           string
+	Retryable           *bool
 }
 
 type AlternateRoute struct {
@@ -159,26 +160,23 @@ type AlternateRoute struct {
 }
 
 type RescheduleRequest struct {
-	RouteJobType JobType
-	WorkKind     WorkKind
-	Task         *TaskWork
-	WaitFor      []JobID
-	AvailableAt  *time.Time
-	LeasePayload json.RawMessage
-	// ClearLeasePayload resets the lease payload to the generated view.
-	// It cannot be combined with LeasePayload.
-	ClearLeasePayload bool
-	Alternate         *AlternateRoute
+	RouteJobType        JobType
+	WorkKind            WorkKind
+	Task                *TaskWork
+	WaitFor             []JobID
+	AvailableAt         *time.Time
+	ClientPayloadUpdate *ClientPayloadUpdate
+	// Alternate replaces the alternate route; nil clears it.
+	Alternate *AlternateRoute
 }
 
 type CompleteTaskWorkRequest struct {
-	TenantID          TenantID
-	JobID             JobID
-	WorkerID          WorkerID
-	JobType           JobType
-	Task              TaskWork
-	LeasePayload      json.RawMessage
-	ClearLeasePayload bool
+	TenantID            TenantID
+	JobID               JobID
+	WorkerID            WorkerID
+	JobType             JobType
+	Task                TaskWork
+	ClientPayloadUpdate *ClientPayloadUpdate
 }
 
 type JobStore string
@@ -223,8 +221,9 @@ type JobDetail struct {
 	LeaseExpiresAt         *time.Time        `json:"lease_expires_at"`
 	LeaseWorkerID          WorkerID          `json:"lease_worker_id"`
 	CancelRequested        bool              `json:"cancel_requested"`
-	LeasePayload           json.RawMessage   `json:"lease_payload"`
-	LeasePayloadVisible    bool              `json:"lease_payload_visible"`
+	ClientPayload          json.RawMessage   `json:"-"`
+	ClientPayloadRevision  int64             `json:"-"`
+	InitialPayloadDigest   string            `json:"-"`
 	RunPolicy              RunPolicy         `json:"run_policy"`
 	AppMetadata            json.RawMessage   `json:"app_metadata"`
 	SchemaHash             string            `json:"schema_hash"`
@@ -370,3 +369,5 @@ type ListSchedulesResult struct {
 	Schedules     []Schedule
 	NextPageToken string
 }
+
+type ClientPayloadUpdate = clientpayload.Update

@@ -30,14 +30,18 @@ func CompleteJob(ctx context.Context, db DB, identity LeaseIdentity, completion 
 	if err := validateCompletion(completion); err != nil {
 		return err
 	}
+	mode, value, revision, err := clientUpdateArgs(completion.ClientPayloadUpdate, false)
+	if err != nil {
+		return err
+	}
 	var completed bool
 	if err := db.QueryRowContext(ctx, `SELECT pgjobdb.complete_native_job(
-		$1, $2, $3, $4, $5, $6, $7, $8)`,
+		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		string(identity.TenantID), string(identity.JobID), identity.LeaseID,
 		string(identity.WorkerID), string(completion.Status),
 		nilIfBlank(completion.Detail), nilIfBlank(completion.ErrorKind),
-		optionalBool(completion.Retryable)).Scan(&completed); err != nil {
-		return err
+		optionalBool(completion.Retryable), mode, value, revision).Scan(&completed); err != nil {
+		return clientPayloadError(err)
 	}
 	if !completed {
 		return fmt.Errorf("pgjobdb: complete native job returned false")
@@ -47,6 +51,9 @@ func CompleteJob(ctx context.Context, db DB, identity LeaseIdentity, completion 
 
 func CompleteUnheldJob(ctx context.Context, db DB, tenant TenantID, job JobID,
 	worker WorkerID, completion Completion) error {
+	if completion.ClientPayloadUpdate != nil {
+		return fmt.Errorf("pgjobdb: payload updates require a held completion lease")
+	}
 	if err := validateScheduleDB(ctx, db); err != nil {
 		return err
 	}

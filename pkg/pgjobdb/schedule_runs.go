@@ -85,14 +85,19 @@ func ListScheduleRuns(ctx context.Context, db DB,
 	defer rows.Close()
 	result := &ListScheduleRunsResult{Runs: make([]JobDetail, 0, opts.PageSize)}
 	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
+		var raw, payload []byte
+		var revision int64
+		var digest string
+		if err := rows.Scan(&raw, &payload, &revision, &digest); err != nil {
 			return nil, err
 		}
 		var run JobDetail
 		if err := json.Unmarshal(raw, &run); err != nil {
 			return nil, fmt.Errorf("pgjobdb: decode schedule run: %w", err)
 		}
+		run.ClientPayload = append(json.RawMessage(nil), payload...)
+		run.ClientPayloadRevision = revision
+		run.InitialPayloadDigest = digest
 		result.Runs = append(result.Runs, run)
 	}
 	if err := rows.Err(); err != nil {

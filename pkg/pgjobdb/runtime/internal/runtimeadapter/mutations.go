@@ -16,8 +16,13 @@ func (s Scheduler) CreateJob(ctx context.Context, req runtimecore.CreateJobReque
 	if err != nil {
 		return runtimecore.StoredJob{}, err
 	}
+	var initialUpdate *pgjobdb.ClientPayloadUpdate
+	if req.ClientPayload != nil {
+		initialUpdate = &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: req.ClientPayload}
+	}
 	input := pgjobdb.SubmitJobRequest{
-		TenantID: pgjobdb.TenantID(req.JobKey.TenantId), JobID: pgjobdb.JobID(req.JobKey.JobId),
+		ClientPayloadUpdate: initialUpdate,
+		TenantID:            pgjobdb.TenantID(req.JobKey.TenantId), JobID: pgjobdb.JobID(req.JobKey.JobId),
 		WorkerID: pgjobdb.WorkerID(req.WorkerID), JobType: pgjobdb.JobType(req.JobType),
 		RunPolicy: policy, AppMetadata: append(json.RawMessage(nil), req.AppMetadata...),
 		Runtime: pgjobdb.RuntimeMetadata{
@@ -65,7 +70,7 @@ func (s Scheduler) CompleteLease(ctx context.Context, mutation runtimecore.Compl
 	identity := identityToPgjobdb(mutation.Identity)
 	if err := pgjobdb.CompleteJob(ctx, s.DB, identity, pgjobdb.Completion{
 		Status: pgjobdb.CompletionStatus(mutation.Status), Detail: mutation.Detail,
-		ErrorKind: mutation.ErrorKind, Retryable: mutation.Retryable,
+		ErrorKind: mutation.ErrorKind, Retryable: mutation.Retryable, ClientPayloadUpdate: mutation.ClientPayloadUpdate,
 	}); err != nil {
 		return runtimecore.StoredJob{}, translateLeaseError(err)
 	}
@@ -74,12 +79,11 @@ func (s Scheduler) CompleteLease(ctx context.Context, mutation runtimecore.Compl
 
 func (s Scheduler) RescheduleLease(ctx context.Context, mutation runtimecore.RescheduleMutation) (runtimecore.StoredJob, error) {
 	request := pgjobdb.RescheduleRequest{
-		RouteJobType:      pgjobdb.JobType(mutation.RouteJobType),
-		WorkKind:          pgjobdb.WorkKind(mutation.WorkKind),
-		AvailableAt:       mutation.WaitUntil,
-		LeasePayload:      append(json.RawMessage(nil), mutation.LeasePayload...),
-		ClearLeasePayload: mutation.ClearLeasePayload,
-		Alternate:         &pgjobdb.AlternateRoute{},
+		RouteJobType:        pgjobdb.JobType(mutation.RouteJobType),
+		WorkKind:            pgjobdb.WorkKind(mutation.WorkKind),
+		AvailableAt:         mutation.WaitUntil,
+		ClientPayloadUpdate: mutation.ClientPayloadUpdate,
+		Alternate:           &pgjobdb.AlternateRoute{},
 	}
 	for _, id := range mutation.WaitForJobIDs {
 		request.WaitFor = append(request.WaitFor, pgjobdb.JobID(id))
@@ -114,13 +118,12 @@ func (s Scheduler) GetWaitingTask(ctx context.Context, key jobdb.JobKey) (runtim
 
 func (s Scheduler) CompleteTaskWork(ctx context.Context, mutation runtimecore.CompleteTaskWorkMutation) (runtimecore.StoredJob, error) {
 	if err := pgjobdb.CompleteTaskWork(ctx, s.DB, pgjobdb.CompleteTaskWorkRequest{
-		TenantID:          pgjobdb.TenantID(mutation.JobKey.TenantId),
-		JobID:             pgjobdb.JobID(mutation.JobKey.JobId),
-		WorkerID:          pgjobdb.WorkerID(mutation.WorkerID),
-		JobType:           pgjobdb.JobType(mutation.Task.JobType),
-		Task:              *taskToPgjobdb(mutation.Task.Task),
-		LeasePayload:      append(json.RawMessage(nil), mutation.LeasePayload...),
-		ClearLeasePayload: mutation.ClearLeasePayload,
+		TenantID:            pgjobdb.TenantID(mutation.JobKey.TenantId),
+		JobID:               pgjobdb.JobID(mutation.JobKey.JobId),
+		WorkerID:            pgjobdb.WorkerID(mutation.WorkerID),
+		JobType:             pgjobdb.JobType(mutation.Task.JobType),
+		Task:                *taskToPgjobdb(mutation.Task.Task),
+		ClientPayloadUpdate: mutation.ClientPayloadUpdate,
 	}); err != nil {
 		return runtimecore.StoredJob{}, err
 	}
