@@ -48,12 +48,8 @@ jobs:
     env:
       JOBDB_TEST_IMAGE: jobdb:container-smoke
       JOBDB_TEST_POSTGRES_IMAGE: postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
-      JOBDB_TEST_MINIO_IMAGE: jobdb-smoke-minio:local
-      # RELEASE.2025-10-15T17-29-55Z
-      JOBDB_TEST_MINIO_SOURCE: github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
-      JOBDB_TEST_MC_IMAGE: jobdb-smoke-mc:local
-      # RELEASE.2025-08-13T08-35-41Z
-      JOBDB_TEST_MC_SOURCE: github.com/minio/mc@7394ce0dd2a80935aded936b09fa12cbb3cb8096
+      # Coollabs prebuilt RELEASE.2025-10-15T17-29-55Z includes both minio and mc.
+      JOBDB_TEST_MINIO_IMAGE: ghcr.io/coollabsio/minio@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
       JOBDB_TEST_SIGNING_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       JOBDB_TEST_BLOB_STORE_URI: s3://jobdb-artifacts?region=us-east-1&endpoint=http%3A%2F%2Fjobdb-minio%3A9000&use_path_style=true
     steps:
@@ -115,19 +111,6 @@ jobs:
             expect_failure "container argument $argument" docker run --rm "$JOBDB_TEST_IMAGE" "$argument"
           done
 
-      - name: Build MinIO test images from source
-        run: |
-          set -euo pipefail
-          mkdir -p .container-build/tools
-          export GOBIN="$PWD/.container-build/tools"
-          export CGO_ENABLED=0
-          go install -trimpath -ldflags='-s -w' "$JOBDB_TEST_MINIO_SOURCE"
-          go install -trimpath -ldflags='-s -w' "$JOBDB_TEST_MC_SOURCE"
-          docker buildx build --load --platform linux/amd64 --target minio \
-            --file .github/ci/Dockerfile.minio --tag "$JOBDB_TEST_MINIO_IMAGE" .container-build/tools
-          docker buildx build --load --platform linux/amd64 --target mc \
-            --file .github/ci/Dockerfile.minio --tag "$JOBDB_TEST_MC_IMAGE" .container-build/tools
-
       - name: Start Postgres and MinIO
         run: |
           set -euo pipefail
@@ -156,7 +139,7 @@ jobs:
           for attempt in $(seq 1 60); do
             if docker run --rm --network jobdb-smoke \
               -e MC_HOST_smoke=http://jobdb-minio:jobdb-minio-secret@jobdb-minio:9000 \
-              "$JOBDB_TEST_MC_IMAGE" ready smoke >/dev/null 2>&1; then
+              --entrypoint /usr/bin/mc "$JOBDB_TEST_MINIO_IMAGE" ready smoke >/dev/null 2>&1; then
               break
             fi
             if [ "$attempt" -eq 60 ]; then
@@ -167,7 +150,7 @@ jobs:
           done
           docker run --rm --network jobdb-smoke \
             -e MC_HOST_smoke=http://jobdb-minio:jobdb-minio-secret@jobdb-minio:9000 \
-            "$JOBDB_TEST_MC_IMAGE" mb --ignore-existing smoke/jobdb-artifacts
+            --entrypoint /usr/bin/mc "$JOBDB_TEST_MINIO_IMAGE" mb --ignore-existing smoke/jobdb-artifacts
 
       - name: Start JobDB and wait for health
         run: |
@@ -206,7 +189,7 @@ jobs:
 
           objects=$(docker run --rm --network jobdb-smoke \
             -e MC_HOST_smoke=http://jobdb-minio:jobdb-minio-secret@jobdb-minio:9000 \
-            "$JOBDB_TEST_MC_IMAGE" ls --recursive --json smoke/jobdb-artifacts)
+            --entrypoint /usr/bin/mc "$JOBDB_TEST_MINIO_IMAGE" ls --recursive --json smoke/jobdb-artifacts)
           object_count=$(printf '%s\n' "$objects" | jq --slurp '[.[] | select(.status == "success")] | length')
           remote_bytes=$(printf '%s\n' "$objects" | jq --slurp '[.[] | select(.status == "success") | .size] | add // 0')
           if [ "$object_count" -ne 1 ] || [ "$remote_bytes" -ne 4097 ]; then
