@@ -56,6 +56,23 @@ func TestPostgresRuntimeConformance(t *testing.T) {
 
 func conformanceRuntimeFactory(t *testing.T) func(testing.TB) *pgjobdbruntime.Runtime {
 	t.Helper()
+	newDSN := conformanceDSNFactory(t)
+	return func(tb testing.TB) *pgjobdbruntime.Runtime {
+		tb.Helper()
+		dsn := newDSN(tb)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		runtime, err := pgjobdbruntime.OpenDSN(ctx, dsn, pgjobdbruntime.Config{BlobStoreURI: "blobfs://" + tb.TempDir()})
+		if err != nil {
+			tb.Fatalf("create conformance runtime: %v", err)
+		}
+		tb.Cleanup(func() { _ = runtime.Close(context.Background()) })
+		return runtime
+	}
+}
+
+func conformanceDSNFactory(t *testing.T) func(testing.TB) string {
+	t.Helper()
 	dsn, stop, err := testsupport.StartEmbeddedPostgres()
 	if err != nil {
 		t.Fatalf("start conformance Postgres: %v", err)
@@ -67,7 +84,7 @@ func conformanceRuntimeFactory(t *testing.T) func(testing.TB) *pgjobdbruntime.Ru
 	}
 	t.Cleanup(func() { _ = admin.Close() })
 	var next atomic.Uint64
-	return func(tb testing.TB) *pgjobdbruntime.Runtime {
+	return func(tb testing.TB) string {
 		tb.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -87,12 +104,7 @@ func conformanceRuntimeFactory(t *testing.T) func(testing.TB) *pgjobdbruntime.Ru
 			tb.Fatal(err)
 		}
 		uri.Path = "/" + database
-		runtime, err := pgjobdbruntime.OpenDSN(ctx, uri.String(), pgjobdbruntime.Config{BlobStoreURI: "blobfs://" + tb.TempDir()})
-		if err != nil {
-			tb.Fatalf("create conformance runtime: %v", err)
-		}
-		tb.Cleanup(func() { _ = runtime.Close(context.Background()) })
-		return runtime
+		return uri.String()
 	}
 }
 

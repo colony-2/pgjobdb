@@ -88,7 +88,7 @@ func TestInstallerRejectsAlternateSchema(t *testing.T) {
 }
 
 func TestInstallerRejectsPreviousFormats(t *testing.T) {
-	for _, old := range []int{1, 3} {
+	for _, old := range []int{1, 3, 4} {
 		t.Run(fmt.Sprint(old), func(t *testing.T) {
 			withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
 				if _, err := db.ExecContext(ctx, `CREATE SCHEMA pgjobdb;CREATE TABLE pgjobdb.installation(name TEXT PRIMARY KEY,format_version INTEGER)`); err != nil {

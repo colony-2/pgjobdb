@@ -6,7 +6,7 @@ SET LOCAL search_path = pgjobdb, public;
 
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 4 THEN
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 5 THEN
    RAISE EXCEPTION 'unsupported pgjobdb format; create a fresh database';
   END IF;
  END IF;
@@ -14,12 +14,12 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 4),
+    format_version INTEGER NOT NULL CHECK (format_version = 5),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
 INSERT INTO pgjobdb.installation (name, format_version)
-VALUES ('pgjobdb', 4)
+VALUES ('pgjobdb', 5)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -59,6 +59,18 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs (
     alternate_job_type TEXT,
     alternate_task_type TEXT,
     lease_worker_id TEXT,
+    -- Execution route captured with lease_id. Scheduling routes remain intact:
+    -- an alternate is not consumed, and a new lease evaluates eligibility anew.
+    lease_route_job_type TEXT,
+    lease_work_kind TEXT,
+    lease_task_type TEXT,
+    CONSTRAINT jobs_lease_route_valid CHECK (
+        (lease_route_job_type IS NULL AND lease_work_kind IS NULL AND lease_task_type IS NULL)
+        OR (lease_id IS NOT NULL AND lease_route_job_type IS NOT NULL
+            AND lease_route_job_type <> '' AND lease_work_kind IS NOT NULL
+            AND (lease_work_kind = 'JOB'
+                OR (lease_work_kind = 'TASK' AND lease_task_type IS NOT NULL AND lease_task_type <> '')))
+    ),
     CONSTRAINT jobs_native_route_valid CHECK (
                 (route_job_type IS NULL AND work_kind IS NULL
                     AND task_type IS NULL AND resume_job_type IS NULL
@@ -689,23 +701,26 @@ RETURNS TIMESTAMPTZ
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_job pgjobdb.jobs_with_status%ROWTYPE;
+    v_job pgjobdb.jobs%ROWTYPE;
     v_new TIMESTAMPTZ;
 BEGIN
     IF p_additional_seconds IS NULL OR p_additional_seconds <= 0 THEN
         RAISE EXCEPTION 'additional_seconds must be positive';
     END IF;
 
-    SELECT *
-    INTO v_job
-    FROM pgjobdb._lock_job_for_status(
-        p_tenant_id,
-        p_job_id,
-        'ACTIVE',
-        p_lease_id,
-        format('active lease not found for job %s/%s', p_tenant_id, p_job_id)
-    );
-
+    -- Lock the base row, not the computed status view. Authority and expiry
+    -- must be checked after any lock wait, immediately before the update.
+    SELECT * INTO v_job FROM pgjobdb.jobs
+    WHERE tenant_id = p_tenant_id AND job_id = p_job_id FOR UPDATE;
+    IF NOT FOUND OR v_job.lease_id IS DISTINCT FROM p_lease_id THEN
+        RAISE EXCEPTION 'native lease not found';
+    END IF;
+    IF v_job.lease_worker_id IS DISTINCT FROM p_worker_id THEN
+        RAISE EXCEPTION 'native lease owner mismatch';
+    END IF;
+    IF v_job.lease_expires_at <= clock_timestamp() THEN
+        RAISE EXCEPTION 'native lease not active';
+    END IF;
     IF v_job.cancel_requested THEN
         RAISE EXCEPTION 'job %s/%s is cancelled and cannot extend the lease', p_tenant_id, p_job_id;
     END IF;
@@ -1575,6 +1590,11 @@ BEGIN
         UPDATE pgjobdb.jobs j SET
             lease_id = gen_random_uuid()::TEXT,
             lease_worker_id = p_worker_id,
+            lease_route_job_type = c.effective_job_type,
+            lease_work_kind = c.effective_work_kind,
+            -- Native JOB fallbacks retain the waiting task context, as before.
+            lease_task_type = CASE WHEN c.effective_work_kind = 'TASK'
+                THEN c.effective_task_type ELSE j.task_type END,
             lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
             lease_expiration_count = j.lease_expiration_count +
                 CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
@@ -1582,13 +1602,10 @@ BEGIN
                 THEN j.consecutive_expirations + 1 ELSE 0 END
         FROM candidate c
         WHERE j.tenant_id = c.tenant_id AND j.job_id = c.job_id
-        RETURNING j.*, c.effective_job_type, c.effective_work_kind,
-            c.effective_task_type
+        RETURNING j.*
     )
     SELECT l.tenant_id, l.job_id, l.lease_id, l.lease_expires_at,
-        f.job_type, l.effective_job_type, l.effective_work_kind,
-        CASE WHEN l.effective_work_kind = 'TASK' THEN l.effective_task_type
-            ELSE l.task_type END,
+        f.job_type, l.lease_route_job_type, l.lease_work_kind, l.lease_task_type,
         l.resume_job_type, l.task_input_ordinal, l.task_output_ordinal,
         l.task_input_hash, f.run_policy, c.client_payload, c.revision, f.schema_hash
     FROM leased l JOIN pgjobdb.job_facts f USING (tenant_id, job_id) JOIN pgjobdb.job_client_state c USING (tenant_id,job_id);
@@ -1738,7 +1755,7 @@ BEGIN
     END IF;
     RETURN QUERY
     SELECT j.tenant_id, j.job_id, j.lease_id, j.lease_expires_at,
-        f.job_type, j.route_job_type, j.work_kind, j.task_type,
+        f.job_type, j.lease_route_job_type, j.lease_work_kind, j.lease_task_type,
         j.resume_job_type, j.task_input_ordinal, j.task_output_ordinal,
         j.task_input_hash, f.run_policy, c.client_payload, c.revision, f.schema_hash
     FROM pgjobdb.jobs j JOIN pgjobdb.job_facts f USING (tenant_id, job_id) JOIN pgjobdb.job_client_state c USING (tenant_id,job_id)
@@ -1901,6 +1918,7 @@ BEGIN
         alternate_after_seconds = p_alternate_after_seconds,
         lease_id = NULL,
         lease_worker_id = NULL,
+        lease_route_job_type = NULL, lease_work_kind = NULL, lease_task_type = NULL,
         lease_expires_at = '-infinity',
         consecutive_expirations = 0
     WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id;
@@ -1964,6 +1982,8 @@ BEGIN
     UPDATE pgjobdb.jobs j SET
         lease_id = gen_random_uuid()::TEXT,
         lease_worker_id = p_worker_id,
+        lease_route_job_type = v_job.resume_job_type,
+        lease_work_kind = 'JOB', lease_task_type = NULL,
         lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
         lease_expiration_count = j.lease_expiration_count +
             CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
