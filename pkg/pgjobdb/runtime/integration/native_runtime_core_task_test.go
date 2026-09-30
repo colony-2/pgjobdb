@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{
-			BlobStoreURI: "blobfs://" + t.TempDir(),
+			BlobStoreURI: "blobfs://" + t.TempDir(), MaxInlineArtifactBytes: 1,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -38,6 +39,7 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 		}
 		root, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
 			TenantId: "tenant", JobID: "task-job", JobType: "collect", Data: input,
+			ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"keep":true}`)},
 		}})
 		if err != nil {
 			t.Fatal(err)
@@ -50,7 +52,7 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 		}
 		if err := lease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{
 			NextRoute: jobdb.Route{JobType: "collect", TaskType: "download"},
-			TaskWait:  &jobdb.TaskWait{InputOrdinal: 0, OutputOrdinal: 1, ResumeJobType: "collect", InputHash: "sha256:input"},
+			TaskWait:  &jobdb.TaskWait{InputOrdinal: 0, OutputOrdinal: 1, ResumeJobType: "resume", InputHash: "sha256:input"},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +62,7 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 			t.Fatal(err)
 		}
 		req := jobdb.CompleteTaskIfWaitingRequest{
-			JobKey: root.JobKey, Route: jobdb.Route{JobType: "collect", TaskType: "download"}, ResumeJobType: "collect",
+			JobKey: root.JobKey, Route: jobdb.Route{JobType: "collect", TaskType: "download"}, ResumeJobType: "resume",
 			OutputOrdinal: 1, InputHash: "sha256:input", Data: output,
 		}
 		wrong := req
@@ -100,10 +102,13 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 			t.Fatalf("task artifact key = %+v, %v", key, err)
 		}
 		resumed, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
-			JobKey: root.JobKey, WorkerID: "job-worker", Routes: []jobdb.Route{{JobType: "collect"}},
+			JobKey: root.JobKey, WorkerID: "job-worker", Routes: []jobdb.Route{{JobType: "resume"}},
 		})
-		if err != nil || resumed == nil || resumed.Route() != (jobdb.Route{JobType: "collect"}) {
+		if err != nil || resumed == nil || resumed.Route() != (jobdb.Route{JobType: "resume"}) {
 			t.Fatalf("resumed job lease = %+v, %v", resumed, err)
+		}
+		if resumed.ClientPayloadRevision() != 1 || string(resumed.ClientPayload()) != `{"keep":true}` {
+			t.Fatalf("payload changed: %s rev %d", resumed.ClientPayload(), resumed.ClientPayloadRevision())
 		}
 	})
 }

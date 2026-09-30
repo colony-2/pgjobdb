@@ -170,13 +170,20 @@ type RescheduleRequest struct {
 	Alternate *AlternateRoute
 }
 
-type CompleteTaskWorkRequest struct {
-	TenantID            TenantID
-	JobID               JobID
-	WorkerID            WorkerID
-	JobType             JobType
-	Task                TaskWork
-	ClientPayloadUpdate *ClientPayloadUpdate
+// ClaimTaskRequest identifies the complete observed waiting slot.
+type ClaimTaskRequest struct {
+	TenantID      TenantID
+	JobID         JobID
+	WorkerID      WorkerID
+	JobType       JobType
+	Task          TaskWork
+	LeaseDuration time.Duration
+}
+
+// TaskClaim is returned only after its scheduler transaction commits.
+type TaskClaim struct {
+	Identity  LeaseIdentity
+	ExpiresAt time.Time
 }
 
 type JobStore string

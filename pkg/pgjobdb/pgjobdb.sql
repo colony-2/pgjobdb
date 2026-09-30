@@ -6,7 +6,7 @@ SET LOCAL search_path = pgjobdb, public;
 
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 3 THEN
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 4 THEN
    RAISE EXCEPTION 'unsupported pgjobdb format; create a fresh database';
   END IF;
  END IF;
@@ -14,12 +14,12 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 3),
+    format_version INTEGER NOT NULL CHECK (format_version = 4),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
 INSERT INTO pgjobdb.installation (name, format_version)
-VALUES ('pgjobdb', 3)
+VALUES ('pgjobdb', 4)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -1860,7 +1860,7 @@ BEGIN
     END IF;
 
     IF p_lease_id IS NULL THEN
-        IF p_client_mode IS NOT NULL OR p_client_value IS NOT NULL OR p_client_expected IS NOT NULL THEN RAISE EXCEPTION 'client payload updates require a lease or complete-task authorization' USING ERRCODE='JCP01';END IF;
+        IF p_client_mode IS NOT NULL OR p_client_value IS NOT NULL OR p_client_expected IS NOT NULL THEN RAISE EXCEPTION 'client payload updates require a lease' USING ERRCODE='JCP01';END IF;
         v_locked := pgjobdb._lock_job_for_status(
             p_tenant_id, p_job_id, 'READY', NULL,
             format('native job %s/%s is not unheld', p_tenant_id, p_job_id)
@@ -1908,7 +1908,9 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION pgjobdb.complete_native_task_work(
+-- External task completion claims only scheduler state. Chapter insertion is
+-- independent and recovery replays history after this lease expires.
+CREATE OR REPLACE FUNCTION pgjobdb.claim_native_task(
     p_tenant_id TEXT,
     p_job_id TEXT,
     p_worker_id TEXT,
@@ -1918,27 +1920,36 @@ CREATE OR REPLACE FUNCTION pgjobdb.complete_native_task_work(
     p_input_ordinal BIGINT,
     p_output_ordinal BIGINT,
     p_input_hash TEXT,
-    p_client_mode TEXT, p_client_value JSON, p_client_expected BIGINT
+    p_lease_seconds INTEGER
 )
-RETURNS BOOLEAN
+RETURNS TABLE(lease_id TEXT, lease_expires_at TIMESTAMPTZ)
 LANGUAGE plpgsql
 AS $$
 DECLARE
     v_job pgjobdb.jobs%ROWTYPE;
+    v_now TIMESTAMPTZ;
 BEGIN
     IF p_worker_id IS NULL OR p_worker_id = '' THEN
         RAISE EXCEPTION 'worker id is required';
     END IF;
+    IF p_lease_seconds IS NULL OR p_lease_seconds < 1 OR p_lease_seconds > 86400 THEN
+        RAISE EXCEPTION 'lease seconds must be between 1 and 86400';
+    END IF;
     SELECT * INTO v_job FROM pgjobdb.jobs j
     WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id FOR UPDATE;
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'native waiting task not found';
+        RAISE EXCEPTION 'native waiting task not found' USING ERRCODE = 'JTC01';
     END IF;
-    IF v_job.lease_expires_at > clock_timestamp() THEN
-        RAISE EXCEPTION 'waiting task has an active lease';
-    END IF;
-    IF v_job.cancel_requested THEN
-        RAISE EXCEPTION 'cancelled waiting task cannot be completed';
+    -- Take the clock reading after any wait for the row lock.
+    v_now := clock_timestamp();
+    IF v_job.cancel_requested OR v_job.lease_expires_at > v_now
+        OR v_job.available_at > v_now OR v_job.expires_at <= v_now
+        OR EXISTS (
+            SELECT 1 FROM unnest(v_job.wait_for) AS pending(id)
+            WHERE NOT EXISTS (SELECT 1 FROM pgjobdb.jobs_archive a
+                WHERE a.tenant_id = p_tenant_id AND a.job_id = pending.id)
+        ) THEN
+        RAISE EXCEPTION 'waiting task is not eligible' USING ERRCODE = 'JTC01';
     END IF;
     IF v_job.work_kind IS DISTINCT FROM 'TASK'
         OR v_job.route_job_type IS DISTINCT FROM p_job_type
@@ -1947,15 +1958,25 @@ BEGIN
         OR v_job.task_input_ordinal IS DISTINCT FROM p_input_ordinal
         OR v_job.task_output_ordinal IS DISTINCT FROM p_output_ordinal
         OR v_job.task_input_hash IS DISTINCT FROM p_input_hash THEN
-        RAISE EXCEPTION 'waiting task coordinates do not match';
+        RAISE EXCEPTION 'waiting task coordinates do not match' USING ERRCODE = 'JTC01';
     END IF;
-    PERFORM pgjobdb._update_client_payload(p_tenant_id,p_job_id,p_client_mode,p_client_value,p_client_expected);
-    RETURN pgjobdb.reschedule_native_job(
-        p_tenant_id, p_job_id, NULL, p_worker_id,
-        p_resume_job_type, 'JOB', NULL, NULL, NULL, NULL, NULL,
-        ARRAY[]::TEXT[], clock_timestamp(),
-        NULL, NULL, NULL, NULL,NULL,NULL
-    );
+    RETURN QUERY
+    UPDATE pgjobdb.jobs j SET
+        lease_id = gen_random_uuid()::TEXT,
+        lease_worker_id = p_worker_id,
+        lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
+        lease_expiration_count = j.lease_expiration_count +
+            CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
+        consecutive_expirations = CASE WHEN j.lease_id IS NOT NULL
+            THEN j.consecutive_expirations + 1 ELSE 0 END,
+        work_kind = 'JOB',
+        route_job_type = v_job.resume_job_type,
+        task_type = NULL, resume_job_type = NULL,
+        task_input_ordinal = NULL, task_output_ordinal = NULL, task_input_hash = NULL,
+        alternate_job_type = NULL, alternate_task_type = NULL,
+        alternate_after_seconds = NULL
+    WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id
+    RETURNING j.lease_id, j.lease_expires_at;
 END;
 $$;
 

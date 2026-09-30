@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 )
@@ -77,15 +78,21 @@ func TestNativeClientPayloadPresenceSurvivesRoutesAndArchive(t *testing.T) {
 				Task: &task, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", ExpectedRevision: ptrRevision(0), Value: json.RawMessage(`{}`)}}); err != nil {
 			t.Fatalf("route task with explicit empty payload: %v", err)
 		}
-		if err := pgjobdb.CompleteTaskWork(ctx, db, pgjobdb.CompleteTaskWorkRequest{
+		claim, err := pgjobdb.ClaimTask(ctx, db, pgjobdb.ClaimTaskRequest{
 			TenantID: "tenant", JobID: "generated", WorkerID: "external",
-			JobType: "collect", Task: task, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", ExpectedRevision: ptrRevision(1)},
+			JobType: "collect", Task: task, LeaseDuration: 30 * time.Second,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pgjobdb.RescheduleJob(ctx, db, claim.Identity, pgjobdb.RescheduleRequest{
+			RouteJobType: "collect", WorkKind: pgjobdb.WorkKindJob,
 		}); err != nil {
-			t.Fatalf("complete task and clear payload: %v", err)
+			t.Fatal(err)
 		}
 		resumed, err := pgjobdb.GetJob(ctx, db, "tenant", "generated")
 		if err != nil || resumed.WorkKind != pgjobdb.WorkKindJob ||
-			(resumed.ClientPayload != nil) || resumed.ClientPayloadRevision != 2 {
+			string(resumed.ClientPayload) != `{}` || resumed.ClientPayloadRevision != 1 {
 			t.Fatalf("resumed generated view = %+v, %v", resumed, err)
 		}
 	})

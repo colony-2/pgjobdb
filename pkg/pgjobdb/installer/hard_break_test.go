@@ -3,6 +3,7 @@ package installer_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -86,17 +87,24 @@ func TestInstallerRejectsAlternateSchema(t *testing.T) {
 	}
 }
 
-func TestInstallerRejectsPreviousClientPayloadFormat(t *testing.T) {
-	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
-		if _, err := db.ExecContext(ctx, `CREATE SCHEMA pgjobdb;CREATE TABLE pgjobdb.installation(name TEXT PRIMARY KEY,format_version INTEGER);INSERT INTO pgjobdb.installation VALUES ('pgjobdb',1)`); err != nil {
-			t.Fatal(err)
-		}
-		if err := (pgjobdbinstaller.Installer{DB: db}).Apply(ctx); err == nil || !strings.Contains(err.Error(), "unsupported schema format 1") {
-			t.Fatalf("old format accepted: %v", err)
-		}
-		var version int
-		if err := db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version); err != nil || version != 1 {
-			t.Fatalf("old format changed: %d %v", version, err)
-		}
-	})
+func TestInstallerRejectsPreviousFormats(t *testing.T) {
+	for _, old := range []int{1, 3} {
+		t.Run(fmt.Sprint(old), func(t *testing.T) {
+			withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
+				if _, err := db.ExecContext(ctx, `CREATE SCHEMA pgjobdb;CREATE TABLE pgjobdb.installation(name TEXT PRIMARY KEY,format_version INTEGER)`); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.installation VALUES ('pgjobdb',$1)`, old); err != nil {
+					t.Fatal(err)
+				}
+				if err := (pgjobdbinstaller.Installer{DB: db}).Apply(ctx); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("unsupported schema format %d", old)) {
+					t.Fatalf("old format accepted: %v", err)
+				}
+				var version int
+				if err := db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version); err != nil || version != old {
+					t.Fatalf("old format changed: %d %v", version, err)
+				}
+			})
+		})
+	}
 }

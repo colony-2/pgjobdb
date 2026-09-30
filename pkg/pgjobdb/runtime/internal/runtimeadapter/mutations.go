@@ -3,6 +3,7 @@ package runtimeadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -116,18 +117,25 @@ func (s Scheduler) GetWaitingTask(ctx context.Context, key jobdb.JobKey) (runtim
 	return runtimecore.WaitingTaskSnapshot{JobType: row.RouteJobType, Task: *row.TaskWork}, nil
 }
 
-func (s Scheduler) CompleteTaskWork(ctx context.Context, mutation runtimecore.CompleteTaskWorkMutation) (runtimecore.StoredJob, error) {
-	if err := pgjobdb.CompleteTaskWork(ctx, s.DB, pgjobdb.CompleteTaskWorkRequest{
-		TenantID:            pgjobdb.TenantID(mutation.JobKey.TenantId),
-		JobID:               pgjobdb.JobID(mutation.JobKey.JobId),
-		WorkerID:            pgjobdb.WorkerID(mutation.WorkerID),
-		JobType:             pgjobdb.JobType(mutation.Task.JobType),
-		Task:                *taskToPgjobdb(mutation.Task.Task),
-		ClientPayloadUpdate: mutation.ClientPayloadUpdate,
-	}); err != nil {
-		return runtimecore.StoredJob{}, err
+func (s Scheduler) ClaimTask(ctx context.Context, req runtimecore.ClaimTaskRequest) (runtimecore.LeaseIdentity, error) {
+	claim, err := pgjobdb.ClaimTask(ctx, s.DB, pgjobdb.ClaimTaskRequest{
+		TenantID:      pgjobdb.TenantID(req.JobKey.TenantId),
+		JobID:         pgjobdb.JobID(req.JobKey.JobId),
+		WorkerID:      pgjobdb.WorkerID(req.WorkerID),
+		JobType:       pgjobdb.JobType(req.Task.JobType),
+		Task:          *taskToPgjobdb(req.Task.Task),
+		LeaseDuration: req.LeaseDuration,
+	})
+	if errors.Is(err, pgjobdb.ErrTaskConflict) {
+		return runtimecore.LeaseIdentity{}, fmt.Errorf("%w: %v", jobdb.ErrConflict, err)
 	}
-	return s.GetJob(ctx, mutation.JobKey)
+	if err != nil {
+		return runtimecore.LeaseIdentity{}, err
+	}
+	return runtimecore.LeaseIdentity{
+		JobKey: req.JobKey, LeaseID: claim.Identity.LeaseID,
+		WorkerID: string(claim.Identity.WorkerID), ExpiresAt: claim.ExpiresAt,
+	}, nil
 }
 
 func identityToPgjobdb(identity runtimecore.LeaseIdentity) pgjobdb.LeaseIdentity {

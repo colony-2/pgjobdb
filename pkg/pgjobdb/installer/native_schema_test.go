@@ -93,7 +93,7 @@ func TestGenericQueueProceduresAreAbsent(t *testing.T) {
 			WHERE n.nspname = 'pgjobdb' AND p.proname IN (
 				'submit_job', 'get_work', 'get_job_lease', 'reschedule_job',
 				'complete_job', 'complete_unheld_job', 'reschedule_unheld_job',
-				'cancel_job', 'extend_lease')`).Scan(&count)
+				'cancel_job', 'extend_lease', 'complete_native_task_work')`).Scan(&count)
 		if err != nil {
 			t.Fatalf("inspect functions: %v", err)
 		}

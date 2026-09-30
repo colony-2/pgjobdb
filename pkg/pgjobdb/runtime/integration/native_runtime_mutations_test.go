@@ -49,11 +49,16 @@ func TestNativeSchedulerAdapterMutatesTypedJob(t *testing.T) {
 		if err != nil || taskSnapshot.Task.InputHash != "sha256:input" {
 			t.Fatalf("waiting task = %+v, %v", taskSnapshot, err)
 		}
-		resumed, err := adapter.CompleteTaskWork(ctx, runtimecore.CompleteTaskWorkMutation{
-			JobKey: key, WorkerID: "external", Task: taskSnapshot,
-			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", ExpectedRevision: ptrRevision(1)},
+		claim, err := adapter.ClaimTask(ctx, runtimecore.ClaimTaskRequest{
+			JobKey: key, WorkerID: "external", Task: taskSnapshot, LeaseDuration: 30 * time.Second,
 		})
-		if err != nil || resumed.WorkKind != runtimecore.WorkKindJob || (resumed.ClientPayload != nil) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		resumed, err := adapter.RescheduleLease(ctx, runtimecore.RescheduleMutation{
+			Identity: claim, RouteJobType: "collect", WorkKind: runtimecore.WorkKindJob,
+		})
+		if err != nil || resumed.WorkKind != runtimecore.WorkKindJob || string(resumed.ClientPayload) != `{}` || resumed.ClientPayloadRevision != 1 {
 			t.Fatalf("resume job = %+v, %v", resumed, err)
 		}
 		lease, err = pgjobdb.GetJobLease(ctx, db, "tenant", "job", "worker",
@@ -68,7 +73,7 @@ func TestNativeSchedulerAdapterMutatesTypedJob(t *testing.T) {
 		})
 		if err != nil || archived.Store != jobdb.JobStoreArchived ||
 			archived.Completion == nil || archived.Completion.Detail != "done" ||
-			(archived.ClientPayload != nil) {
+			string(archived.ClientPayload) != `{}` {
 			t.Fatalf("complete job = %+v, %v", archived, err)
 		}
 	})

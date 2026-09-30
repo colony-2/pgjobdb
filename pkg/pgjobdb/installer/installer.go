@@ -64,7 +64,7 @@ func (i Installer) Verify(ctx context.Context) error {
 		"complete_native_job", "complete_native_unheld_job",
 		"validate_native_lease", "renew_native_lease", "cancel_native_job",
 		"reschedule_native_job",
-		"complete_native_task_work",
+		"claim_native_task",
 		"get_native_job", "get_native_job_status",
 		"list_native_jobs",
 		"list_native_schedule_runs",
@@ -153,7 +153,7 @@ func (i Installer) assertInstallation(ctx context.Context, schema string) error 
 	if err := i.DB.QueryRowContext(ctx, query, schema).Scan(&version); err != nil {
 		return fmt.Errorf("pgjobdb: read installation marker: %w", err)
 	}
-	if version != 3 {
+	if version != 4 {
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil

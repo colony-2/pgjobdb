@@ -3,17 +3,21 @@
 This release requires a fresh database and matching JobDB/pgjobdb versions.
 Stop old servers, workers, and native writers, recreate the dedicated database
 and artifact namespace, then re-register schemas, recreate schedules, and submit
-new jobs. Format 1 is rejected; there is no conversion or API compatibility.
+new jobs. Formats before 4 are rejected; there is no conversion or API
+compatibility.
 
 `LeasePayload` and `ClearLeasePayload` are removed. Use `ClientPayloadUpdate` on
-`SubmitJobRequest`, `RescheduleRequest`, `CompleteTaskWorkRequest`, or `Completion`.
+`SubmitJobRequest`, `RescheduleRequest`, or `Completion`.
 Omission preserves the stored state. `Mode: "patch"` applies RFC 7396 Merge Patch;
 `Mode: "reset"` replaces it. A reset with no `Value` clears it; JSON `null` remains
 a present value. Existing-job updates require `ExpectedRevision`; submission
 forbids it. Rescheduling assigns all routing fields; a nil `Alternate` clears
 the alternate route. Unheld administrative calls preserve client state; acquire
-a lease or use authorized task completion to update it. Read `ClientPayload` and `ClientPayloadRevision` from leases or job
-details. Job policy remains submit-only; task coordinates and routing stay typed.
+a lease to update it. External completion preserves client payload and revision;
+`CompleteTaskIfWaitingRequest.ClientPayloadUpdate` and
+`TaskHandle.FinishWithClientPayload` are removed. Use `Finish(ctx, data)`. Read
+`ClientPayload` and `ClientPayloadRevision` from leases or job details. Job policy
+remains submit-only; task coordinates and routing stay typed.
 
 Client JSON lives in `pgjobdb.job_client_state`, survives tasks and archival, and
 is returned separately from JSONB job projections to preserve exact numbers.

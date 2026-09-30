@@ -2,6 +2,7 @@ package runtimeadapter
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,9 +15,8 @@ import (
 )
 
 // Scheduler adapts pgjobdb's native SQL API to JobDB's scheduler port.
-// The remaining mutation and schedule operations are being added here.
 type Scheduler struct {
-	DB pgjobdb.DB
+	DB *sql.DB
 }
 
 var _ runtimecore.Scheduler = Scheduler{}
