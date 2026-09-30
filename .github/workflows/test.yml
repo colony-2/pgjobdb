@@ -48,8 +48,12 @@ jobs:
     env:
       JOBDB_TEST_IMAGE: jobdb:container-smoke
       JOBDB_TEST_POSTGRES_IMAGE: postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
-      JOBDB_TEST_MINIO_IMAGE: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-      JOBDB_TEST_MC_IMAGE: quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+      JOBDB_TEST_MINIO_IMAGE: jobdb-smoke-minio:local
+      # RELEASE.2025-10-15T17-29-55Z
+      JOBDB_TEST_MINIO_SOURCE: github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+      JOBDB_TEST_MC_IMAGE: jobdb-smoke-mc:local
+      # RELEASE.2025-08-13T08-35-41Z
+      JOBDB_TEST_MC_SOURCE: github.com/minio/mc@7394ce0dd2a80935aded936b09fa12cbb3cb8096
       JOBDB_TEST_SIGNING_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       JOBDB_TEST_BLOB_STORE_URI: s3://jobdb-artifacts?region=us-east-1&endpoint=http%3A%2F%2Fjobdb-minio%3A9000&use_path_style=true
     steps:
@@ -110,6 +114,19 @@ jobs:
           for argument in sqlite toy --db=/tmp/jobdb.db --blob-dir=/tmp/blobs; do
             expect_failure "container argument $argument" docker run --rm "$JOBDB_TEST_IMAGE" "$argument"
           done
+
+      - name: Build MinIO test images from source
+        run: |
+          set -euo pipefail
+          mkdir -p .container-build/tools
+          export GOBIN="$PWD/.container-build/tools"
+          export CGO_ENABLED=0
+          go install -trimpath -ldflags='-s -w' "$JOBDB_TEST_MINIO_SOURCE"
+          go install -trimpath -ldflags='-s -w' "$JOBDB_TEST_MC_SOURCE"
+          docker buildx build --load --platform linux/amd64 --target minio \
+            --file .github/ci/Dockerfile.minio --tag "$JOBDB_TEST_MINIO_IMAGE" .container-build/tools
+          docker buildx build --load --platform linux/amd64 --target mc \
+            --file .github/ci/Dockerfile.minio --tag "$JOBDB_TEST_MC_IMAGE" .container-build/tools
 
       - name: Start Postgres and MinIO
         run: |
