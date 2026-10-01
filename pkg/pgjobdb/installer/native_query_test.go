@@ -75,6 +75,7 @@ func TestNativeGetJobKeepsArchivedFields(t *testing.T) {
 			archived.TaskInputHash != "sha256:task" ||
 			archived.AlternateJobType != "fallback" ||
 			archived.AlternateTaskType != "download" ||
+			archived.AlternateAt == nil || current.AlternateAt == nil || !archived.AlternateAt.Equal(*current.AlternateAt) ||
 			archived.AlternateAfterSeconds == nil ||
 			*archived.AlternateAfterSeconds != 60 ||
 			string(archived.ClientPayload) != `{"opaque":true}` ||

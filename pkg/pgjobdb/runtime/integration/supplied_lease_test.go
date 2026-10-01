@@ -586,7 +586,7 @@ func runSuppliedLeaseRouteSnapshots(t *testing.T, newFixture func(*testing.T) *s
 				early, err := f.dispatcher.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: f.key, WorkerID: "dispatcher", Routes: []jobdb.Route{expected}})
 				require.NoError(t, err)
 				require.Nil(t, early)
-				_, err = f.db.Exec(`UPDATE pgjobdb.jobs SET created_at=clock_timestamp()-interval '2 seconds',available_at=clock_timestamp()-interval '2 seconds' WHERE job_id=$1`, f.key.JobId)
+				_, err = f.db.Exec(`UPDATE pgjobdb.jobs SET alternate_at=clock_timestamp()-interval '1 second' WHERE job_id=$1`, f.key.JobId)
 				require.NoError(t, err)
 			}
 			// Populate metadata whose authoritative values must survive transport.

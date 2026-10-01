@@ -222,7 +222,8 @@ type JobDetail struct {
 	TaskInputHash          string            `json:"task_input_hash"`
 	AlternateJobType       JobType           `json:"alternate_job_type"`
 	AlternateTaskType      TaskType          `json:"alternate_task_type"`
-	AlternateAfterSeconds  *int32            `json:"alternate_after_seconds"`
+	AlternateAfterSeconds  *float64          `json:"alternate_after_seconds"`
+	AlternateAt            *time.Time        `json:"alternate_at"`
 	WaitFor                []JobID           `json:"wait_for"`
 	AvailableAt            time.Time         `json:"available_at"`
 	LeaseExpiresAt         *time.Time        `json:"lease_expires_at"`

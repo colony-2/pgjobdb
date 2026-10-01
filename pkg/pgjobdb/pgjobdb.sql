@@ -6,7 +6,7 @@ SET LOCAL search_path = pgjobdb, public;
 
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 5 THEN
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 6 THEN
    RAISE EXCEPTION 'unsupported pgjobdb format; create a fresh database';
   END IF;
  END IF;
@@ -14,12 +14,12 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 5),
+    format_version INTEGER NOT NULL CHECK (format_version = 6),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
 INSERT INTO pgjobdb.installation (name, format_version)
-VALUES ('pgjobdb', 5)
+VALUES ('pgjobdb', 6)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -29,7 +29,8 @@ CREATE SEQUENCE IF NOT EXISTS pgjobdb.jobs_trace_id_seq;
 CREATE TABLE IF NOT EXISTS pgjobdb.jobs (
     tenant_id TEXT NOT NULL,
     job_id TEXT NOT NULL,
-    alternate_after_seconds INTEGER,
+    alternate_after_seconds DOUBLE PRECISION,
+    alternate_at TIMESTAMPTZ,
     wait_for TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
     payload JSONB NOT NULL DEFAULT '{}'::JSONB,
     metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -48,7 +49,7 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs (
     CONSTRAINT jobs_payload_size_limit CHECK (pg_column_size(payload) <= 512),
     CONSTRAINT jobs_metadata_is_object CHECK (jsonb_typeof(metadata) = 'object'),
     CONSTRAINT jobs_metadata_size_limit CHECK (pg_column_size(metadata) <= 8192),
-    CONSTRAINT jobs_alternate_after_seconds_nonnegative CHECK (alternate_after_seconds IS NULL OR alternate_after_seconds >= 0),
+    CONSTRAINT jobs_alternate_after_seconds_nonnegative CHECK (alternate_after_seconds IS NULL OR (alternate_after_seconds >= 0 AND alternate_after_seconds < 'Infinity'::DOUBLE PRECISION)),
     route_job_type TEXT,
     work_kind TEXT,
     task_type TEXT,
@@ -59,8 +60,7 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs (
     alternate_job_type TEXT,
     alternate_task_type TEXT,
     lease_worker_id TEXT,
-    -- Execution route captured with lease_id. Scheduling routes remain intact:
-    -- an alternate is not consumed, and a new lease evaluates eligibility anew.
+    -- Execution route captured with lease_id, including a promoted alternate.
     lease_route_job_type TEXT,
     lease_work_kind TEXT,
     lease_task_type TEXT,
@@ -95,7 +95,8 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs_archive (
     archived_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     tenant_id TEXT NOT NULL,
     job_id TEXT NOT NULL,
-    alternate_after_seconds INTEGER,
+    alternate_after_seconds DOUBLE PRECISION,
+    alternate_at TIMESTAMPTZ,
     wait_for TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
     payload JSONB NOT NULL DEFAULT '{}'::JSONB,
     metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -114,7 +115,7 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs_archive (
     CONSTRAINT jobs_archive_payload_size_limit CHECK (pg_column_size(payload) <= 512),
     CONSTRAINT jobs_archive_metadata_is_object CHECK (jsonb_typeof(metadata) = 'object'),
     CONSTRAINT jobs_archive_metadata_size_limit CHECK (pg_column_size(metadata) <= 8192),
-    CONSTRAINT jobs_archive_alternate_after_seconds_nonnegative CHECK (alternate_after_seconds IS NULL OR alternate_after_seconds >= 0),
+    CONSTRAINT jobs_archive_alternate_after_seconds_nonnegative CHECK (alternate_after_seconds IS NULL OR (alternate_after_seconds >= 0 AND alternate_after_seconds < 'Infinity'::DOUBLE PRECISION)),
     completion_error_kind TEXT,
     completion_retryable BOOLEAN,
     final_route_job_type TEXT,
@@ -126,7 +127,8 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs_archive (
     final_task_input_hash TEXT,
     final_alternate_job_type TEXT,
     final_alternate_task_type TEXT,
-    final_alternate_after_seconds INTEGER,
+    final_alternate_after_seconds DOUBLE PRECISION,
+    final_alternate_at TIMESTAMPTZ,
     final_wait_for TEXT[],
     final_available_at TIMESTAMPTZ,
     final_lease_expires_at TIMESTAMPTZ,
@@ -409,6 +411,7 @@ BEGIN
         tenant_id,
         job_id,
         alternate_after_seconds,
+        alternate_at,
         wait_for,
         payload,
         metadata,
@@ -427,6 +430,7 @@ BEGIN
         p_locked_job.tenant_id,
         p_locked_job.job_id,
         p_locked_job.alternate_after_seconds,
+        p_locked_job.alternate_at,
         p_locked_job.wait_for,
         p_locked_job.payload,
         p_locked_job.metadata,
@@ -858,6 +862,7 @@ BEGIN
             tenant_id,
             job_id,
             alternate_after_seconds,
+            alternate_at,
             wait_for,
             payload,
             metadata,
@@ -876,6 +881,7 @@ BEGIN
             j.tenant_id,
             j.job_id,
             j.alternate_after_seconds,
+            j.alternate_at,
             j.wait_for,
             j.payload,
             j.metadata,
@@ -1525,19 +1531,14 @@ BEGIN
         SELECT j.tenant_id, j.job_id,
             route.effective_job_type,
             route.effective_work_kind,
-            route.effective_task_type
+            route.effective_task_type, alt.due AS alternate_due
         FROM pgjobdb.jobs j
         JOIN pgjobdb.job_facts f USING (tenant_id, job_id) JOIN pgjobdb.job_client_state c USING (tenant_id,job_id)
         CROSS JOIN LATERAL (
             SELECT COALESCE(
                 j.alternate_job_type IS NOT NULL
-                AND j.alternate_after_seconds IS NOT NULL
-                AND v_now >= GREATEST(
-                    j.available_at,
-                    j.created_at,
-                    COALESCE(NULLIF(j.lease_expires_at, '-infinity'::TIMESTAMPTZ),
-                        j.created_at)
-                ) + make_interval(secs => j.alternate_after_seconds),
+                AND j.alternate_at IS NOT NULL
+                AND v_now >= j.alternate_at,
                 FALSE
             ) AS due
         ) alt
@@ -1592,9 +1593,20 @@ BEGIN
             lease_worker_id = p_worker_id,
             lease_route_job_type = c.effective_job_type,
             lease_work_kind = c.effective_work_kind,
-            -- Native JOB fallbacks retain the waiting task context, as before.
-            lease_task_type = CASE WHEN c.effective_work_kind = 'TASK'
-                THEN c.effective_task_type ELSE j.task_type END,
+            lease_task_type = c.effective_task_type,
+            -- Promote only the matched, locked candidate. Primary claims leave
+            -- the alternate and its original eligibility timestamp intact.
+            route_job_type = c.effective_job_type,
+            work_kind = c.effective_work_kind,
+            task_type = c.effective_task_type,
+            resume_job_type = CASE WHEN c.effective_work_kind = 'TASK' THEN j.resume_job_type END,
+            task_input_ordinal = CASE WHEN c.effective_work_kind = 'TASK' THEN j.task_input_ordinal END,
+            task_output_ordinal = CASE WHEN c.effective_work_kind = 'TASK' THEN j.task_output_ordinal END,
+            task_input_hash = CASE WHEN c.effective_work_kind = 'TASK' THEN j.task_input_hash END,
+            alternate_job_type = CASE WHEN NOT c.alternate_due THEN j.alternate_job_type END,
+            alternate_task_type = CASE WHEN NOT c.alternate_due THEN j.alternate_task_type END,
+            alternate_after_seconds = CASE WHEN NOT c.alternate_due THEN j.alternate_after_seconds END,
+            alternate_at = CASE WHEN NOT c.alternate_due THEN j.alternate_at END,
             lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
             lease_expiration_count = j.lease_expiration_count +
                 CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
@@ -1653,6 +1665,7 @@ BEGIN
         final_alternate_job_type = v_active.alternate_job_type,
         final_alternate_task_type = v_active.alternate_task_type,
         final_alternate_after_seconds = v_active.alternate_after_seconds,
+        final_alternate_at = v_active.alternate_at,
         final_wait_for = v_active.wait_for,
         final_available_at = v_active.available_at,
         final_lease_expires_at = v_active.lease_expires_at,
@@ -1825,7 +1838,7 @@ CREATE OR REPLACE FUNCTION pgjobdb.reschedule_native_job(
     p_available_at TIMESTAMPTZ,
     p_alternate_job_type TEXT,
     p_alternate_task_type TEXT,
-    p_alternate_after_seconds INTEGER,
+    p_alternate_after_seconds DOUBLE PRECISION,
     p_client_mode TEXT, p_client_value JSON, p_client_expected BIGINT
 )
 RETURNS BOOLEAN
@@ -1864,7 +1877,7 @@ BEGIN
                 RAISE EXCEPTION 'cleared alternate route cannot have task or delay';
             END IF;
         ELSIF p_alternate_job_type = '' OR p_alternate_after_seconds IS NULL
-            OR p_alternate_after_seconds < 0
+            OR p_alternate_after_seconds < 0 OR p_alternate_after_seconds >= 'Infinity'::DOUBLE PRECISION
             OR (p_alternate_task_type IS NOT NULL AND p_alternate_task_type = '') THEN
             RAISE EXCEPTION 'invalid alternate route';
         END IF;
@@ -1916,6 +1929,8 @@ BEGIN
         alternate_job_type = p_alternate_job_type,
         alternate_task_type = p_alternate_task_type,
         alternate_after_seconds = p_alternate_after_seconds,
+        alternate_at = CASE WHEN p_alternate_job_type IS NOT NULL
+            THEN v_now + make_interval(secs => p_alternate_after_seconds) END,
         lease_id = NULL,
         lease_worker_id = NULL,
         lease_route_job_type = NULL, lease_work_kind = NULL, lease_task_type = NULL,
@@ -1994,7 +2009,7 @@ BEGIN
         task_type = NULL, resume_job_type = NULL,
         task_input_ordinal = NULL, task_output_ordinal = NULL, task_input_hash = NULL,
         alternate_job_type = NULL, alternate_task_type = NULL,
-        alternate_after_seconds = NULL
+        alternate_after_seconds = NULL, alternate_at = NULL
     WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id
     RETURNING j.lease_id, j.lease_expires_at;
 END;
@@ -2006,7 +2021,7 @@ SELECT
     f.job_type, j.route_job_type, j.work_kind, j.task_type,
     j.resume_job_type, j.task_input_ordinal, j.task_output_ordinal,
     j.task_input_hash, j.alternate_job_type, j.alternate_task_type,
-    j.alternate_after_seconds, j.wait_for, j.available_at,
+    j.alternate_after_seconds, j.alternate_at, j.wait_for, j.available_at,
     NULLIF(j.lease_expires_at, '-infinity'::TIMESTAMPTZ) AS lease_expires_at,
     j.lease_worker_id, j.cancel_requested,
     f.run_policy, f.app_metadata, f.schema_hash, f.parent_job_id,
@@ -2033,7 +2048,7 @@ SELECT
     a.final_task_input_ordinal, a.final_task_output_ordinal,
     a.final_task_input_hash, a.final_alternate_job_type,
     a.final_alternate_task_type, a.final_alternate_after_seconds,
-    a.final_wait_for, a.final_available_at,
+    a.final_alternate_at, a.final_wait_for, a.final_available_at,
     NULLIF(a.final_lease_expires_at, '-infinity'::TIMESTAMPTZ),
     a.final_lease_worker_id, a.final_cancel_requested,
     f.run_policy, f.app_metadata,

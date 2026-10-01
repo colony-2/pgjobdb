@@ -47,7 +47,7 @@ func TestNativeLeaseExecutionSnapshot(t *testing.T) {
 					require.NoError(t, err)
 					require.Nil(t, early)
 					// Advance eligibility across the boundary without a wall-clock sleep.
-					_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET created_at=clock_timestamp()-interval '2 seconds', available_at=clock_timestamp()-interval '2 seconds' WHERE job_id=$1`, id)
+					_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET alternate_at=clock_timestamp()-interval '1 second' WHERE job_id=$1`, id)
 					require.NoError(t, err)
 				}
 				acquired, err := pgjobdb.GetJobLease(ctx, db, "tenant", id, "owner", selector, pgjobdb.GetJobLeaseOptions{LeaseDuration: 10 * time.Second})
@@ -77,20 +77,22 @@ func TestNativeLeaseExecutionSnapshot(t *testing.T) {
 					require.NoError(t, db.QueryRowContext(ctx, `SELECT lease_expires_at FROM pgjobdb.jobs WHERE job_id=$1`, id).Scan(&expiry))
 					require.True(t, expiry.Equal(renewed.ExpiresAt))
 				}
-				// An expired alternate lease must not consume or promote the alternate.
-				// Before its delay elapses again, the original route is eligible.
+				// An alternate claim is durable even if the worker crashes. A
+				// subsequent acquisition must continue on the promoted route.
 				if route.Alternate != nil {
-					_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 millisecond', alternate_after_seconds=60 WHERE job_id=$1`, id)
+					_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 millisecond' WHERE job_id=$1`, id)
 					require.NoError(t, err)
-					primary := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"primary"}}
-					if route.Task != nil {
-						primary = pgjobdb.WorkSelector{Tasks: []pgjobdb.TaskSelector{{JobType: "primary", TaskType: "task"}}}
-					}
-					next, err := pgjobdb.GetJobLease(ctx, db, "tenant", id, "new-owner", primary, pgjobdb.GetJobLeaseOptions{})
+					next, err := pgjobdb.GetJobLease(ctx, db, "tenant", id, "new-owner", selector, pgjobdb.GetJobLeaseOptions{})
 					require.NoError(t, err)
 					require.NotNil(t, next)
 					require.NotEqual(t, acquired.LeaseID, next.LeaseID)
-					require.Equal(t, pgjobdb.JobType("primary"), next.RouteJobType)
+					require.Equal(t, acquired.RouteJobType, next.RouteJobType)
+					require.Equal(t, acquired.Task, next.Task)
+					row, err := pgjobdb.GetJob(ctx, db, "tenant", id)
+					require.NoError(t, err)
+					require.Empty(t, row.AlternateJobType)
+					require.Nil(t, row.AlternateAfterSeconds)
+					require.Nil(t, row.AlternateAt)
 					_, err = pgjobdb.ValidateLease(ctx, db, acquired.Identity())
 					require.ErrorIs(t, err, pgjobdb.ErrLeaseLost)
 				}

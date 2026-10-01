@@ -2,22 +2,22 @@
 
 ## Implemented behavior
 
-This checkout pins JobDB `v0.0.22` (commit `84e97e5cf2e6`). The embedded core
+This checkout pins JobDB `v0.0.23` (commit `6c68db48af6d`). The embedded core
 provides `RenewExecutionLeaseByID`; JobDB owns bearer export/import and runner
 heartbeats. No pgjobdb transport or scheduler interface was added.
 
-Scheduler format **5** requires a fresh database, consistent with the existing
+Scheduler format **6** requires a fresh database, consistent with the existing
 hard-break policy. Acquisition atomically records `lease_route_job_type`,
 `lease_work_kind`, and `lease_task_type` with the lease identity. Validation and
-renewal read those fields. The primary and alternate scheduling routes are
-unchanged; acquisition does not consume an alternate. A later acquisition after
-expiry evaluates eligibility again and replaces the execution snapshot.
+renewal read those fields. A primary claim preserves the pending alternate and
+its fixed eligibility timestamp. A successful alternate claim promotes its route
+and consumes the alternate, so a subsequent acquisition after expiry continues
+on that promoted route. See the [task-alternates guide](GUIDE-PGJOBDB-TASK-ALTERNATES.md).
 
-Task coordinates remain on the waiting row and cannot be rescheduled under the
-same lease identity. Native job-only fallbacks retain the original waiting task
-context, as before; the JobDB adapter exposes a JOB route with no `TaskWait`.
-Task alternates retain coordinates while recording the acquired alternate task
-type. Rescheduling clears the execution snapshot, and external `ClaimTask`
+Task alternates retain the waiting input/output ordinals, input hash, and resume
+job type while promoting the acquired task type. A job-only alternate clears all
+task coordinates; native leases and the JobDB adapter expose JOB work without
+a task wait. Rescheduling clears the execution snapshot, and external `ClaimTask`
 records its promoted resume route as JOB work.
 
 Renewal locks the base job row and checks the exact lease ID, owner, cancellation,

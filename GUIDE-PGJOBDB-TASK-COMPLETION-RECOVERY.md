@@ -2,7 +2,7 @@
 
 ## Ownership and rollout
 
-This checkout pins JobDB `v0.0.22` (commit `84e97e5cf2e6`), which implements
+This checkout pins JobDB `v0.0.23` (commit `6c68db48af6d`), which implements
 SQLite recovery and the shared runtime-core completion sequence. pgjobdb now
 implements `runtimecore.Scheduler.ClaimTask` through its native
 `pgjobdb.claim_native_task` operation. The former `CompleteTaskWork` scheduler
@@ -11,7 +11,7 @@ removed.
 
 This is a hard cutover: stop old servers, workers, and completion callers, discard
 all previous data, and deploy with fresh scheduler, chapter, schema, and artifact
-storage. Scheduler format 5 rejects prior installations; no data migration or
+storage. Scheduler format 6 rejects prior installations; no data migration or
 mixed-version operation is supported.
 
 Chapter storage and scheduling may reside in entirely separate systems. **No

@@ -82,9 +82,8 @@ func TestNativeAlternateRoutes(t *testing.T) {
 		altJob, err := pgjobdb.GetJobLease(ctx, db, "tenant", "task-to-job",
 			"worker", fallback, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || altJob == nil || altJob.WorkKind != pgjobdb.WorkKindJob ||
-			altJob.Task == nil || altJob.Task.TaskType != "download" ||
-			altJob.Task.OutputOrdinal != 3 {
-			t.Fatalf("alternate job lease lost task context = %+v, %v", altJob, err)
+			altJob.Task != nil {
+			t.Fatalf("alternate job lease retained task context = %+v, %v", altJob, err)
 		}
 	})
 }

@@ -142,7 +142,7 @@ func storedJobFromDetail(detail pgjobdb.JobDetail) (runtimecore.StoredJob, error
 		}
 		row.AlternateRoute = &runtimecore.AlternateRoute{
 			JobType: string(detail.AlternateJobType), TaskType: string(detail.AlternateTaskType),
-			After: time.Duration(*detail.AlternateAfterSeconds) * time.Second,
+			After: time.Duration(*detail.AlternateAfterSeconds * float64(time.Second)),
 		}
 	}
 	if detail.ScheduleID != "" {

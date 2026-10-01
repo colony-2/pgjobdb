@@ -1,8 +1,8 @@
 # Typed route upgrade
 
 Upgrade pgjobdb together with its pinned JobDB dependency and use a fresh
-PostgreSQL database (format **5**). The matching JobDB version is
-`v0.0.22`. There is no data conversion or compatibility API. Stop old writers before recreating the database and artifact namespace;
+PostgreSQL database (format **6**). The matching JobDB version is
+`v0.0.23`. There is no data conversion or compatibility API. Stop old writers before recreating the database and artifact namespace;
 re-register schemas, recreate schedules, and submit new jobs.
 
 Public runtime callers now use `jobdb.Route{JobType: ..., TaskType: ...}` for
@@ -30,6 +30,12 @@ APIs are removed. See the [task completion recovery guide](../GUIDE-PGJOBDB-TASK
 for the protocol and its deferred late-append limitation.
 
 Supplied-lease execution preserves the acquired route separately from the waiting
-route. Validation and renewal return that execution snapshot; an alternate is
-not consumed by acquisition. See the [supplied-lease guide](../GUIDE-PGJOBDB-SUPPLIED-LEASE.md)
+route. Validation and renewal return that execution snapshot. A successful
+alternate claim promotes its route and consumes the alternate; primary claims
+preserve the alternate and its fixed eligibility timestamp. See the [supplied-lease guide](../GUIDE-PGJOBDB-SUPPLIED-LEASE.md)
 for the handoff contract and PostgreSQL validation coverage.
+
+Alternate delays now preserve fractional seconds. Native `JobDetail` exposes
+`AlternateAfterSeconds` as `*float64` and the fixed eligibility time as
+`AlternateAt`. See the [task-alternates guide](../GUIDE-PGJOBDB-TASK-ALTERNATES.md)
+for promotion, crash recovery, and external-completion semantics.

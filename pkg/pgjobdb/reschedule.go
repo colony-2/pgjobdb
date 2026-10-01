@@ -86,7 +86,7 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 			if req.Alternate.After < 0 {
 				return fmt.Errorf("pgjobdb: alternate delay must be non-negative")
 			}
-			seconds := math.Ceil(req.Alternate.After.Seconds())
+			seconds := req.Alternate.After.Seconds()
 			if seconds > math.MaxInt32 {
 				return fmt.Errorf("pgjobdb: alternate delay exceeds database range")
 			}
@@ -94,7 +94,7 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 			if req.Alternate.TaskType != "" {
 				alternateTask = string(req.Alternate.TaskType)
 			}
-			alternateAfter = int(seconds)
+			alternateAfter = seconds
 		}
 	}
 	var updated bool
