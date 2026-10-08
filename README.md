@@ -30,6 +30,24 @@ the Postgres runtime:
 go run ./cmd/jobdb direct --postgres-dsn "$JOBDB_POSTGRES_DSN" --blob-store-uri 'blobfs:///tmp/jobdb-blobs'
 ```
 
+## Crash concern and ready work
+
+Native polling, targeted lease acquisition, and external-task claims require
+`jobs_with_status.status = 'READY'`. A `CRASH_CONCERN` job cannot bypass this
+classification through an alternate route. Acquisition still locks the base job
+row with `FOR UPDATE ... SKIP LOCKED`.
+
+The existing default threshold is five consecutive expired-lease reclaims,
+configurable with `pgjobdb.set_crash_concern_threshold`. The counter advances on
+reacquisition, not on reads or renewal. A held lease is `ACTIVE`; once it expires,
+the threshold determines whether the job is `CRASH_CONCERN`. With the default,
+an uninterrupted failure cycle stops after the sixth lease expires. Successful
+rescheduling resets the streak. An operator can explicitly restore eligibility
+with `pgjobdb.clear_crash_concern(tenant_id, job_id, worker_id, reason)`.
+
+This fix changes functions, not the database format. Apply the updated installer
+to existing installations so acquisition uses the status view.
+
 ## Container image
 
 Tagged pgjobdb releases publish Linux AMD64 and ARM64 images at

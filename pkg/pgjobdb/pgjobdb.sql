@@ -1533,6 +1533,9 @@ BEGIN
             route.effective_work_kind,
             route.effective_task_type, alt.due AS alternate_due
         FROM pgjobdb.jobs j
+        -- The status view is authoritative for readiness, including crash
+        -- concern. Lock the base row below to preserve SKIP LOCKED acquisition.
+        JOIN pgjobdb.jobs_with_status eligibility USING (tenant_id, job_id)
         JOIN pgjobdb.job_facts f USING (tenant_id, job_id) JOIN pgjobdb.job_client_state c USING (tenant_id,job_id)
         CROSS JOIN LATERAL (
             SELECT COALESCE(
@@ -1552,7 +1555,8 @@ BEGIN
                 CASE WHEN alt.due THEN j.alternate_task_type
                     ELSE j.task_type END AS effective_task_type
         ) route
-        WHERE j.route_job_type IS NOT NULL
+        WHERE eligibility.status = 'READY'
+          AND j.route_job_type IS NOT NULL
           AND (p_tenant_ids IS NULL OR j.tenant_id = ANY(p_tenant_ids))
           AND (p_target_tenant_id IS NULL
             OR (j.tenant_id = p_target_tenant_id AND j.job_id = p_target_job_id))
@@ -1975,6 +1979,11 @@ BEGIN
     END IF;
     -- Take the clock reading after any wait for the row lock.
     v_now := clock_timestamp();
+    IF NOT EXISTS (SELECT 1 FROM pgjobdb.jobs_with_status s
+        WHERE s.tenant_id = p_tenant_id AND s.job_id = p_job_id
+          AND s.status = 'READY') THEN
+        RAISE EXCEPTION 'waiting task is not ready' USING ERRCODE = 'JTC01';
+    END IF;
     IF v_job.cancel_requested OR v_job.lease_expires_at > v_now
         OR v_job.available_at > v_now OR v_job.expires_at <= v_now
         OR EXISTS (
