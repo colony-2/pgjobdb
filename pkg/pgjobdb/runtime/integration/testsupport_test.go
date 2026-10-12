@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/configuration"
 	"github.com/fergusstrange/embedded-postgres"
 	_ "github.com/lib/pq"
 
@@ -54,4 +55,13 @@ func withBareDatabase(t *testing.T, fn func(context.Context, *sql.DB)) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	t.Cleanup(cancel)
 	fn(ctx, sqlDB)
+}
+
+func newConfigurationStore(t *testing.T, ctx context.Context, db *sql.DB) configuration.Store {
+	t.Helper()
+	store, err := configuration.NewSQLStore(ctx, db, configuration.Postgres)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }

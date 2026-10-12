@@ -29,7 +29,27 @@ func (s Scheduler) GetJob(ctx context.Context, key jobdb.JobKey) (runtimecore.St
 	if err != nil {
 		return runtimecore.StoredJob{}, err
 	}
-	return storedJobFromDetail(*detail)
+	row, err := storedJobFromDetail(*detail)
+	if err != nil {
+		return runtimecore.StoredJob{}, err
+	}
+	if row.Store == jobdb.JobStoreActive && row.LeaseWorkerID != "" {
+		// The public job projection deliberately omits lease IDs. JobDB's
+		// secrets broker needs the identity internally and then independently
+		// validates it with ValidateLease before granting access.
+		identity := runtimecore.LeaseIdentity{JobKey: key}
+		err = s.DB.QueryRowContext(ctx, `SELECT lease_id, lease_worker_id, lease_expires_at
+			FROM pgjobdb.jobs WHERE tenant_id = $1 AND job_id = $2
+			AND lease_id IS NOT NULL AND lease_worker_id IS NOT NULL`,
+			key.TenantId, key.JobId).Scan(&identity.LeaseID, &identity.WorkerID, &identity.ExpiresAt)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return runtimecore.StoredJob{}, err
+		}
+		if err == nil {
+			row.Lease = &identity
+		}
+	}
+	return row, nil
 }
 
 func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest) (runtimecore.ListJobsResponse, error) {

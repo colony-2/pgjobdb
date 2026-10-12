@@ -27,7 +27,8 @@ func TestNativeRuntimeCoreSchedulePreflight(t *testing.T) {
 			t.Fatal(err)
 		}
 		runtime, err := runtimecore.NewRuntime(runtimecore.Config{
-			Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas,
+			Configurations: newConfigurationStore(t, ctx, db),
+			Scheduler:      runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas,
 		})
 		if err != nil {
 			t.Fatal(err)

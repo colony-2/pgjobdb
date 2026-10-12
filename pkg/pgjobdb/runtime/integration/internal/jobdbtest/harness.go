@@ -800,3 +800,19 @@ func ExpectTaskType(t *testing.T, route jobdb.Route, want string) {
 		t.Fatalf("task type = %q; want %q", route.TaskType, want)
 	}
 }
+
+func (r *tenantNamespacedRuntime) GetConfiguration(ctx context.Context, req jobdb.GetConfigurationRequest) (jobdb.ConfigurationSnapshot, error) {
+	req.JobKey = r.prefixJobKey(req.JobKey)
+	return r.runtime.GetConfiguration(ctx, req)
+}
+func (l *tenantNamespacedLease) GetConfiguration(ctx context.Context) (jobdb.ConfigurationSnapshot, error) {
+	return l.lease.GetConfiguration(ctx)
+}
+
+func (r *tenantNamespacedRuntime) ResolveSecrets(ctx context.Context, req jobdb.ResolveSecretsRequest) (jobdb.SecretResolveResult, error) {
+	req.JobKey = r.prefixJobKey(req.JobKey)
+	return r.runtime.ResolveSecrets(ctx, req)
+}
+func (l *tenantNamespacedLease) ResolveSecrets(ctx context.Context, names []string) (jobdb.SecretResolveResult, error) {
+	return l.lease.ResolveSecrets(ctx, names)
+}

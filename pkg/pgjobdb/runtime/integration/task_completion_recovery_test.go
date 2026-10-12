@@ -118,7 +118,7 @@ func TestTaskCompletionRecoveryWithIndependentChapterDatabase(t *testing.T) {
 				}
 				scheduler := &completionFaultScheduler{Scheduler: runtimeadapter.Scheduler{DB: db}}
 				chapterPort := &completionFaultChapters{ChapterLog: chapters}
-				runtime, err := runtimecore.NewRuntime(runtimecore.Config{Scheduler: scheduler, Chapters: chapterPort, Schemas: schemas})
+				runtime, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, db), Scheduler: scheduler, Chapters: chapterPort, Schemas: schemas})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -203,7 +203,7 @@ func TestTaskCompletionRecoveryWithIndependentChapterDatabase(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				recovered, err := runtimecore.NewRuntime(runtimecore.Config{Scheduler: runtimeadapter.Scheduler{DB: reopenedDB}, Chapters: reopenedChapters, Schemas: reopenedSchemas})
+				recovered, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, reopenedDB), Scheduler: runtimeadapter.Scheduler{DB: reopenedDB}, Chapters: reopenedChapters, Schemas: reopenedSchemas})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -253,7 +253,7 @@ func TestTaskCompletionHTTPRejectsRemovedPayload(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas})
+		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, db), Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -283,7 +283,7 @@ func TestTaskCompletionClaimsBeforeAppending(t *testing.T) {
 		}
 		scheduler := &completionFaultScheduler{Scheduler: runtimeadapter.Scheduler{DB: db}}
 		port := &completionFaultChapters{ChapterLog: chapters}
-		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Scheduler: scheduler, Chapters: port, Schemas: schemas})
+		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, db), Scheduler: scheduler, Chapters: port, Schemas: schemas})
 		if err != nil {
 			t.Fatal(err)
 		}

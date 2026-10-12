@@ -12,6 +12,7 @@ import (
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	chapterpostgres "github.com/colony-2/jobdb/pkg/jobdb/chapterstore/postgres"
+	"github.com/colony-2/jobdb/pkg/jobdb/configuration"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
 	schemapostgres "github.com/colony-2/jobdb/pkg/jobdb/schemastore/postgres"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
@@ -23,6 +24,8 @@ import (
 // Config selects Postgres and artifact storage for the runtime.
 type Config struct {
 	PostgresDSN string
+	// ConfigurationLimits bounds tenant configuration; zero fields use JobDB defaults.
+	ConfigurationLimits jobdb.ConfigurationLimits
 	// BlobStoreURI is a blob bucket URL for large chapter artifacts.
 	// blobfs:// is supported by default. Other schemes require an explicit provider import.
 	BlobStoreURI           string
@@ -44,6 +47,7 @@ type Runtime struct {
 
 var _ jobdb.WorkflowRuntime = (*Runtime)(nil)
 var _ jobdb.JobSchemaRegistry = (*Runtime)(nil)
+var _ jobdb.ConfigurationAdmin = (*Runtime)(nil)
 
 // New wraps a caller-owned Gorm database with the direct Postgres runtime.
 func New(db *gorm.DB, cfg Config) (*Runtime, error) {
@@ -94,7 +98,13 @@ func NewSQLDB(ctx context.Context, db *sql.DB, cfg Config) (*Runtime, error) {
 		_ = chapters.Close(ctx)
 		return nil, err
 	}
+	configurations, err := configuration.NewSQLStore(ctx, db, configuration.Postgres)
+	if err != nil {
+		_ = chapters.Close(ctx)
+		return nil, err
+	}
 	core, err := runtimecore.NewRuntime(runtimecore.Config{
+		Configurations: configurations, ConfigurationLimits: cfg.ConfigurationLimits,
 		Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas,
 	})
 	if err != nil {
