@@ -49,6 +49,10 @@ func (s Scheduler) GetJob(ctx context.Context, key jobdb.JobKey) (runtimecore.St
 			row.Lease = &identity
 		}
 	}
+	row.BlockingWait, err = pgjobdb.BlockingDependencyWait(ctx, s.DB, key)
+	if err != nil {
+		return runtimecore.StoredJob{}, err
+	}
 	return row, nil
 }
 
@@ -98,6 +102,10 @@ func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest
 	}
 	for _, detail := range listed.Jobs {
 		row, err := storedJobFromDetail(detail)
+		if err != nil {
+			return runtimecore.ListJobsResponse{}, err
+		}
+		row.BlockingWait, err = pgjobdb.BlockingDependencyWait(ctx, s.DB, row.JobKey)
 		if err != nil {
 			return runtimecore.ListJobsResponse{}, err
 		}
