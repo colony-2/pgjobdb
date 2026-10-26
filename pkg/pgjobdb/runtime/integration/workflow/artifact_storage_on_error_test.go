@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -66,11 +67,12 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 		go engine.Run(ctx)
 
 		// Start the job
-		jobKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"input": "data"}),
 		})
+		jobKey := jobKeyHandle.JobKey
 		require.NoError(t, err)
 
 		// Wait for job to complete (with error)
@@ -86,15 +88,12 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 		_, err = os.Stat(errorLogFile)
 		assert.True(t, os.IsNotExist(err), "error artifact file should be cleaned up after storage")
 
-		taskChapter := waitForChapter(t, engine, jobKey, 1, 10*time.Second)
-
-		// Verify the chapter has the error artifact
-		artifacts := taskChapter.Artifacts
-		require.Len(t, artifacts, 1, "task chapter should have one error artifact")
-		assert.Equal(t, "error-diagnostics.log", artifacts[0].Name, "artifact name should match")
-
-		// Verify we can read the artifact data from storage
-		storedData := readStoredArtifact(t, engine, jobKey, 1, artifacts[0])
+		attempts := executionErrorArtifacts(t, engine, jobKey, true)
+		require.Len(t, attempts, 1)
+		artifacts := attempts[0]
+		require.Len(t, artifacts, 1)
+		assert.Equal(t, "error-diagnostics.log", artifacts[0].Name)
+		storedData := readExecutionErrorArtifact(t, engine, jobKey.TenantId, artifacts[0])
 		assert.Equal(t, diagnosticData, storedData, "stored artifact data should match original")
 	})
 
@@ -143,7 +142,7 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 		go engine.Run(ctx)
 
 		// Start the job with retry policy
-		jobKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"input": "data"}),
@@ -156,6 +155,7 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 				},
 			},
 		})
+		jobKey := jobKeyHandle.JobKey
 		require.NoError(t, err)
 
 		// Wait for job to complete (after all retries fail)
@@ -164,16 +164,12 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 			return status == jobdb.JobStatusCompleted
 		}, 30*time.Second, 200*time.Millisecond)
 
-		// Verify each task attempt chapter has its artifact
-		for i := 1; i <= 3; i++ {
-			chapter := waitForChapter(t, engine, jobKey, int64(i), 10*time.Second)
-			artifacts := chapter.Artifacts
-			require.Len(t, artifacts, 1, fmt.Sprintf("attempt %d should have one artifact", i))
-			assert.Equal(t, "retry-error.log", artifacts[0].Name, fmt.Sprintf("attempt %d artifact name should match", i))
-
-			// Verify we can read the artifact data
-			storedData := readStoredArtifact(t, engine, jobKey, int64(i), artifacts[0])
-			assert.Equal(t, logData, storedData, fmt.Sprintf("attempt %d artifact data should match", i))
+		attempts := executionErrorArtifacts(t, engine, jobKey, true)
+		require.Len(t, attempts, 3, "all failed attempts retain their diagnostics")
+		for i, artifacts := range attempts {
+			require.Len(t, artifacts, 1, fmt.Sprintf("attempt %d", i+1))
+			assert.Equal(t, "retry-error.log", artifacts[0].Name)
+			assert.Equal(t, logData, readExecutionErrorArtifact(t, engine, jobKey.TenantId, artifacts[0]))
 		}
 	})
 }
@@ -226,11 +222,12 @@ func TestArtifactStorageOnJobError(t *testing.T) {
 		go engine.Run(ctx)
 
 		// Start the job
-		jobKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"input": "data"}),
 		})
+		jobKey := jobKeyHandle.JobKey
 		require.NoError(t, err)
 
 		// Wait for job to complete (with error)
@@ -242,16 +239,12 @@ func TestArtifactStorageOnJobError(t *testing.T) {
 		// Verify cleanup was called
 		assert.True(t, cleanupCalled.Load(), "job error artifact cleanup should be called")
 
-		// Verify the error artifact was stored
-		// Job result should be in ordinal 1 (after job input at ordinal 0)
-		jobResultChapter := waitForChapter(t, engine, jobKey, 1, 10*time.Second)
-
-		artifacts := jobResultChapter.Artifacts
-		require.Len(t, artifacts, 1, "job result should have error artifact")
+		attempts := executionErrorArtifacts(t, engine, jobKey, false)
+		require.Len(t, attempts, 1)
+		artifacts := attempts[0]
+		require.Len(t, artifacts, 1)
 		assert.Equal(t, "job-error.log", artifacts[0].Name)
-
-		// Verify we can read the artifact data
-		storedData := readStoredArtifact(t, engine, jobKey, 1, artifacts[0])
+		storedData := readExecutionErrorArtifact(t, engine, jobKey.TenantId, artifacts[0])
 		assert.Equal(t, jobErrorData, storedData, "stored job error artifact should match original")
 	})
 }
@@ -265,8 +258,8 @@ type taskErrorWithArtifactsJob struct {
 
 func (j *taskErrorWithArtifactsJob) Name() string { return "task-error-with-artifacts-job" }
 
-func (j *taskErrorWithArtifactsJob) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
-	return ctx.DoTask(jobdb.RunPolicy{}, "error-with-artifacts", input)
+func (j *taskErrorWithArtifactsJob) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
+	return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "error-with-artifacts", TaskType: "error-with-artifacts", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return input, nil })
 }
 
 // errorWithArtifactsTask returns an error along with diagnostic artifacts
@@ -292,8 +285,8 @@ type simpleRetryErrorJob struct {
 
 func (j *simpleRetryErrorJob) Name() string { return "simple-retry-error-job" }
 
-func (j *simpleRetryErrorJob) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
-	return ctx.DoTask(jobdb.RunPolicy{}, "simple-retry-error", input)
+func (j *simpleRetryErrorJob) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
+	return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "simple-retry-error", TaskType: "simple-retry-error", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return input, nil })
 }
 
 // simpleRetryErrorTask always fails with the same artifact
@@ -318,11 +311,39 @@ type errorJobWithArtifacts struct {
 
 func (j *errorJobWithArtifacts) Name() string { return "error-job-with-artifacts" }
 
-func (j *errorJobWithArtifacts) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (j *errorJobWithArtifacts) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	// Return both error and artifacts at job level
 	output := &jobdb.SimpleTaskData{
 		Data:      []byte(`{"status":"job failed","partial_results":"..."}`),
 		Artifacts: []jobdb.Artifact{j.artifact},
 	}
 	return output, jobdb.AppError{Payload: jobdb.AppErrorPayload{Message: "job failed with artifacts", Level: "error"}}
+}
+
+func executionErrorArtifacts(t *testing.T, engine workflow.Engine, key jobdb.JobKey, task bool) [][]jobdb.ExecutionArtifact {
+	t.Helper()
+	history, err := engine.GetJobRun(context.Background(), jobdb.GetJobRunRequest{JobKey: key, IncludeOutputs: true, IncludeArtifacts: true})
+	require.NoError(t, err)
+	var artifacts [][]jobdb.ExecutionArtifact
+	for _, entry := range history.Execution {
+		r := entry.Record
+		if r.Kind == "result" && r.ErrorKind != "" && strings.Contains(r.ID, "task:") == task {
+			require.NotNil(t, r.Output)
+			artifacts = append(artifacts, r.Output.Artifacts)
+		}
+	}
+	return artifacts
+}
+func readExecutionErrorArtifact(t *testing.T, source any, tenant string, artifact jobdb.ExecutionArtifact) []byte {
+	t.Helper()
+	require.NotNil(t, artifact.Key)
+	key := artifact.Key
+	reader, err := mustArtifactOpener(t, source).OpenArtifact(context.Background(), jobdb.ArtifactRef{JobKey: jobdb.JobKey{TenantId: tenant, JobId: key.JobId}, Ordinal: key.TaskOrdinal, Name: key.Name})
+	require.NoError(t, err)
+	stream, err := reader.Open()
+	require.NoError(t, err)
+	defer stream.Close()
+	data, err := io.ReadAll(stream)
+	require.NoError(t, err)
+	return data
 }

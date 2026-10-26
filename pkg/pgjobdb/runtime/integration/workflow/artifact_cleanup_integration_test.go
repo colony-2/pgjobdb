@@ -74,11 +74,12 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 
 		// Start the job
 		startTime := time.Now()
-		jobKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"key": "value"}),
 		})
+		jobKey := jobKeyHandle.JobKey
 		require.NoError(t, err)
 
 		// Wait for job to complete
@@ -159,7 +160,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 		go engine.Run(ctx)
 
 		// Start the job with artifact
-		jobKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data: &jobdb.SimpleTaskData{
@@ -167,6 +168,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 				Artifacts: []jobdb.Artifact{artifact},
 			},
 		})
+		jobKey := jobKeyHandle.JobKey
 		require.NoError(t, err)
 
 		// Wait for job to complete (with error)
@@ -216,11 +218,12 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 
 		go engine.Run(ctx)
 
-		jobKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"key": "value"}),
 		})
+		jobKey := jobKeyHandle.JobKey
 		require.NoError(t, err)
 
 		require.Eventually(t, func() bool {
@@ -243,9 +246,9 @@ type artifactProducerJob struct {
 
 func (j *artifactProducerJob) Name() string { return "artifact-producer" }
 
-func (j *artifactProducerJob) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (j *artifactProducerJob) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	// Call a task that produces the artifact
-	return ctx.DoTask(jobdb.RunPolicy{}, "produce-artifact", input)
+	return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "produce-artifact", TaskType: "produce-artifact", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return input, nil })
 }
 
 // artifactProducingTask produces an artifact
@@ -269,8 +272,8 @@ type fallbackArtifactJob struct {
 
 func (j *fallbackArtifactJob) Name() string { return "artifact-fallback-job" }
 
-func (j *fallbackArtifactJob) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
-	out, err := ctx.DoTask(jobdb.RunPolicy{}, j.taskName, input)
+func (j *fallbackArtifactJob) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
+	out, err := ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "task", TaskType: j.taskName, ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return input, nil })
 	if err != nil {
 		return nil, err
 	}
@@ -318,9 +321,9 @@ type failingJobWithArtifacts struct{}
 
 func (j *failingJobWithArtifacts) Name() string { return "failing-with-artifacts" }
 
-func (j *failingJobWithArtifacts) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (j *failingJobWithArtifacts) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	// Call a task that will fail
-	return ctx.DoTask(jobdb.RunPolicy{}, "failing-task", input)
+	return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "failing-task", TaskType: "failing-task", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return input, nil })
 }
 
 // failingTask receives artifacts but fails

@@ -1,8 +1,8 @@
 # pgjobdb
 
 `pgjobdb` provides a typed Postgres scheduler and a JobDB workflow runtime.
-The scheduler is independent of JobDB; the runtime adapter uses JobDB's public
-core and Postgres chapter and schema stores.
+The scheduler owns PostgreSQL state and uses JobDB's public goal/dependency types;
+the runtime adapter uses JobDB's core and Postgres chapter and schema stores.
 
 Import `github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime` to use the JobDB
 workflow runtime on Postgres. Its `NewSQLDB(ctx, db, cfg)` constructor wraps a
@@ -11,8 +11,9 @@ require a `BlobStoreURI` for chapter artifacts. Call `Close` when finished.
 
 The first deployment requires a brand-new empty Postgres database. Startup
 creates the `pgjobdb` schema and the JobDB chapter and schema tables. Later
-starts accept an initialized `pgjobdb` installation. Startup rejects old
-`pgwf` databases, other configured scheduler schemas, and a fresh database
+starts accept an initialized format-7 `pgjobdb` installation. The job-goals
+upgrade requires a fresh database; format 6 and older are rejected unchanged.
+Startup also rejects old `pgwf` databases, other configured scheduler schemas, and a fresh database
 that already contains user tables. There is no data migration or dual-read
 period.
 
@@ -30,6 +31,40 @@ the Postgres runtime:
 go run ./cmd/jobdb direct --postgres-dsn "$JOBDB_POSTGRES_DSN" --blob-store-uri 'blobfs:///tmp/jobdb-blobs'
 ```
 
+## JobDB consumer API
+
+The current dependency is JobDB v0.0.57 (`192d83188d38`, main as of
+2026-10-26). Engine submission returns a `workflow.JobHandle`; use its `JobKey`
+for job operations and `GoalID` for goal dependencies. Engine restart submission
+takes `SubmitRestartJobRequest{Job: ...}` and also returns a handle. Restarts
+inherit the source job's metadata. Goal and pending-dependency discovery are
+available through both direct and HTTP runtimes.
+
+JobDB supports versioned execution scopes, deferred task input construction,
+and scope-based restarts through `workflow.ExecutionWorker`. See the
+[pgjobdb integration guide](GUIDE-PGJOBDB-EXECUTION-SCOPES.md) for consumer cutover,
+server upgrades, and dependency-deadline behavior. JobDB now uses only the
+versioned execution runner: direct `JobWorker.Run` implementations take
+`ExecutionContext`, and callbacks use `ExecutionWorker`. Task declarations require
+stable sites, contract versions, valid JSON commands, and deferred input builders.
+Execution protocol 3 requires a fresh-job cutover: delete pre-cutover workflow
+jobs, including those with protocol 1 or 2 execution histories, before deployment.
+See the [legacy-runner removal review](REVIEW-Legacy-Runner-Removal.md) for the
+pgjobdb migration and verification coverage.
+
+Job goals support shared restart candidates, explicit goal failure, and durable
+job/goal dependency waits through both direct and HTTP runtimes. Each job has an
+immutable primary goal ID on its active row and retained facts. Successful
+completion resolves open goals and their waits in the scheduler transaction;
+failed candidates leave their goals open. See the [job-goals implementation
+review](REVIEW-PGJOBDB-JOB-GOALS.md) for storage, concurrency, and rollout details.
+
+Job deletion hides jobs, revokes leases, and cancels unfinished work while
+retaining identity, history, and artifacts. The runtime supports embedded and
+HTTP deletion, hidden-inclusive history listings, and available-route discovery.
+See the [upgrade and deletion review](REVIEW-PGJOBDB-JOB-DELETION.md) for the pinned
+version, storage behavior, installer requirements, and opt-in timeout defaults.
+
 ## Crash concern and ready work
 
 Native polling, targeted lease acquisition, and external-task claims require
@@ -45,8 +80,9 @@ an uninterrupted failure cycle stops after the sixth lease expires. Successful
 rescheduling resets the streak. An operator can explicitly restore eligibility
 with `pgjobdb.clear_crash_concern(tenant_id, job_id, worker_id, reason)`.
 
-This fix changes functions, not the database format. Apply the updated installer
-to existing installations so acquisition uses the status view.
+The acquisition fix itself changes functions rather than the database format.
+The current release also includes job goals and requires the format-7 cutover
+described above.
 
 ## Container image
 
@@ -80,12 +116,10 @@ The repository layout follows JobDB's module: public Go packages live under
 Run the current checks with:
 
 ```sh
-go test ./...
+GOWORK=off go test -tags=integration -p 1 ./...
 ```
 
-The JobDB and pgjobdb commits in this workspace are local. Until both are
-published, check them with a temporary Go workspace containing the two
-checkouts and replacements for the pinned module versions. Do not commit
-absolute-path replacements to either module.
+The JobDB dependency is pinned to a published release. Use `GOWORK=off` when
+verifying that release so a local workspace cannot substitute another checkout.
 
 Publish the JobDB core and base CLI version first, then this pgjobdb module.

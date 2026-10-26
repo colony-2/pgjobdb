@@ -24,11 +24,14 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 			t.Fatalf("insert schedule: %v", err)
 		}
 
+		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.goals(tenant_id,goal_id) VALUES ('tenant','goal-1')`); err != nil {
+			t.Fatal(err)
+		}
 		const insertFact = `INSERT INTO pgjobdb.job_facts
-			(tenant_id, job_id, job_type, run_policy, app_metadata,
+			(tenant_id, job_id, goal_id, job_type, run_policy, app_metadata,
 			schedule_id, schedule_generation, schedule_spec_hash,
 			scheduled_at, schedule_run_id)
-			VALUES ('tenant', $1, 'collect', '{}', '{"source":"test"}',
+			VALUES ('tenant', $1, 'goal-1', 'collect', '{}', '{"source":"test"}',
 			'daily', 1, 'hash', now(), $2)`
 		if _, err := db.ExecContext(ctx, insertFact, "job-1", "run-1"); err != nil {
 			t.Fatalf("insert job fact: %v", err)
@@ -48,10 +51,10 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 			t.Fatal("expected incomplete task coordinates to fail")
 		}
 		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.jobs
-			(tenant_id, job_id, route_job_type, work_kind, task_type,
+			(tenant_id, job_id, goal_id, route_job_type, work_kind, task_type,
 			resume_job_type, task_input_ordinal, task_output_ordinal,
 			task_input_hash)
-			VALUES ('tenant', 'job-1', 'collect', 'TASK', 'task',
+			VALUES ('tenant', 'job-1', 'goal-1', 'collect', 'TASK', 'task',
 			'collect', 1, 2, 'sha256:input')`); err != nil {
 			t.Fatalf("insert typed task route: %v", err)
 		}

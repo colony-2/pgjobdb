@@ -248,13 +248,13 @@ type SequenceJob struct {
 
 func (SequenceJob) Name() string { return SequenceJobName }
 
-func (j SequenceJob) Run(ctx workflow.JobContext, data jobdb.JobData) (jobdb.JobData, error) {
+func (j SequenceJob) Run(ctx workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
 	var (
 		out jobdb.TaskData = data
 		err error
 	)
-	for _, step := range j.Steps {
-		out, err = ctx.DoTask(jobdb.RunPolicy{}, step, out)
+	for index, step := range j.Steps {
+		out, err = ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: fmt.Sprintf("step-%d", index), TaskType: step, ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return out, nil })
 		if err != nil {
 			return nil, err
 		}
@@ -290,7 +290,7 @@ type FailingJob struct{}
 
 func (FailingJob) Name() string { return FailingJobName }
 
-func (FailingJob) Run(_ workflow.JobContext, _ jobdb.JobData) (jobdb.JobData, error) {
+func (FailingJob) Run(_ workflow.ExecutionContext, _ jobdb.JobData) (jobdb.JobData, error) {
 	return nil, errors.New("intentional failure")
 }
 
@@ -815,4 +815,45 @@ func (r *tenantNamespacedRuntime) ResolveSecrets(ctx context.Context, req jobdb.
 }
 func (l *tenantNamespacedLease) ResolveSecrets(ctx context.Context, names []string) (jobdb.SecretResolveResult, error) {
 	return l.lease.ResolveSecrets(ctx, names)
+}
+
+func (r *tenantNamespacedRuntime) GetGoal(ctx context.Context, key jobdb.GoalKey) (jobdb.GoalInfo, error) {
+	key.TenantId = r.prefixTenant(key.TenantId)
+	info, err := r.runtime.GetGoal(ctx, key)
+	info.GoalKey.TenantId = r.stripTenant(info.GoalKey.TenantId)
+	return info, err
+}
+func (r *tenantNamespacedRuntime) ListGoals(ctx context.Context, req jobdb.ListGoalsRequest) (jobdb.ListGoalsResponse, error) {
+	req.TenantId = r.prefixTenant(req.TenantId)
+	result, err := r.runtime.ListGoals(ctx, req)
+	for i := range result.Goals {
+		result.Goals[i].GoalKey.TenantId = r.stripTenant(result.Goals[i].GoalKey.TenantId)
+	}
+	return result, err
+}
+func (r *tenantNamespacedRuntime) ListDependencyWaits(ctx context.Context, req jobdb.ListDependencyWaitsRequest) (jobdb.ListDependencyWaitsResponse, error) {
+	req.TenantId = r.prefixTenant(req.TenantId)
+	result, err := r.runtime.ListDependencyWaits(ctx, req)
+	for i := range result.Waits {
+		result.Waits[i].JobKey = r.stripJobKey(result.Waits[i].JobKey)
+	}
+	return result, err
+}
+func (r *tenantNamespacedRuntime) AddGoalCandidate(ctx context.Context, req jobdb.AddGoalCandidateRequest) (jobdb.GoalCandidateInfo, error) {
+	req.GoalKey.TenantId = r.prefixTenant(req.GoalKey.TenantId)
+	info, err := r.runtime.AddGoalCandidate(ctx, req)
+	info.GoalKey.TenantId = r.stripTenant(info.GoalKey.TenantId)
+	return info, err
+}
+func (r *tenantNamespacedRuntime) FailGoal(ctx context.Context, req jobdb.FailGoalRequest) (jobdb.GoalInfo, error) {
+	req.GoalKey.TenantId = r.prefixTenant(req.GoalKey.TenantId)
+	info, err := r.runtime.FailGoal(ctx, req)
+	info.GoalKey.TenantId = r.stripTenant(info.GoalKey.TenantId)
+	return info, err
+}
+func (r *tenantNamespacedRuntime) GetDependencyWait(ctx context.Context, key jobdb.DependencyWaitKey) (jobdb.DependencyWaitInfo, error) {
+	key.JobKey = r.prefixJobKey(key.JobKey)
+	info, err := r.runtime.GetDependencyWait(ctx, key)
+	info.JobKey = r.stripJobKey(info.JobKey)
+	return info, err
 }

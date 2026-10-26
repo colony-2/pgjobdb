@@ -24,8 +24,8 @@ import (
 type recoveryJob struct{}
 
 func (recoveryJob) Name() string { return "recover" }
-func (recoveryJob) Run(ctx workflow.JobContext, data jobdb.JobData) (jobdb.JobData, error) {
-	return ctx.DoTask(jobdb.RunPolicy{}, "external", data)
+func (recoveryJob) Run(ctx workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
+	return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "external", TaskType: "external", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return data, nil })
 }
 
 type completionFaultScheduler struct {
@@ -300,9 +300,9 @@ func TestTaskCompletionClaimsBeforeAppending(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				// Omit optional request guards: ClaimTask still compares the
-				// entire observed snapshot after core's preflight checks.
-				req := jobdb.CompleteTaskIfWaitingRequest{JobKey: handle.JobKey, Route: jobdb.Route{JobType: wait.JobType, TaskType: wait.Task.TaskType}, OutputOrdinal: wait.Task.OutputOrdinal, Data: jobdb.NewTaskDataOrPanic(2)}
+				// Execution waits require exact input guards. ClaimTask must still
+				// compare the snapshot again after core's preflight checks.
+				req := jobdb.CompleteTaskIfWaitingRequest{JobKey: handle.JobKey, Route: jobdb.Route{JobType: wait.JobType, TaskType: wait.Task.TaskType}, InputOrdinal: wait.Task.InputOrdinal, InputHash: wait.Task.InputHash, OutputOrdinal: wait.Task.OutputOrdinal, Data: jobdb.NewTaskDataOrPanic(2)}
 				before := port.appendCalls.Load()
 				if scenario != "concurrent" {
 					scheduler.beforeClaim = func(runtimecore.ClaimTaskRequest) error {

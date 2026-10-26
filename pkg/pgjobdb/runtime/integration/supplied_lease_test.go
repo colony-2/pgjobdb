@@ -39,11 +39,11 @@ func TestPostgresSuppliedLease(t *testing.T) {
 }
 
 type suppliedJob struct {
-	run func(workflow.JobContext, jobdb.JobData) (jobdb.JobData, error)
+	run func(workflow.ExecutionContext, jobdb.JobData) (jobdb.JobData, error)
 }
 
 func (suppliedJob) Name() string { return "supplied" }
-func (j suppliedJob) Run(ctx workflow.JobContext, data jobdb.JobData) (jobdb.JobData, error) {
+func (j suppliedJob) Run(ctx workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
 	return j.run(ctx, data)
 }
 
@@ -146,7 +146,7 @@ func (f *suppliedFixture) imported(t *testing.T) jobdb.RenewableExecutionLease {
 func runSuppliedRemoteLeaseRenewsAndPersists(t *testing.T, newFixture func(*testing.T) *suppliedFixture) {
 	f := newFixture(t)
 	lease := f.imported(t)
-	job := suppliedJob{run: func(ctx workflow.JobContext, data jobdb.JobData) (jobdb.JobData, error) {
+	job := suppliedJob{run: func(ctx workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
 		if err := ctx.AwaitDuration(jobdb.Duration(1400 * time.Millisecond)); err != nil {
 			return nil, err
 		}
@@ -156,7 +156,7 @@ func runSuppliedRemoteLeaseRenewsAndPersists(t *testing.T, newFixture func(*test
 		if _, err := ctx.SubmitJob(context.Background(), jobdb.SubmitJob{JobType: "child", Data: jobdb.NewTaskDataOrPanic(1)}); err != nil {
 			return nil, err
 		}
-		return ctx.DoTask(jobdb.RunPolicy{}, "echo", data)
+		return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "echo", TaskType: "echo", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return data, nil })
 	}}
 	runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: job, TaskWorkers: []workflow.TaskWorker{suppliedTask{}}, BeforeRun: func(_ context.Context, l jobdb.ExecutionLease) error {
 		require.JSONEq(t, `{"cursor":1}`, string(l.ClientPayload()))
@@ -186,7 +186,7 @@ func runSuppliedRemoteLeaseRenewsAndPersists(t *testing.T, newFixture func(*test
 func runSuppliedLeaseAdmissionReschedulesWithoutWork(t *testing.T, newFixture func(*testing.T) *suppliedFixture) {
 	f := newFixture(t)
 	var called atomic.Bool
-	runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(_ workflow.JobContext, data jobdb.JobData) (jobdb.JobData, error) {
+	runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(_ workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
 		called.Store(true)
 		return data, nil
 	}}, BeforeRun: func(ctx context.Context, l jobdb.ExecutionLease) error {
@@ -208,7 +208,7 @@ func runSuppliedLeaseLossCancelsWithoutFailureChapter(t *testing.T, newFixture f
 			f := newFixture(t)
 			entered := make(chan struct{})
 			exited := make(chan struct{})
-			runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.JobContext, data jobdb.JobData) (jobdb.JobData, error) {
+			runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
 				close(entered)
 				defer close(exited)
 				return nil, ctx.AwaitDuration(jobdb.Duration(time.Minute))
@@ -237,7 +237,7 @@ func runSuppliedLeaseLossCancelsWithoutFailureChapter(t *testing.T, newFixture f
 			}
 			chapters, err := f.backend.ListChapters(context.Background(), jobdb.ListChaptersRequest{JobKey: f.key})
 			require.NoError(t, err)
-			require.Len(t, chapters, 1)
+			requireNoExecutionOutcome(t, chapters)
 			require.Zero(t, f.acquisitions.Load())
 		})
 	}
@@ -248,7 +248,10 @@ func runSuppliedLeaseInvalidBeforeExecution(t *testing.T, newFixture func(*testi
 			f := newFixture(t)
 			lease := f.imported(t)
 			var called atomic.Bool
-			req := workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(_ workflow.JobContext, d jobdb.JobData) (jobdb.JobData, error) { called.Store(true); return d, nil }}}
+			req := workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(_ workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
+				called.Store(true)
+				return d, nil
+			}}}
 			if kind == "wrong_job" {
 				req.JobKey.JobId = "different"
 			}
@@ -286,8 +289,8 @@ func runSuppliedLeaseInvalidBeforeExecution(t *testing.T, newFixture func(*testi
 }
 func runSuppliedLeaseTaskHandoffAndResume(t *testing.T, newFixture func(*testing.T) *suppliedFixture) {
 	f := newFixture(t)
-	job := suppliedJob{run: func(ctx workflow.JobContext, d jobdb.JobData) (jobdb.JobData, error) {
-		return ctx.DoTask(jobdb.RunPolicy{}, "echo", d)
+	job := suppliedJob{run: func(ctx workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
+		return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "echo", TaskType: "echo", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return d, nil })
 	}}
 	first, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: job})
 	require.NoError(t, err)
@@ -321,7 +324,7 @@ func runSuppliedLeaseCallerCancellationStopsHeartbeat(t *testing.T, newFixture f
 	defer cancel()
 	entered := make(chan struct{})
 	exited := make(chan struct{})
-	runnable, err := workflow.GetJobForRunWithLease(ctx, f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.JobContext, d jobdb.JobData) (jobdb.JobData, error) {
+	runnable, err := workflow.GetJobForRunWithLease(ctx, f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
 		close(entered)
 		defer close(exited)
 		return nil, ctx.AwaitDuration(jobdb.Duration(time.Minute))
@@ -344,7 +347,7 @@ func runSuppliedLeaseCallerCancellationStopsHeartbeat(t *testing.T, newFixture f
 	require.Zero(t, f.acquisitions.Load())
 	chapters, err := f.backend.ListChapters(context.Background(), jobdb.ListChaptersRequest{JobKey: f.key})
 	require.NoError(t, err)
-	require.Len(t, chapters, 1)
+	requireNoExecutionOutcome(t, chapters)
 }
 
 func (f *suppliedFixture) invalidate(t *testing.T, kind string, lease jobdb.RenewableExecutionLease) {
@@ -446,7 +449,7 @@ func runSuppliedLeaseDatabaseFailureStopsExecution(t *testing.T, newFixture func
 			f := newFixture(t)
 			lease := f.imported(t)
 			entered, exited := make(chan struct{}), make(chan struct{})
-			runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.JobContext, d jobdb.JobData) (jobdb.JobData, error) {
+			runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
 				close(entered)
 				defer close(exited)
 				return nil, ctx.AwaitDuration(jobdb.Duration(time.Minute))
@@ -486,7 +489,7 @@ func runSuppliedLeaseDatabaseFailureStopsExecution(t *testing.T, newFixture func
 			}
 			chapters, err := f.backend.ListChapters(context.Background(), jobdb.ListChaptersRequest{JobKey: f.key})
 			require.NoError(t, err)
-			require.Len(t, chapters, 1)
+			requireNoExecutionOutcome(t, chapters)
 			var after time.Time
 			require.NoError(t, f.db.QueryRow(`SELECT lease_expires_at FROM pgjobdb.jobs WHERE job_id=$1`, f.key.JobId).Scan(&after))
 			if kind == "before-update" {
@@ -508,11 +511,11 @@ func runSuppliedLeaseReleaseDuringRenewal(t *testing.T, newFixture func(*testing
 			f := newFixture(t)
 			lease := f.imported(t)
 			entered, finish := make(chan struct{}), make(chan struct{})
-			runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.JobContext, d jobdb.JobData) (jobdb.JobData, error) {
+			runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
 				close(entered)
 				<-finish
 				if release == "reschedule" {
-					return ctx.DoTask(jobdb.RunPolicy{}, "elsewhere", d)
+					return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "elsewhere", TaskType: "elsewhere", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return d, nil })
 				}
 				return d, nil
 			}}})
@@ -626,5 +629,21 @@ func runSuppliedLeaseRouteSnapshots(t *testing.T, newFixture func(*testing.T) *s
 			require.JSONEq(t, `{"cursor":1}`, string(imported.ClientPayload()))
 			require.Zero(t, f.acquisitions.Load())
 		})
+	}
+}
+
+// Lease loss may leave execution declarations and waits, but no committed outcome.
+func requireNoExecutionOutcome(t *testing.T, chapters []jobdb.Chapter) {
+	t.Helper()
+	require.NotEmpty(t, chapters)
+	for _, chapter := range chapters {
+		switch body := chapter.Body.(type) {
+		case jobdb.JobAttemptOutcomeChapter:
+			t.Fatal("lease loss committed a job outcome")
+		case jobdb.ExecutionChapter:
+			record, err := jobdb.DecodeExecutionRecord(body.Record)
+			require.NoError(t, err)
+			require.NotEqual(t, "result", record.Kind, "lease loss committed an execution outcome")
+		}
 	}
 }

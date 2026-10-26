@@ -37,11 +37,12 @@ func TestJobsEventuallyComplete(t *testing.T) {
 	jobInputs := []int{1, 2, 3}
 	jobKeys := make([]jobdb.JobKey, 0, len(jobInputs))
 	for _, n := range jobInputs {
-		key, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		keyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 			TenantId: tenantID,
 			JobType:  statusJobName,
 			Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": n}),
 		})
+		key := keyHandle.JobKey
 		if err != nil {
 			t.Fatalf("failed to start job: %v", err)
 		}
@@ -95,8 +96,8 @@ const (
 type statusJobWorker struct{}
 
 func (statusJobWorker) Name() string { return statusJobName }
-func (statusJobWorker) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
-	return ctx.DoTask(jobdb.RunPolicy{}, statusTaskName, input)
+func (statusJobWorker) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
+	return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "task", TaskType: statusTaskName, ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return input, nil })
 }
 
 type statusTaskWorker struct{}

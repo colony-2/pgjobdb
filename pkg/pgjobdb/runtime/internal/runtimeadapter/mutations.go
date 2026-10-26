@@ -22,6 +22,7 @@ func (s Scheduler) CreateJob(ctx context.Context, req runtimecore.CreateJobReque
 		initialUpdate = &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: req.ClientPayload}
 	}
 	input := pgjobdb.SubmitJobRequest{
+		GoalID: req.GoalID, ShareGoal: req.ShareGoal, Dependencies: req.Dependencies,
 		ClientPayloadUpdate: initialUpdate,
 		TenantID:            pgjobdb.TenantID(req.JobKey.TenantId), JobID: pgjobdb.JobID(req.JobKey.JobId),
 		WorkerID: pgjobdb.WorkerID(req.WorkerID), JobType: pgjobdb.JobType(req.JobType),
@@ -52,6 +53,9 @@ func (s Scheduler) CreateJob(ctx context.Context, req runtimecore.CreateJobReque
 		}
 	}
 	if _, err := pgjobdb.SubmitJob(ctx, s.DB, input); err != nil {
+		if errors.Is(err, pgjobdb.ErrJobDeleted) {
+			return runtimecore.StoredJob{}, jobdb.ErrExecutionLeaseLost
+		}
 		return runtimecore.StoredJob{}, err
 	}
 	return s.GetJob(ctx, req.JobKey)
@@ -80,9 +84,11 @@ func (s Scheduler) CompleteLease(ctx context.Context, mutation runtimecore.Compl
 
 func (s Scheduler) RescheduleLease(ctx context.Context, mutation runtimecore.RescheduleMutation) (runtimecore.StoredJob, error) {
 	request := pgjobdb.RescheduleRequest{
+		DependencyWait:      mutation.DependencyWait,
 		RouteJobType:        pgjobdb.JobType(mutation.RouteJobType),
 		WorkKind:            pgjobdb.WorkKind(mutation.WorkKind),
 		AvailableAt:         mutation.WaitUntil,
+		WaitUntilIsDeadline: len(mutation.WaitForJobIDs) > 0 && mutation.WaitUntil != nil,
 		ClientPayloadUpdate: mutation.ClientPayloadUpdate,
 		Alternate:           &pgjobdb.AlternateRoute{},
 	}

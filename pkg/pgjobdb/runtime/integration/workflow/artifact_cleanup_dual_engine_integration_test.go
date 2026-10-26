@@ -82,8 +82,8 @@ type artifactCleanupJob struct {
 
 func (j *artifactCleanupJob) Name() string { return artifactCleanupJobName }
 
-func (j *artifactCleanupJob) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
-	taskOutput, err := ctx.DoTask(jobdb.RunPolicy{}, artifactCleanupTaskName, input)
+func (j *artifactCleanupJob) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
+	taskOutput, err := ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "task", TaskType: artifactCleanupTaskName, ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return input, nil })
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func (j *artifactCleanupJob) Run(ctx workflow.JobContext, input jobdb.JobData) (
 	}, nil
 }
 
-func (j *artifactCleanupJob) downloadTaskArtifacts(ctx workflow.JobContext, taskOutput jobdb.TaskData) ([]jobdb.Artifact, error) {
+func (j *artifactCleanupJob) downloadTaskArtifacts(ctx workflow.ExecutionContext, taskOutput jobdb.TaskData) ([]jobdb.Artifact, error) {
 	taskArtifacts, err := taskOutput.GetArtifacts()
 	if err != nil {
 		return nil, err
@@ -192,11 +192,12 @@ func newFileArtifact(path, name string) jobdb.Artifact {
 func runArtifactCleanupScenario(t *testing.T, ctx context.Context, engine workflow.Engine, filePaths []string) {
 	t.Helper()
 
-	jobKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: "test-tenant",
 		JobType:  artifactCleanupJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]string{"hello": "world"}),
 	})
+	jobKey := jobKeyHandle.JobKey
 	require.NoError(t, err)
 
 	require.NoError(t, workflow.WaitForJobToComplete(ctx, 30*time.Second, jobKey, engine))

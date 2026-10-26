@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/clientpayload"
 )
 
@@ -54,6 +55,9 @@ type RuntimeMetadata struct {
 }
 
 type SubmitJobRequest struct {
+	GoalID              string
+	ShareGoal           bool
+	Dependencies        []jobdb.Dependency
 	TenantID            TenantID
 	JobID               JobID
 	WorkerID            WorkerID
@@ -86,6 +90,12 @@ type TaskSelector struct {
 	TaskType TaskType `json:"task_type"`
 }
 
+// Route selects a job route when TaskType is empty, or an exact task route otherwise.
+type Route struct {
+	JobType  JobType  `json:"job_type"`
+	TaskType TaskType `json:"task_type"`
+}
+
 type WorkSelector struct {
 	JobTypes []JobType
 	Tasks    []TaskSelector
@@ -113,6 +123,7 @@ type TaskWork struct {
 }
 
 type JobLease struct {
+	GoalID                string
 	TenantID              TenantID
 	JobID                 JobID
 	LeaseID               string
@@ -160,6 +171,10 @@ type AlternateRoute struct {
 }
 
 type RescheduleRequest struct {
+	DependencyWait *jobdb.DependencyWait
+	// WaitUntilIsDeadline makes AvailableAt an alternative wakeup deadline for
+	// WaitFor. With the default false, AvailableAt remains a not-before time.
+	WaitUntilIsDeadline bool
 	RouteJobType        JobType
 	WorkKind            WorkKind
 	Task                *TaskWork
@@ -208,6 +223,8 @@ const (
 
 // JobDetail joins immutable job facts with current or final scheduler state.
 type JobDetail struct {
+	GoalID                 string            `json:"goal_id"`
+	OtherGoalIDs           []string          `json:"other_goal_ids"`
 	TenantID               TenantID          `json:"tenant_id"`
 	JobID                  JobID             `json:"job_id"`
 	Store                  JobStore          `json:"store"`
@@ -279,6 +296,12 @@ type MetadataPredicate struct {
 }
 
 type ListJobsOptions struct {
+	GoalIDs       []string
+	IncludeHidden bool
+	// AvailableRoutes restricts results to work acquirable at Now, before pagination.
+	// Empty preserves ordinary listing. Now defaults to the current time.
+	AvailableRoutes    []Route
+	Now                time.Time
 	TenantIDs          []TenantID
 	Statuses           []JobStatus
 	Stores             []JobStore

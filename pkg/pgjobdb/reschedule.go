@@ -2,7 +2,9 @@ package pgjobdb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/colony-2/jobdb/pkg/jobdb"
 	"math"
 
 	"github.com/lib/pq"
@@ -37,6 +39,9 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 	req RescheduleRequest) error {
 	if err := validateScheduleDB(ctx, db); err != nil {
 		return err
+	}
+	if req.WaitUntilIsDeadline && (len(req.WaitFor) == 0 || req.AvailableAt == nil) {
+		return fmt.Errorf("pgjobdb: dependency deadline requires wait-for jobs and available-at")
 	}
 	if !validTypeName(req.RouteJobType) {
 		return fmt.Errorf("pgjobdb: route job type is required")
@@ -97,19 +102,33 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 			alternateAfter = seconds
 		}
 	}
+	var wait any
+	if req.DependencyWait != nil {
+		if err := jobdb.ValidateDependencyWait(req.DependencyWait, false); err != nil {
+			return err
+		}
+		if len(req.WaitFor) > 0 || req.AvailableAt != nil || (req.Alternate != nil && req.Alternate.JobType != "") {
+			return jobdb.ErrInvalidDependency
+		}
+		raw, err := json.Marshal(req.DependencyWait)
+		if err != nil {
+			return err
+		}
+		wait = string(raw)
+	}
 	var updated bool
 	if err := db.QueryRowContext(ctx, `SELECT pgjobdb.reschedule_native_job(
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-		$13, $14, $15, $16, $17, $18, $19)`,
+		$13, $14, $15, $16, $17, $18, $19, $20, $21)`,
 		string(identity.TenantID), string(identity.JobID),
 		nilIfBlank(identity.LeaseID), string(identity.WorkerID),
 		string(req.RouteJobType), string(req.WorkKind),
 		taskType, resumeType, inputOrdinal, outputOrdinal, inputHash,
 		pq.Array(waitFor), optionalTime(req.AvailableAt),
 		alternateJob, alternateTask, alternateAfter,
-		mode, value, revision,
+		mode, value, revision, req.WaitUntilIsDeadline, wait,
 	).Scan(&updated); err != nil {
-		return clientPayloadError(err)
+		return goalError(clientPayloadError(err))
 	}
 	if !updated {
 		return fmt.Errorf("pgjobdb: reschedule native job returned false")

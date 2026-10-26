@@ -140,16 +140,65 @@ func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult
 		}
 		return 0
 	})
+	routes := slices.Clone(opts.AvailableRoutes)
+	if routes == nil {
+		routes = []Route{}
+	}
+	for _, route := range routes {
+		if !validTypeName(route.JobType) || (route.TaskType != "" && !validTypeName(route.TaskType)) {
+			return nil, fmt.Errorf("pgjobdb: invalid available route")
+		}
+	}
+	slices.SortFunc(routes, func(a, b Route) int {
+		if a.JobType < b.JobType {
+			return -1
+		}
+		if a.JobType > b.JobType {
+			return 1
+		}
+		if a.TaskType < b.TaskType {
+			return -1
+		}
+		if a.TaskType > b.TaskType {
+			return 1
+		}
+		return 0
+	})
+	routes = slices.Compact(routes)
+	routeJSON, _ := json.Marshal(routes)
+	if opts.Now.IsZero() {
+		opts.Now = time.Now().UTC()
+	}
 	taskJSON, _ := json.Marshal(tasks)
 	keyJSON, _ := json.Marshal(keys)
 	predicateJSON, err := json.Marshal(predicates)
 	if err != nil {
 		return nil, fmt.Errorf("pgjobdb: encode metadata predicates: %w", err)
 	}
-	filterJSON, err := json.Marshal([]any{
+	goalIDs := slices.Clone(opts.GoalIDs)
+	slices.Sort(goalIDs)
+	goalIDs = slices.Compact(goalIDs)
+	for _, id := range goalIDs {
+		if id == "" {
+			return nil, fmt.Errorf("pgjobdb: empty goal filter")
+		}
+	}
+	filters := []any{
 		tenantIDs, statuses, stores, jobTypes, tasks, keys, parentIDs,
 		opts.RootOnly, predicates, opts.CreatedAfter, opts.CreatedBefore,
-	})
+	}
+	// Ordinary listing keeps its existing cursor fingerprint. Discovery pages
+	// bind the route set, but reevaluate availability at each request's Now.
+	if len(routes) > 0 {
+		filters = append(filters, routes)
+	}
+	if opts.IncludeHidden {
+		filters = append(filters, "include-hidden")
+	}
+	if len(goalIDs) > 0 {
+		filters = append(filters, goalIDs)
+	}
+	filterJSON, err := json.Marshal(filters)
 	if err != nil {
 		return nil, fmt.Errorf("pgjobdb: encode job filters: %w", err)
 	}
@@ -174,13 +223,13 @@ func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult
 	}
 	rows, err := db.QueryContext(ctx, `SELECT * FROM pgjobdb.list_native_jobs(
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-		$12, $13, $14, $15)`,
+		$12, $13, $14, $15, $16, $17, $18, $19)`,
 		pq.Array(tenantIDs), pq.Array(nilIfEmpty(statuses)),
 		pq.Array(nilIfEmpty(stores)), pq.Array(nilIfEmpty(jobTypes)),
 		string(taskJSON), string(keyJSON), pq.Array(nilIfEmpty(parentIDs)),
 		opts.RootOnly, string(predicateJSON), optionalTime(opts.CreatedAfter),
 		optionalTime(opts.CreatedBefore), beforeCreated, beforeTenant, beforeJob,
-		opts.PageSize+1)
+		opts.PageSize+1, string(routeJSON), opts.Now, opts.IncludeHidden, pq.Array(nilIfEmpty(goalIDs)))
 	if err != nil {
 		return nil, err
 	}

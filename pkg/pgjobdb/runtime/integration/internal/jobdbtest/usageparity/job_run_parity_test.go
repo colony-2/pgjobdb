@@ -2,6 +2,7 @@ package usageparity_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
@@ -64,51 +65,6 @@ func TestCompletedJobRunParityAcrossBuiltInRuntimes(t *testing.T) {
 					Status: jobdb.JobStatusCompleted,
 					JobRun: normalizeJobRun(t, run, outputErr),
 					Result: normalizeTaskDataResult(t, runOutput),
-				}
-			})
-		})
-	}
-}
-
-func TestPendingRuntimeViewParityAcrossBuiltInRuntimes(t *testing.T) {
-	ws := jobdbtest.MustWorkSet(t, pendingJob{})
-
-	for _, harness := range jobdbtest.BuiltInRuntimeHarnesses() {
-		harness := harness
-		t.Run(harness.Name, func(t *testing.T) {
-			compareAcrossModes(t, harness, []workflow.WorkSet{ws}, func(t *testing.T, ctx context.Context, subject scenarioSubject) jobRunObservation {
-				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
-					TenantId: subject.built.WorkerTenantID,
-					JobType:  ws.JobWorker.Name(),
-					JobID:    "pending-run",
-					Data:     jobdbtest.NumberTaskData(1),
-				})
-				if err != nil {
-					t.Fatalf("start job via %s: %v", subject.mode, err)
-				}
-
-				handle := jobdbtest.WaitForTaskHandle(t, ctx, subject.Engine(), ws.JobWorker.Name(), "pending-task", []string{jobKey.TenantId})
-				run, err := subject.GetJobRun(ctx, jobdb.GetJobRunRequest{
-					JobKey:               jobKey,
-					IncludeInputs:        true,
-					IncludeAttemptInputs: true,
-				})
-				if err != nil {
-					t.Fatalf("get pending job run via %s: %v", subject.mode, err)
-				}
-				runOutput, outputErr := run.GetOutput(subject.Engine(), jobKey.TenantId)
-
-				if err := handle.Finish(ctx, jobdbtest.NumberTaskData(2)); err != nil {
-					t.Fatalf("finish pending task via %s: %v", subject.mode, err)
-				}
-				subject.WaitForStatus(t, ctx, jobKey, jobdb.JobStatusCompleted)
-
-				return jobRunObservation{
-					JobKey:    jobKey,
-					Status:    run.Job.Status,
-					JobRun:    normalizeJobRun(t, run, outputErr),
-					Result:    normalizeTaskDataResult(t, runOutput),
-					ResultErr: normalizeError(outputErr),
 				}
 			})
 		})
@@ -200,6 +156,51 @@ func TestFailedGetOutputParityAcrossBuiltInRuntimes(t *testing.T) {
 	}
 }
 
+func TestPendingRuntimeViewParityAcrossBuiltInRuntimes(t *testing.T) {
+	ws := jobdbtest.MustWorkSet(t, pendingJob{})
+
+	for _, harness := range jobdbtest.BuiltInRuntimeHarnesses() {
+		harness := harness
+		t.Run(harness.Name, func(t *testing.T) {
+			compareAcrossModes(t, harness, []workflow.WorkSet{ws}, func(t *testing.T, ctx context.Context, subject scenarioSubject) jobRunObservation {
+				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+					TenantId: subject.built.WorkerTenantID,
+					JobType:  ws.JobWorker.Name(),
+					JobID:    "pending-run",
+					Data:     jobdbtest.NumberTaskData(1),
+				})
+				if err != nil {
+					t.Fatalf("start job via %s: %v", subject.mode, err)
+				}
+
+				handle := jobdbtest.WaitForTaskHandle(t, ctx, subject.Engine(), ws.JobWorker.Name(), "pending-task", []string{jobKey.TenantId})
+				run, err := subject.GetJobRun(ctx, jobdb.GetJobRunRequest{
+					JobKey:               jobKey,
+					IncludeInputs:        true,
+					IncludeAttemptInputs: true,
+				})
+				if err != nil {
+					t.Fatalf("get pending job run via %s: %v", subject.mode, err)
+				}
+				runOutput, outputErr := run.GetOutput(subject.Engine(), jobKey.TenantId)
+
+				if err := handle.Finish(ctx, jobdbtest.NumberTaskData(2)); err != nil {
+					t.Fatalf("finish pending task via %s: %v", subject.mode, err)
+				}
+				subject.WaitForStatus(t, ctx, jobKey, jobdb.JobStatusCompleted)
+
+				return jobRunObservation{
+					JobKey:    jobKey,
+					Status:    run.Job.Status,
+					JobRun:    normalizeJobRun(t, run, outputErr),
+					Result:    normalizeTaskDataResult(t, runOutput),
+					ResultErr: normalizeError(outputErr),
+				}
+			})
+		})
+	}
+}
+
 func TestCancelledGetOutputParityAcrossBuiltInRuntimes(t *testing.T) {
 	ws := jobdbtest.MustWorkSet(t, jobdbtest.SequenceJob{Steps: []string{jobdbtest.MissingTaskName}})
 
@@ -227,7 +228,9 @@ func TestCancelledGetOutputParityAcrossBuiltInRuntimes(t *testing.T) {
 					t.Fatalf("get cancelled job run via %s: %v", subject.mode, err)
 				}
 				output, outputErr := run.GetOutput(subject.Engine(), jobKey.TenantId)
-				result, resultErr := jobResultForTest(subject, ctx, jobKey)
+				if !errors.Is(outputErr, jobdb.ErrJobCancelled) {
+					t.Fatalf("expected cancelled output, got %v", outputErr)
+				}
 
 				return jobRunOutputObservation{
 					JobKey:    jobKey,
@@ -235,8 +238,6 @@ func TestCancelledGetOutputParityAcrossBuiltInRuntimes(t *testing.T) {
 					JobRun:    normalizeJobRun(t, run, outputErr),
 					Output:    normalizeTaskDataResult(t, output),
 					OutputErr: normalizeError(outputErr),
-					Result:    normalizeTaskDataResult(t, result),
-					ResultErr: normalizeError(resultErr),
 				}
 			})
 		})

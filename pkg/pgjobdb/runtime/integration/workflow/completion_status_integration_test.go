@@ -22,28 +22,28 @@ const (
 type completionSuccessWorker struct{}
 
 func (completionSuccessWorker) Name() string { return completionSuccessJobName }
-func (completionSuccessWorker) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (completionSuccessWorker) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	return input, nil
 }
 
 type completionAppErrorWorker struct{}
 
 func (completionAppErrorWorker) Name() string { return completionAppJobName }
-func (completionAppErrorWorker) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (completionAppErrorWorker) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	return nil, jobdb.AppError{Payload: jobdb.AppErrorPayload{Message: "app failed"}}
 }
 
 type completionSystemErrorWorker struct{}
 
 func (completionSystemErrorWorker) Name() string { return completionSystemJobName }
-func (completionSystemErrorWorker) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (completionSystemErrorWorker) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	return nil, jobdb.SystemError{Payload: jobdb.SystemErrorPayload{Message: "system failed"}}
 }
 
 type completionTimeoutWorker struct{}
 
 func (completionTimeoutWorker) Name() string { return completionTimeoutJobName }
-func (completionTimeoutWorker) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (completionTimeoutWorker) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	time.Sleep(200 * time.Millisecond)
 	return input, nil
 }
@@ -72,31 +72,34 @@ func TestCompletionStatusAndDetail(t *testing.T) {
 
 	go engine.Run(ctx)
 
-	successKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	successKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  completionSuccessJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 1}),
 	})
+	successKey := successKeyHandle.JobKey
 	if err != nil {
 		t.Fatalf("start success job: %v", err)
 	}
-	appKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	appKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  completionAppJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 2}),
 	})
+	appKey := appKeyHandle.JobKey
 	if err != nil {
 		t.Fatalf("start app error job: %v", err)
 	}
-	systemKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	systemKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  completionSystemJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 3}),
 	})
+	systemKey := systemKeyHandle.JobKey
 	if err != nil {
 		t.Fatalf("start system error job: %v", err)
 	}
-	timeoutKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	timeoutKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  completionTimeoutJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 4}),
@@ -104,6 +107,7 @@ func TestCompletionStatusAndDetail(t *testing.T) {
 			InvocationTimeout: jobdb.AsDuration(50 * time.Millisecond),
 		},
 	})
+	timeoutKey := timeoutKeyHandle.JobKey
 	if err != nil {
 		t.Fatalf("start timeout job: %v", err)
 	}

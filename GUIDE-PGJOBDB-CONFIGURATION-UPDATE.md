@@ -1,6 +1,6 @@
 # Tenant configuration in pgjobdb
 
-pgjobdb pins JobDB `v0.0.31`, containing configuration commit
+pgjobdb pins JobDB `v0.0.53-0.20261024021812-70fda67ff4d5` (`ba8ecfd3c373`), containing configuration commit
 `ab3ac0208ac430590c777ad9bc65c2cce4a48396`. Rebuild the pgjobdb executable or
 container to expose the configuration API and inherited `jobdb config` commands.
 Updating JobDB in another application does not update a deployed pgjobdb server.
@@ -58,10 +58,11 @@ replicas and clients when changing defaults.
 | GET | `/v1/tenants/{tenantId}/jobs/{jobId}/leases/{leaseId}/configuration` | Current snapshot with `X-JobDB-Lease-Token` |
 
 Use the deployment's tenant/admin authorization for administration routes. An
-execution lease grants only the worker read capability. Each explicit
-`ctx.GetConfiguration` or lease read fetches current storage and validates the
-lease; errors propagate without returning stale or empty fallback values.
-Configuration is not automatically recorded in workflow history.
+execution lease grants only the worker read capability. Administrative and direct
+lease reads fetch current storage. Since v0.0.32, `ctx.GetConfiguration` caches the
+first successful snapshot for the live workflow attempt and returns owned copies;
+inline tasks share that snapshot. A new attempt gets a new cache. Configuration
+is not automatically recorded in workflow history.
 
 ## Secrets compatibility
 
@@ -94,35 +95,32 @@ GOWORK=off go build -o ./bin/jobdb ./cmd/jobdb
 Configuration tests use real PostgreSQL with embedded and HTTP access. They
 cover the upstream configuration contract, concurrent writes and revision
 conflicts across separate connection pools, reopening with preserved values and
-revisions, configured limits with atomic rejection, fresh workflow-context
+revisions, configured limits with atomic rejection, workflow-attempt snapshot
 reads, and additive startup on an existing database without losing job data.
 Secrets tests cover the missing-provider response and lease authorization.
 The full suite uses serialized packages to avoid contention between embedded
 PostgreSQL suites with short workflow deadlines.
 
-### Validation limitation in JobDB v0.0.31
+### Workflow regressions resolved in JobDB v0.0.33
 
-The configuration/secrets race tests, PostgreSQL runtime integration package,
-and rebuilt CLI smoke test pass. The full suite fails four existing tests with
-the upgraded dependency:
+Verified on 2026-10-13: the full `GOWORK=off go test -tags=integration -p 1 ./...`
+suite passes, as do configuration/secrets checks under the race detector and the
+CLI build.
+
+JobDB v0.0.31 and v0.0.32 left jobs ACTIVE on live determinism errors and
+failed RestartExtra prerequisites. The upstream fixes in v0.0.33 now pass all
+four previously failing pgjobdb tests:
 
 - `TestRestartWithExtraOutputDeterminismErrorOnDirectRuntime`
 - `TestDirectRestartWithExtraOutputDeterminismErrorParity`
-- `TestChapterConstraintsAcrossEngines` (non-deterministic job, toy and Postgres)
+- `TestChapterConstraintsAcrossEngines` (including toy and Postgres)
 - `TestRestartPrerequisitesCheckedAtRestartExtra`
 
-For the restart-determinism cases, the shared JobDB worker returns
-`TaskInputMismatchError` before recording a terminal outcome, leaving the job
-ACTIVE. The existing conformance test expects a completed job whose result
-reports the determinism error. Three focused engine-conformance runs fail with
-`v0.0.31`; all three pass on the unchanged pgjobdb baseline with JobDB `v0.0.23`.
-
-The other two workflow timeout cases were also reported in the supplied upstream
-guide. Both pass when run against the unchanged checkout with the previous
-`v0.0.23` dependency. The chapter-constraints timeout also occurs with JobDB's toy
-runtime, independently of PostgreSQL. These are dependency-upgrade limitations,
-not a green full-suite result. The regression tests remain enabled and need
-resolution with the JobDB team before relying on these workflow cases.
+The independent toy/SQLite reproductions also reach COMPLETED with a failed
+outcome, one lease completion, and a durable JobAttemptOutcome chapter. No local
+JobDB patch or workspace override is required. The [historical core bug
+report](BUG-JOBDB-WORKFLOW-TERMINAL-FAILURES.md) retains the v0.0.32 investigation
+and reproduction instructions.
 
 ## Rollout
 

@@ -3,6 +3,7 @@ package workflow_test
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,11 +47,12 @@ func TestTaskErrorsAreEnvelopedAndReturned(t *testing.T) {
 
 			go engine.Run(ctx)
 
-			jobKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+			jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 				TenantId: tenantID,
 				JobType:  jobWorker.Name(),
 				Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 1}),
 			})
+			jobKey := jobKeyHandle.JobKey
 			if err != nil {
 				t.Fatalf("failed to start job: %v", err)
 			}
@@ -102,11 +104,12 @@ func TestJobErrorsAreEnvelopedAndReturned(t *testing.T) {
 
 			go engine.Run(ctx)
 
-			jobKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+			jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 				TenantId: tenantID,
 				JobType:  jobWorker.Name(),
 				Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 1}),
 			})
+			jobKey := jobKeyHandle.JobKey
 			if err != nil {
 				t.Fatalf("failed to start job: %v", err)
 			}
@@ -135,8 +138,8 @@ func (w errorTaskWorker) Run(_ workflow.TaskContext, _ jobdb.TaskData) (jobdb.Ta
 type singleTaskJob struct{ taskType string }
 
 func (singleTaskJob) Name() string { return "single_task_job" }
-func (j singleTaskJob) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
-	_, err := ctx.DoTask(jobdb.RunPolicy{}, j.taskType, input)
+func (j singleTaskJob) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
+	_, err := ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "task", TaskType: j.taskType, ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return input, nil })
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +149,7 @@ func (j singleTaskJob) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.
 type errorJobWorker struct{ err error }
 
 func (errorJobWorker) Name() string { return "error_job" }
-func (w errorJobWorker) Run(_ workflow.JobContext, _ jobdb.JobData) (jobdb.JobData, error) {
+func (w errorJobWorker) Run(_ workflow.ExecutionContext, _ jobdb.JobData) (jobdb.JobData, error) {
 	return nil, w.err
 }
 
@@ -156,16 +159,13 @@ func assertTaskOutcomePayloadKind(t *testing.T, engine workflow.Engine, jobKey j
 	if err != nil {
 		t.Fatalf("get job run: %v", err)
 	}
-	for _, attempt := range run.Attempts {
-		for _, task := range attempt.Tasks {
-			for _, taskAttempt := range task.Attempts {
-				if taskAttempt.Outcome.PayloadKind == expected {
-					return
-				}
-			}
+	for _, entry := range run.Execution {
+		r := entry.Record
+		if r.Kind == "result" && strings.Contains(r.ID, "task:") && r.ErrorKind == expected {
+			return
 		}
 	}
-	t.Fatalf("expected task outcome payload kind %s in job run: %+v", expected, run.Attempts)
+	t.Fatalf("expected task outcome kind %s in execution history: %+v", expected, run.Execution)
 }
 
 func assertJobOutcomePayloadKind(t *testing.T, engine workflow.Engine, jobKey jobdb.JobKey, expected string) {

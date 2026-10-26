@@ -43,14 +43,15 @@ func (i Installer) Verify(ctx context.Context) error {
 	}
 	schema := i.schemaName()
 
-	for _, tbl := range []string{"installation", "jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts", "job_client_state"} {
+	for _, tbl := range []string{"installation", "jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts", "job_client_state", "goals", "goal_candidates", "job_preparations", "dependency_waits", "dependency_targets"} {
 		if err := i.assertTable(ctx, schema, tbl); err != nil {
 			return err
 		}
 	}
 	for table, columns := range map[string][]string{
+		"job_facts":        {"hidden_at", "goal_id"},
 		"job_client_state": {"client_payload", "revision", "initial_payload_digest"},
-		"jobs":             {"route_job_type", "work_kind", "lease_worker_id", "lease_route_job_type", "lease_work_kind", "lease_task_type", "alternate_at"},
+		"jobs":             {"goal_id", "dependency_wait_id", "route_job_type", "work_kind", "lease_worker_id", "lease_route_job_type", "lease_work_kind", "lease_task_type", "alternate_at", "wait_until_is_deadline"},
 		"jobs_archive":     {"final_route_job_type", "final_work_kind", "final_alternate_at"},
 	} {
 		for _, column := range columns {
@@ -60,7 +61,9 @@ func (i Installer) Verify(ctx context.Context) error {
 		}
 	}
 	for _, fn := range []string{
-		"submit_native_job", "get_native_work",
+		"prepare_job", "goal_info", "add_goal_candidate", "fail_goal", "dependency_wait_info",
+		"submit_native_job", "get_native_work", "delete_native_jobs",
+		"job_status_at", "effective_native_route",
 		"complete_native_job", "complete_native_unheld_job",
 		"validate_native_lease", "renew_native_lease", "cancel_native_job",
 		"reschedule_native_job",
@@ -153,7 +156,7 @@ func (i Installer) assertInstallation(ctx context.Context, schema string) error 
 	if err := i.DB.QueryRowContext(ctx, query, schema).Scan(&version); err != nil {
 		return fmt.Errorf("pgjobdb: read installation marker: %w", err)
 	}
-	if version != 6 {
+	if version != 7 {
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -54,23 +55,36 @@ func TestBasicWorkflowIntegration(t *testing.T) {
 	}()
 
 	initial := jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 1})
-	jobKey, err := engine1.SubmitJob(ctx, jobdb.SubmitJob{
+	jobKeyHandle, err := engine1.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  pipeJobName,
 		Data:     initial,
 	})
+	jobKey := jobKeyHandle.JobKey
 	if err != nil {
 		t.Fatalf("failed to start job: %v", err)
 	}
 
-	// Expect five task chapters (ordinals 1-5) plus the final job output at ordinal 5.
-	// Steps: t1(+1), t2(*2), userInput(+3), t1(+1), t2(*2) starting from 1 -> 2,4,7,8,16.
-	expecteds := []int{2, 4, 7, 8, 16}
-	for idx, expected := range expecteds {
-		ordinal := int64(idx + 1) // job data is ordinal 0
-		got := waitForChapterValue(t, engine1, jobKey, ordinal, 30*time.Second)
-		if got != expected {
-			t.Fatalf("ordinal %d: want %d, got %d", ordinal, expected, got)
+	// Assert logical task outcomes independently of physical chapter layout.
+	waitForJobToComplete(t, engine1, jobKey)
+	history, err := engine1.GetJobRun(ctx, jobdb.GetJobRunRequest{JobKey: jobKey, IncludeOutputs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outputs []int
+	for _, entry := range history.Execution {
+		r := entry.Record
+		if r.Kind == "result" && strings.Contains(r.ID, "task:") && r.ErrorKind == "" && r.Output != nil {
+			outputs = append(outputs, decodeNumber(t, r.Output.Data))
+		}
+	}
+	expected := []int{2, 4, 7, 8, 16}
+	if len(outputs) != len(expected) {
+		t.Fatalf("task outputs: got %v want %v", outputs, expected)
+	}
+	for i, want := range expected {
+		if outputs[i] != want {
+			t.Fatalf("task %d: got %d want %d", i, outputs[i], want)
 		}
 	}
 
@@ -87,7 +101,7 @@ type pipeJob struct{}
 
 func (pipeJob) Name() string { return pipeJobName }
 
-func (pipeJob) Run(ctx workflow.JobContext, data jobdb.JobData) (jobdb.JobData, error) {
+func (pipeJob) Run(ctx workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
 	current := taskNumber(data)
 	payload := jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": current})
 	if ctx.Logger() != nil {
@@ -97,8 +111,8 @@ func (pipeJob) Run(ctx workflow.JobContext, data jobdb.JobData) (jobdb.JobData, 
 	steps := []string{addOneTaskName, doubleTaskName, userInputTaskName, addOneTaskName, doubleTaskName}
 	var err error
 	var out = payload
-	for _, step := range steps {
-		out, err = ctx.DoTask(jobdb.RunPolicy{}, step, out)
+	for index, step := range steps {
+		out, err = ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: fmt.Sprintf("step-%d", index), TaskType: step, ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return out, nil })
 		if err != nil {
 			return nil, err
 		}

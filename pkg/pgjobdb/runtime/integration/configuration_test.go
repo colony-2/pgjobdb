@@ -136,7 +136,7 @@ func TestTenantConfiguration(t *testing.T) {
 				require.Equal(t, revision, snapshot.Revision)
 				require.Equal(t, map[string]json.RawMessage{"one": json.RawMessage(`true`)}, snapshot.Values)
 			})
-			t.Run("workflow_context", func(t *testing.T) {
+			t.Run("workflow_attempt_snapshot", func(t *testing.T) {
 				ctx := context.Background()
 				rt := configurationTransport(t, openConfigurationRuntime(t, newDSN(t), pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()}), transport)
 				admin := rt.(jobdb.ConfigurationAdmin)
@@ -191,17 +191,17 @@ func TestTenantConfiguration(t *testing.T) {
 		require.JSONEq(t, `"existing-input"`, string(start.Input.Data))
 		var version int
 		require.NoError(t, db.QueryRowContext(ctx, "SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb'").Scan(&version))
-		require.Equal(t, 6, version)
+		require.Equal(t, 7, version)
 	})
 }
 
 type configurationReadingJob struct {
 	admin    jobdb.ConfigurationAdmin
-	captured wf.JobContext
+	captured wf.ExecutionContext
 }
 
 func (*configurationReadingJob) Name() string { return "configuration-job" }
-func (w *configurationReadingJob) Run(ctx wf.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (w *configurationReadingJob) Run(ctx wf.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	w.captured = ctx
 	first, err := ctx.GetConfiguration(context.Background())
 	if err != nil {
@@ -215,8 +215,17 @@ func (w *configurationReadingJob) Run(ctx wf.JobContext, input jobdb.JobData) (j
 	if err != nil {
 		return nil, err
 	}
-	if first.Revision == second.Revision || string(second.Values["setting"]) != `"configuration-updated-value"` {
-		return nil, fmt.Errorf("configuration read was stale")
+	// v0.0.32 pins the first successful workflow read to this attempt.
+	// Administrative and direct lease reads remain fresh.
+	if first.Revision != second.Revision || string(first.Values["setting"]) != string(second.Values["setting"]) {
+		return nil, fmt.Errorf("configuration snapshot changed within one attempt")
+	}
+	fresh, err := w.admin.GetTenantConfiguration(context.Background(), "tenant")
+	if err != nil {
+		return nil, err
+	}
+	if fresh.Revision == second.Revision || string(fresh.Values["setting"]) != `"configuration-updated-value"` {
+		return nil, fmt.Errorf("administrative read did not observe the update")
 	}
 	return input, nil
 }

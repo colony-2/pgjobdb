@@ -128,7 +128,7 @@ func scanJobLease(row scheduleScanner, worker WorkerID) (*JobLease, error) {
 		&jobType, &route, &workKind, &taskType, &resumeType,
 		&inputOrdinal, &outputOrdinal, &inputHash, &policy, &payload,
 		&lease.ClientPayloadRevision,
-		&schemaHash); err != nil {
+		&schemaHash, &lease.GoalID); err != nil {
 		return nil, err
 	}
 	lease.TenantID, lease.JobID, lease.WorkerID = TenantID(tenant), JobID(job), worker

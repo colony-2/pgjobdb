@@ -21,29 +21,29 @@ const (
 type prereqSuccessWorker struct{}
 
 func (prereqSuccessWorker) Name() string { return prereqSuccessJobName }
-func (prereqSuccessWorker) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (prereqSuccessWorker) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	return input, nil
 }
 
 type prereqFailWorker struct{}
 
 func (prereqFailWorker) Name() string { return prereqFailJobName }
-func (prereqFailWorker) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (prereqFailWorker) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	return nil, jobdb.AppError{Payload: jobdb.AppErrorPayload{Message: "prereq failed"}}
 }
 
 type prereqDependentWorker struct{}
 
 func (prereqDependentWorker) Name() string { return prereqDependentJobName }
-func (prereqDependentWorker) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
+func (prereqDependentWorker) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	return input, nil
 }
 
 type prereqRestartJobWorker struct{}
 
 func (prereqRestartJobWorker) Name() string { return prereqRestartJobName }
-func (prereqRestartJobWorker) Run(ctx workflow.JobContext, input jobdb.JobData) (jobdb.JobData, error) {
-	return ctx.DoTask(jobdb.RunPolicy{}, prereqRestartTaskName, input)
+func (prereqRestartJobWorker) Run(ctx workflow.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
+	return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "task", TaskType: prereqRestartTaskName, ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return input, nil })
 }
 
 type prereqRestartTaskWorker struct{}
@@ -78,28 +78,30 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 	go engine.Run(ctx)
 
 	successJobID := "prereq-success"
-	successKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	successKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  prereqSuccessJobName,
 		JobID:    successJobID,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 1}),
 	})
+	successKey := successKeyHandle.JobKey
 	if err != nil {
 		t.Fatalf("start success prereq: %v", err)
 	}
 
 	failJobID := "prereq-fail"
-	failKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	failKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  prereqFailJobName,
 		JobID:    failJobID,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 2}),
 	})
+	failKey := failKeyHandle.JobKey
 	if err != nil {
 		t.Fatalf("start failed prereq: %v", err)
 	}
 
-	successDependent, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	successDependentHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  prereqDependentJobName,
 		JobID:    "dependent-success",
@@ -108,11 +110,12 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 			{JobID: successJobID, Condition: jobdb.JobPrereqSuccess},
 		},
 	})
+	successDependent := successDependentHandle.JobKey
 	if err != nil {
 		t.Fatalf("start dependent success: %v", err)
 	}
 
-	failedDependent, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	failedDependentHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  prereqDependentJobName,
 		JobID:    "dependent-failed",
@@ -121,11 +124,12 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 			{JobID: failJobID, Condition: jobdb.JobPrereqSuccess},
 		},
 	})
+	failedDependent := failedDependentHandle.JobKey
 	if err != nil {
 		t.Fatalf("start dependent failed: %v", err)
 	}
 
-	completeDependent, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	completeDependentHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  prereqDependentJobName,
 		JobID:    "dependent-complete",
@@ -134,6 +138,7 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 			{JobID: failJobID, Condition: jobdb.JobPrereqComplete},
 		},
 	})
+	completeDependent := completeDependentHandle.JobKey
 	if err != nil {
 		t.Fatalf("start dependent complete: %v", err)
 	}
@@ -159,7 +164,7 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 	}
 }
 
-func TestRestartPrerequisitesCheckedAtRestartExtra(t *testing.T) {
+func TestRestartPrerequisitesCheckedAtExecutionBoundary(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -184,12 +189,13 @@ func TestRestartPrerequisitesCheckedAtRestartExtra(t *testing.T) {
 	go engine.Run(ctx)
 
 	baseInput := map[string]interface{}{"n": 1}
-	baseKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	baseKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  prereqRestartJobName,
 		JobID:    "restart-base",
 		Data:     jobdb.NewTaskDataOrPanic(baseInput),
 	})
+	baseKey := baseKeyHandle.JobKey
 	if err != nil {
 		t.Fatalf("start base job: %v", err)
 	}
@@ -197,12 +203,13 @@ func TestRestartPrerequisitesCheckedAtRestartExtra(t *testing.T) {
 		t.Fatalf("wait base job: %v", err)
 	}
 
-	failKey, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	failKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
 		TenantId: tenantID,
 		JobType:  prereqFailJobName,
 		JobID:    "restart-prereq-fail",
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 2}),
 	})
+	failKey := failKeyHandle.JobKey
 	if err != nil {
 		t.Fatalf("start fail prereq: %v", err)
 	}
@@ -210,16 +217,29 @@ func TestRestartPrerequisitesCheckedAtRestartExtra(t *testing.T) {
 		t.Fatalf("wait fail prereq: %v", err)
 	}
 
-	restartKey, err := engine.SubmitRestartJob(ctx, jobdb.SubmitRestartJob{
-		PriorJobKey:     baseKey,
-		LastStepToKeep:  0,
-		JobID:           "restart-with-prereqs",
-		ExtraTaskInput:  jobdb.NewTaskDataOrPanic(baseInput),
-		ExtraTaskOutput: jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 3}),
+	history, err := engine.GetJobRun(ctx, jobdb.GetJobRunRequest{JobKey: baseKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := ""
+	for _, entry := range history.Execution {
+		if entry.Record.Kind == "task" {
+			target = entry.Record.ID
+			break
+		}
+	}
+	if target == "" {
+		t.Fatal("missing task restart boundary")
+	}
+	restartKeyHandle, err := engine.SubmitRestartJob(ctx, jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{
+		PriorJobKey:      baseKey,
+		ExecutionRestart: &jobdb.ExecutionRestart{ScopeID: target},
+		JobID:            "restart-with-prereqs",
 		Prerequisites: []jobdb.JobPrerequisite{
 			{JobID: failKey.JobId, Condition: jobdb.JobPrereqSuccess},
 		},
-	})
+	}})
+	restartKey := restartKeyHandle.JobKey
 	if err != nil {
 		t.Fatalf("restart job: %v", err)
 	}

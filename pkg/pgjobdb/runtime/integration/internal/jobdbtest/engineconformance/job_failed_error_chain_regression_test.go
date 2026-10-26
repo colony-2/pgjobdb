@@ -18,7 +18,7 @@ type jobFailedChainAppErrorChildJob struct{}
 
 func (jobFailedChainAppErrorChildJob) Name() string { return "job-failed-chain-app-error-child" }
 
-func (jobFailedChainAppErrorChildJob) Run(_ workflow.JobContext, _ jobdb.JobData) (jobdb.JobData, error) {
+func (jobFailedChainAppErrorChildJob) Run(_ workflow.ExecutionContext, _ jobdb.JobData) (jobdb.JobData, error) {
 	return nil, jobdb.AppError{Payload: jobdb.AppErrorPayload{
 		Message: "child failed",
 		Level:   "error",
@@ -32,7 +32,7 @@ type jobFailedChainGenericChildJob struct{}
 
 func (jobFailedChainGenericChildJob) Name() string { return "job-failed-chain-generic-child" }
 
-func (jobFailedChainGenericChildJob) Run(_ workflow.JobContext, _ jobdb.JobData) (jobdb.JobData, error) {
+func (jobFailedChainGenericChildJob) Run(_ workflow.ExecutionContext, _ jobdb.JobData) (jobdb.JobData, error) {
 	return nil, fmt.Errorf("command execution failed: exit status 1")
 }
 
@@ -40,8 +40,8 @@ type jobFailedChainTaskChildJob struct{}
 
 func (jobFailedChainTaskChildJob) Name() string { return "job-failed-chain-task-child" }
 
-func (jobFailedChainTaskChildJob) Run(ctx workflow.JobContext, data jobdb.JobData) (jobdb.JobData, error) {
-	return ctx.DoTask(jobdb.RunPolicy{}, "job-failed-chain-task-child-fail", data)
+func (jobFailedChainTaskChildJob) Run(ctx workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
+	return ctx.DoTask(workflow.TaskCall{Site: "task", Command: []byte("{}"), TaskType: "job-failed-chain-task-child-fail", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (workflow.TaskData, error) { return data, nil })
 }
 
 type jobFailedChainTaskChildFailTask struct{}
@@ -59,13 +59,14 @@ type jobFailedChainParentJob struct {
 
 func (jobFailedChainParentJob) Name() string { return "job-failed-chain-parent" }
 
-func (j *jobFailedChainParentJob) Run(ctx workflow.JobContext, data jobdb.JobData) (_ jobdb.JobData, runErr error) {
-	childKey, err := j.engine.SubmitJob(context.Background(), jobdb.SubmitJob{
+func (j *jobFailedChainParentJob) Run(ctx workflow.ExecutionContext, data jobdb.JobData) (_ jobdb.JobData, runErr error) {
+	childKeyHandle, err := j.engine.SubmitJob(context.Background(), jobdb.SubmitJob{
 		TenantId: ctx.GetJobKey().TenantId,
 		JobType:  j.child,
 		JobID:    ctx.GetJobKey().JobId + "-child",
 		Data:     data,
 	})
+	childKey := childKeyHandle.JobKey
 	if err != nil {
 		return nil, err
 	}
@@ -150,12 +151,13 @@ func TestGetJobRunOutputErrorChainComparableAcrossBuiltInRuntimes(t *testing.T) 
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 				defer cancel()
 
-				jobKey, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{
+				jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{
 					TenantId: built.WorkerTenantID,
 					JobType:  parent.Name(),
 					JobID:    "parent",
 					Data:     jobdbtest.NumberTaskData(1),
 				})
+				jobKey := jobKeyHandle.JobKey
 				if err != nil {
 					t.Fatalf("start parent: %v", err)
 				}

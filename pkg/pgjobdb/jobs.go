@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/lib/pq"
 )
 
@@ -72,17 +73,31 @@ func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 		}
 		waitFor = append(waitFor, string(id))
 	}
+	if err := jobdb.ValidateDependencies(req.Dependencies); err != nil {
+		return nil, err
+	}
+	deps := req.Dependencies
+	if deps == nil {
+		deps = []jobdb.Dependency{}
+	}
+	dependencies, err := json.Marshal(deps)
+	if err != nil {
+		return nil, err
+	}
 	var result SubmitJobResult
 	var returnedID string
 	err = db.QueryRowContext(ctx, `SELECT job_id, created FROM pgjobdb.submit_native_job(
-		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		string(req.TenantID), string(req.JobID), string(req.WorkerID),
 		string(req.JobType), string(policy), string(appMetadata),
 		nilIfBlank(req.Runtime.SchemaHash), nilIfBlank(string(req.Runtime.ParentJobID)),
 		schedule, pq.Array(waitFor), optionalTime(req.AvailableAt),
-		optionalTime(req.ExpiresAt), mode, value).Scan(&returnedID, &result.Created)
+		optionalTime(req.ExpiresAt), mode, value, nilIfBlank(req.GoalID), req.ShareGoal, string(dependencies)).Scan(&returnedID, &result.Created)
 	if err != nil {
-		return nil, clientPayloadError(err)
+		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "JDL01" {
+			return nil, ErrJobDeleted
+		}
+		return nil, goalError(clientPayloadError(err))
 	}
 	result.JobID = JobID(returnedID)
 	return &result, nil

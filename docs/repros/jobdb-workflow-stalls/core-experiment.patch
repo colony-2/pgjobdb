@@ -1,0 +1,26 @@
+--- a/pkg/workflow/worker_runner.go
++++ b/pkg/workflow/worker_runner.go
+@@ -899,6 +899,7 @@
+ 			r.emitTaskStart(taskType, ordinal, attempt, data, metaStartAt(meta))
+ 			if chapterIs(chapter, chapterTypeRestartExtra) && r.shouldCheckPrerequisites() && len(meta.Prerequisites) > 0 {
+ 				if err := r.checkPrerequisites(ctx, meta); err != nil {
++					r.markStoryOrdinalConsumed(ordinal)
+ 					r.emitTaskEnd(taskType, ordinal, attempt, nil, err, metaEndAt(meta))
+ 					return nil, err
+ 				}
+@@ -1490,9 +1491,12 @@
+ 			return nil, jobErr
+ 		}
+ 		if errors.Is(jobErr, ErrWorkflowNotDeterministic) || errors.Is(jobErr, ErrMissingInputHash) {
+-			// Do not replace the original mismatch with a second cache lookup
+-			// error, or hide it behind a recorded outcome at the same ordinal.
+-			return nil, jobErr
++			if r.replay {
++				return nil, jobErr
++			}
++			if _, err := r.seekJobOutcome(ctx); err != nil {
++				return nil, err
++			}
+ 		}
+ 		var timeout TimeoutError
+ 		if !r.replay && errors.As(jobErr, &timeout) && timeout.Payload.Kind == "job" {

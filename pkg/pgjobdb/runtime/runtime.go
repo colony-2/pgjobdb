@@ -48,6 +48,8 @@ type Runtime struct {
 var _ jobdb.WorkflowRuntime = (*Runtime)(nil)
 var _ jobdb.JobSchemaRegistry = (*Runtime)(nil)
 var _ jobdb.ConfigurationAdmin = (*Runtime)(nil)
+var _ jobdb.JobDeletionRuntime = (*Runtime)(nil)
+var _ jobdb.GoalRuntime = (*Runtime)(nil)
 
 // New wraps a caller-owned Gorm database with the direct Postgres runtime.
 func New(db *gorm.DB, cfg Config) (*Runtime, error) {
