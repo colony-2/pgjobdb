@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -448,11 +449,22 @@ func runSuppliedLeaseDatabaseFailureStopsExecution(t *testing.T, newFixture func
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t)
 			lease := f.imported(t)
+			releaseRenewal := sync.OnceFunc(func() { close(f.renewRelease) })
+			defer releaseRenewal()
+			runCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			entered, exited := make(chan struct{}), make(chan struct{})
-			runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
+			runnable, err := workflow.GetJobForRunWithLease(runCtx, f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
+				// Admission renews before invoking the worker. Block only subsequent
+				// heartbeats so fault setup cannot race with an expiry update.
+				f.blockRenew.Store(true)
 				close(entered)
 				defer close(exited)
-				return nil, ctx.AwaitDuration(jobdb.Duration(time.Minute))
+				// AwaitDuration persists execution history and validates the lease.
+				// It can encounter the injected fault before the heartbeat does.
+				// Wait only for cancellation so this test isolates renewal failure.
+				<-ctx.Context().Done()
+				return nil, ctx.Context().Err()
 			}}})
 			require.NoError(t, err)
 			result := make(chan error, 1)
@@ -461,6 +473,11 @@ func runSuppliedLeaseDatabaseFailureStopsExecution(t *testing.T, newFixture func
 			case <-entered:
 			case <-time.After(5 * time.Second):
 				t.Fatal("application did not start")
+			}
+			select {
+			case <-f.renewEntered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("heartbeat did not start")
 			}
 			var before time.Time
 			require.NoError(t, f.db.QueryRow(`SELECT lease_expires_at FROM pgjobdb.jobs WHERE job_id=$1`, f.key.JobId).Scan(&before))
@@ -474,6 +491,7 @@ func runSuppliedLeaseDatabaseFailureStopsExecution(t *testing.T, newFixture func
 			case "deadline":
 				validationFault(t, f.db, `PERFORM pg_sleep(5);`)
 			}
+			releaseRenewal()
 			select {
 			case err := <-result:
 				var renewal *jobdb.LeaseRenewalError
@@ -498,6 +516,7 @@ func runSuppliedLeaseDatabaseFailureStopsExecution(t *testing.T, newFixture func
 				require.True(t, after.After(before))
 			}
 			count := f.renewals.Load()
+			require.Positive(t, count, "the injected failure must be observed by renewal")
 			time.Sleep(100 * time.Millisecond)
 			require.Equal(t, count, f.renewals.Load())
 			require.Zero(t, f.acquisitions.Load())
