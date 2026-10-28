@@ -96,7 +96,7 @@ func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest
 		return runtimecore.ListJobsResponse{}, err
 	}
 	opts.MetadataPredicates = predicates
-	listed, err := pgjobdb.ListJobs(ctx, s.DB, opts)
+	listed, err := pgjobdb.ListJobSummaries(ctx, s.DB, opts)
 	if err != nil {
 		return runtimecore.ListJobsResponse{}, err
 	}
@@ -104,14 +104,21 @@ func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest
 		Jobs:          make([]runtimecore.StoredJob, 0, len(listed.Jobs)),
 		NextPageToken: listed.NextPageToken,
 	}
-	for _, detail := range listed.Jobs {
-		row, err := storedJobFromDetail(detail)
-		if err != nil {
-			return runtimecore.ListJobsResponse{}, err
+	for _, summary := range listed.Jobs {
+		row := runtimecore.StoredJob{
+			JobKey: jobdb.JobKey{TenantId: string(summary.TenantID), JobId: string(summary.JobID)},
+			GoalID: summary.GoalID, Store: jobdb.JobStore(summary.Store), Status: jobdb.JobStatus(summary.Status),
+			JobType: string(summary.JobType), RouteJobType: string(summary.RouteJobType), WorkKind: runtimecore.WorkKind(summary.WorkKind),
+			AppMetadata: summary.AppMetadata, SchemaHash: summary.SchemaHash, ParentJobID: string(summary.ParentJobID),
+			CreatedAt: summary.CreatedAt, AvailableAt: summary.AvailableAt, ExpiresAt: summary.ExpiresAt,
+			LeaseExpiresAt: summary.LeaseExpiresAt, ArchivedAt: summary.ArchivedAt, CancelRequested: summary.CancelRequested,
+			ClientPayloadRevision: summary.ClientPayloadRevision, BlockingWaitSummary: summary.BlockingWaitSummary,
 		}
-		row.BlockingWait, err = pgjobdb.BlockingDependencyWait(ctx, s.DB, row.JobKey)
-		if err != nil {
-			return runtimecore.ListJobsResponse{}, err
+		if summary.WorkKind == pgjobdb.WorkKindTask {
+			row.TaskWork = &runtimecore.TaskWork{TaskType: string(summary.TaskType)}
+		}
+		if summary.CompletionStatus != nil {
+			row.Completion = &runtimecore.CompletionSnapshot{Status: string(*summary.CompletionStatus)}
 		}
 		result.Jobs = append(result.Jobs, row)
 	}

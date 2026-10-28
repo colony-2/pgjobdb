@@ -27,15 +27,15 @@ func TestPostgresRuntimeConformance(t *testing.T) {
 	routes := runtimetest.Capabilities{
 		Leases: true, Schedules: true, SchemaRegistry: true, RuntimeStorage: true,
 	}
-	runtimetest.RunWorkflowRuntimeConformance(t,
-		runtimetest.Harness{
+	harnesses := []runtimetest.Harness{
+		{
 			Name: "postgres", Capabilities: routes,
 			New: func(tb testing.TB) runtimetest.Fixture {
 				runtime := newRuntime(tb)
 				return runtimetest.Fixture{Runtime: runtime, SchemaRegistry: runtime, Cleanup: runtime.Close}
 			},
 		},
-		runtimetest.Harness{
+		{
 			Name: "remote-postgres", Capabilities: routes,
 			New: func(tb testing.TB) runtimetest.Fixture {
 				runtime := newRuntime(tb)
@@ -51,7 +51,9 @@ func TestPostgresRuntimeConformance(t *testing.T) {
 				}
 			},
 		},
-	)
+	}
+	runtimetest.RunWorkflowRuntimeConformance(t, harnesses...)
+	t.Run("compact_lists", func(t *testing.T) { runtimetest.RunCompactListConformance(t, harnesses...) })
 }
 
 func conformanceRuntimeFactory(t *testing.T) func(testing.TB) *pgjobdbruntime.Runtime {

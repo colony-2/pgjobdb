@@ -3,6 +3,7 @@ package pgjobdb
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -20,8 +21,44 @@ type jobCursor struct {
 	JobID     JobID     `json:"j"`
 }
 
-// ListJobs applies all native job filters before choosing a page.
+// ListJobs retains the native detail-list API. Workflow listing uses ListJobSummaries.
 func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult, error) {
+	page, err := listJobs(ctx, db, opts, `SELECT * FROM pgjobdb.list_native_jobs(
+ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+		scanListedJobDetail, func(j JobDetail) jobCursor {
+			return jobCursor{CreatedAt: j.CreatedAt, TenantID: j.TenantID, JobID: j.JobID}
+		})
+	if err != nil {
+		return nil, err
+	}
+	return &ListJobsResult{Jobs: page.Jobs, NextPageToken: page.NextPageToken}, nil
+}
+
+func scanListedJobDetail(rows *sql.Rows) (JobDetail, error) {
+	var item JobDetail
+	var raw, payload []byte
+	var revision int64
+	var digest string
+	if err := rows.Scan(&raw, &payload, &revision, &digest); err != nil {
+		return item, err
+	}
+	if err := json.Unmarshal(raw, &item); err != nil {
+		return item, fmt.Errorf("pgjobdb: decode listed job: %w", err)
+	}
+	item.ClientPayload = append(json.RawMessage(nil), payload...)
+	item.ClientPayloadRevision = revision
+	item.InitialPayloadDigest = digest
+	return item, nil
+}
+
+type jobPage[T any] struct {
+	Jobs          []T
+	NextPageToken string
+}
+
+// Both projections share validation, filter normalization, observation time, and cursors.
+func listJobs[T any](ctx context.Context, db DB, opts ListJobsOptions, query string,
+	scan func(*sql.Rows) (T, error), identity func(T) jobCursor) (*jobPage[T], error) {
 	if err := validateScheduleDB(ctx, db); err != nil {
 		return nil, err
 	}
@@ -221,9 +258,7 @@ func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult
 		beforeCreated, beforeTenant, beforeJob = cursor.CreatedAt,
 			string(cursor.TenantID), string(cursor.JobID)
 	}
-	rows, err := db.QueryContext(ctx, `SELECT * FROM pgjobdb.list_native_jobs(
-		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-		$12, $13, $14, $15, $16, $17, $18, $19)`,
+	rows, err := db.QueryContext(ctx, query,
 		pq.Array(tenantIDs), pq.Array(nilIfEmpty(statuses)),
 		pq.Array(nilIfEmpty(stores)), pq.Array(nilIfEmpty(jobTypes)),
 		string(taskJSON), string(keyJSON), pq.Array(nilIfEmpty(parentIDs)),
@@ -234,21 +269,12 @@ func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult
 		return nil, err
 	}
 	defer rows.Close()
-	result := &ListJobsResult{Jobs: make([]JobDetail, 0, opts.PageSize)}
+	result := &jobPage[T]{Jobs: make([]T, 0, opts.PageSize)}
 	for rows.Next() {
-		var raw, payload []byte
-		var revision int64
-		var initialDigest string
-		if err := rows.Scan(&raw, &payload, &revision, &initialDigest); err != nil {
+		item, err := scan(rows)
+		if err != nil {
 			return nil, err
 		}
-		var item JobDetail
-		if err := json.Unmarshal(raw, &item); err != nil {
-			return nil, fmt.Errorf("pgjobdb: decode listed job: %w", err)
-		}
-		item.ClientPayload = append(json.RawMessage(nil), payload...)
-		item.ClientPayloadRevision = revision
-		item.InitialPayloadDigest = initialDigest
 		result.Jobs = append(result.Jobs, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -256,11 +282,9 @@ func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult
 	}
 	if len(result.Jobs) > opts.PageSize {
 		result.Jobs = result.Jobs[:opts.PageSize]
-		last := result.Jobs[len(result.Jobs)-1]
-		data, err := json.Marshal(jobCursor{
-			Filter: fingerprint, CreatedAt: last.CreatedAt,
-			TenantID: last.TenantID, JobID: last.JobID,
-		})
+		cursor := identity(result.Jobs[len(result.Jobs)-1])
+		cursor.Filter = fingerprint
+		data, err := json.Marshal(cursor)
 		if err != nil {
 			return nil, err
 		}

@@ -1,0 +1,70 @@
+Nested Loop Left Join  (cost=45.98..78.95 rows=1 width=104) (actual time=1.349..5.476 rows=101 loops=1)
+  Join Filter: ((NOT n.cancel_requested) AND (n.store = 'ACTIVE'::text))
+  Buffers: shared hit=3260
+  CTE page
+    ->  Limit  (cost=45.56..45.56 rows=2 width=561) (actual time=1.047..1.063 rows=101 loops=1)
+          Buffers: shared hit=1008
+          ->  Sort  (cost=45.56..45.56 rows=2 width=561) (actual time=1.046..1.057 rows=101 loops=1)
+                Sort Key: "*SELECT* 1".created_at DESC, "*SELECT* 1".tenant_id DESC, "*SELECT* 1".job_id DESC
+                Sort Method: top-N heapsort  Memory: 69kB
+                Buffers: shared hit=1008
+                ->  Append  (cost=0.54..45.55 rows=2 width=561) (actual time=0.040..0.960 rows=240 loops=1)
+                      Buffers: shared hit=1002
+                      ->  Subquery Scan on "*SELECT* 1"  (cost=0.54..22.83 rows=1 width=561) (actual time=0.039..0.580 rows=160 loops=1)
+                            Filter: ((("*SELECT* 1".job_type = ANY ('{consumer}'::text[])) OR (("*SELECT* 1".work_kind = 'TASK'::text) AND (ANY (("*SELECT* 1".route_job_type = (hashed SubPlan 2).col1) AND ("*SELECT* 1".task_type = (hashed SubPlan 2).col2))))) AND (NOT EXISTS(SubPlan 5)))
+                            Rows Removed by Filter: 2
+                            Buffers: shared hit=663
+                            ->  Nested Loop  (cost=0.54..16.74 rows=1 width=561) (actual time=0.033..0.541 rows=162 loops=1)
+                                  Buffers: shared hit=663
+                                  ->  Index Scan using job_facts_pkey on job_facts f  (cost=0.27..8.29 rows=1 width=248) (actual time=0.014..0.077 rows=242 loops=1)
+                                        Index Cond: (tenant_id = ANY ('{tenant}'::text[]))
+                                        Filter: (hidden_at IS NULL)
+                                        Buffers: shared hit=17
+                                  ->  Index Scan using idx_jobs_tenant_waitfor on jobs j  (cost=0.27..8.29 rows=1 width=281) (actual time=0.002..0.002 rows=1 loops=242)
+                                        Index Cond: ((tenant_id = f.tenant_id) AND (job_id = f.job_id))
+                                        Filter: (route_job_type IS NOT NULL)
+                                        Buffers: shared hit=646
+                            SubPlan 2
+                              ->  Function Scan on jsonb_array_elements selector  (cost=0.00..1.50 rows=100 width=64) (never executed)
+                            SubPlan 5
+                              ->  Function Scan on jsonb_array_elements predicate  (cost=0.00..203.50 rows=50 width=0) (actual time=0.000..0.000 rows=0 loops=240)
+                                    Filter: (NOT EXISTS(SubPlan 4))
+                                    SubPlan 4
+                                      ->  Function Scan on jsonb_array_elements value  (cost=0.53..2.02 rows=1 width=0) (never executed)
+                                            Filter: (("*SELECT* 1".app_metadata #> (InitPlan 3).col1) = item)
+                                            InitPlan 3
+                                              ->  ProjectSet  (cost=0.00..0.52 rows=100 width=32) (never executed)
+                                                    ->  Result  (cost=0.00..0.01 rows=1 width=0) (never executed)
+                      ->  Subquery Scan on "*SELECT* 2"  (cost=0.41..22.71 rows=1 width=561) (actual time=0.015..0.367 rows=80 loops=1)
+                            Filter: ((("*SELECT* 2".job_type = ANY ('{consumer}'::text[])) OR (("*SELECT* 2".final_work_kind = 'TASK'::text) AND (ANY (("*SELECT* 2".final_route_job_type = (hashed SubPlan 2).col1) AND ("*SELECT* 2".final_task_type = (hashed SubPlan 2).col2))))) AND (NOT EXISTS(SubPlan 5)))
+                            Buffers: shared hit=339
+                            ->  Nested Loop  (cost=0.41..16.62 rows=1 width=561) (actual time=0.015..0.352 rows=80 loops=1)
+                                  Buffers: shared hit=339
+                                  ->  Index Scan using job_facts_pkey on job_facts f_1  (cost=0.27..8.29 rows=1 width=248) (actual time=0.008..0.044 rows=242 loops=1)
+                                        Index Cond: (tenant_id = ANY ('{tenant}'::text[]))
+                                        Filter: (hidden_at IS NULL)
+                                        Buffers: shared hit=17
+                                  ->  Index Scan using jobs_archive_pkey on jobs_archive a  (cost=0.14..8.16 rows=1 width=217) (actual time=0.001..0.001 rows=0 loops=242)
+                                        Index Cond: ((tenant_id = f_1.tenant_id) AND (job_id = f_1.job_id))
+                                        Filter: (final_route_job_type IS NOT NULL)
+                                        Buffers: shared hit=322
+  ->  Nested Loop  (cost=0.27..16.66 rows=1 width=497) (actual time=1.054..1.276 rows=101 loops=1)
+        Buffers: shared hit=1311
+        ->  CTE Scan on page n  (cost=0.00..0.04 rows=2 width=489) (actual time=1.048..1.079 rows=101 loops=1)
+              Buffers: shared hit=1008
+        ->  Index Scan using job_client_state_pkey on job_client_state c  (cost=0.27..8.29 rows=1 width=72) (actual time=0.002..0.002 rows=1 loops=101)
+              Index Cond: ((tenant_id = n.tenant_id) AND (job_id = n.job_id))
+              Buffers: shared hit=303
+  ->  Index Scan using wait_deadline_idx on dependency_waits w  (cost=0.14..8.17 rows=1 width=128) (actual time=0.016..0.016 rows=1 loops=101)
+        Index Cond: (tenant_id = n.tenant_id)
+        Filter: (((deadline IS NULL) OR (deadline > '2026-10-28 01:50:23.570788+00'::timestamp with time zone)) AND (job_id = n.job_id) AND (wait_id = n.dependency_wait_id))
+        Rows Removed by Filter: 137
+        Buffers: shared hit=1070
+  SubPlan 7
+    ->  Index Scan using idx_jobs_tenant_waitfor on jobs j_1  (cost=0.27..8.54 rows=1 width=32) (actual time=0.028..0.028 rows=1 loops=68)
+          Index Cond: ((tenant_id = n.tenant_id) AND (job_id = n.job_id))
+          Buffers: shared hit=879
+Planning:
+  Buffers: shared hit=787
+Planning Time: 1.424 ms
+Execution Time: 5.569 ms

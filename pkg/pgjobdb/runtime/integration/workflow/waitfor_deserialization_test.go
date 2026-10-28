@@ -60,7 +60,7 @@ func TestWaitForDeserialization(t *testing.T) {
 		t.Fatalf("insert parent job: %v", err)
 	}
 
-	// Test: List jobs and verify WaitFor is deserialized correctly
+	// Lists omit prerequisites; detail reads must still deserialize both IDs.
 	resp, err := engine.ListJobs(ctx, jobdb.ListJobsRequest{
 		TenantIds: []string{"tenant-1"},
 	})
@@ -80,8 +80,15 @@ func TestWaitForDeserialization(t *testing.T) {
 		t.Fatalf("parent job not found in response")
 	}
 
-	if len(parentJob.WaitFor) != 2 {
-		t.Fatalf("expected 2 WaitFor dependencies, got %d", len(parentJob.WaitFor))
+	if len(parentJob.WaitFor) != 0 {
+		t.Fatalf("compact list unexpectedly includes WaitFor: %v", parentJob.WaitFor)
+	}
+	detail, err := engine.GetJob(ctx, parentJob.JobKey)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if len(detail.WaitFor) != 2 {
+		t.Fatalf("expected 2 WaitFor dependencies, got %d", len(detail.WaitFor))
 	}
 
 	expectedWaitFor := map[string]bool{
@@ -89,7 +96,7 @@ func TestWaitForDeserialization(t *testing.T) {
 		childJobID2: false,
 	}
 
-	for _, jobId := range parentJob.WaitFor {
+	for _, jobId := range detail.WaitFor {
 		if _, ok := expectedWaitFor[jobId]; !ok {
 			t.Errorf("unexpected WaitFor JobId: %s", jobId)
 		}

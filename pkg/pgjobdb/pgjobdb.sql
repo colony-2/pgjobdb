@@ -60,6 +60,11 @@ CREATE TABLE IF NOT EXISTS pgjobdb.dependency_waits (
  state TEXT NOT NULL CHECK(state IN ('PENDING','SATISFIED','FAILED','TIMED_OUT','CANCELLED')),
  outcome JSONB NOT NULL, PRIMARY KEY(tenant_id,job_id,wait_id)
 );
+-- Preserve the API's original nanosecond deadline without detoasting the full
+-- outcome document during list reads. Existing format-7 rows are backfilled by
+-- PostgreSQL when this generated scalar is first added.
+ALTER TABLE pgjobdb.dependency_waits ADD COLUMN IF NOT EXISTS deadline_exact TEXT
+ GENERATED ALWAYS AS (outcome->>'deadline') STORED;
 CREATE INDEX IF NOT EXISTS wait_deadline_idx ON pgjobdb.dependency_waits(tenant_id,deadline) WHERE state='PENDING';
 CREATE INDEX IF NOT EXISTS wait_due_idx ON pgjobdb.dependency_waits(deadline,tenant_id) WHERE state='PENDING' AND deadline IS NOT NULL;
 CREATE TABLE IF NOT EXISTS pgjobdb.dependency_targets (
@@ -1560,8 +1565,9 @@ BEGIN
   ELSE PERFORM pgjobdb.goal_info(t,d#>>'{target,goalId}'); END IF;
   ds:=ds||jsonb_build_array(d||'{"state":"PENDING"}'::JSONB);
  END LOOP;
- w:=jsonb_strip_nulls(jsonb_build_object('jobKey',jsonb_build_object('tenantId',t,'jobId',j),'waitId',id,'deadline',deadline,'state','PENDING','dependencies',ds));
- INSERT INTO pgjobdb.dependency_waits VALUES(t,j,id,req->'dependencies',deadline,'PENDING',w);
+ w:=jsonb_strip_nulls(jsonb_build_object('jobKey',jsonb_build_object('tenantId',t,'jobId',j),'waitId',id,'deadline',req->'deadline','state','PENDING','dependencies',ds));
+ INSERT INTO pgjobdb.dependency_waits(tenant_id,job_id,wait_id,descriptor,deadline,state,outcome)
+ VALUES(t,j,id,req->'dependencies',deadline,'PENDING',w);
  PERFORM pgjobdb._save_wait(pgjobdb._evaluate_wait(w,clock_timestamp()));
  PERFORM pgjobdb._check_goal_cycle(t,'job',j);
 END $$;

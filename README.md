@@ -14,8 +14,7 @@ creates the `pgjobdb` schema and the JobDB chapter and schema tables. Later
 starts accept an initialized format-7 `pgjobdb` installation. The job-goals
 upgrade requires a fresh database; format 6 and older are rejected unchanged.
 Startup also rejects old `pgwf` databases, other configured scheduler schemas, and a fresh database
-that already contains user tables. There is no data migration or dual-read
-period.
+that already contains user tables. There is no migration from earlier formats or dual-read period.
 
 The `github.com/colony-2/pgjobdb/pkg/pgjobdb` package exposes typed scheduler
 operations. Its `installer` subpackage installs and verifies the embedded
@@ -33,12 +32,21 @@ go run ./cmd/jobdb direct --postgres-dsn "$JOBDB_POSTGRES_DSN" --blob-store-uri 
 
 ## JobDB consumer API
 
-The current dependency is JobDB v0.0.57 (`192d83188d38`, main as of
-2026-10-26). Engine submission returns a `workflow.JobHandle`; use its `JobKey`
+The current dependency is JobDB v0.0.61-0.20261028013137-1077c32a9705
+(`1077c32a9705`, main as of 2026-10-28). Engine submission returns a `workflow.JobHandle`; use its `JobKey`
 for job operations and `GoalID` for goal dependencies. Engine restart submission
 takes `SubmitRestartJobRequest{Job: ...}` and also returns a handle. Restarts
 inherit the source job's metadata. Goal and pending-dependency discovery are
 available through both direct and HTTP runtimes.
+
+Ordinary runtime job lists now return compact summaries in one database query
+per page. They retain full metadata, status, stored route, primary goal ID,
+payload revision, and a small pending-wait summary. Use `GetJob` for payloads,
+execution state, prerequisite lists, additional goal memberships, completion
+text, and dependency explanations. The native scheduler exposes this path as
+`ListJobSummaries`; its existing `ListJobs` detail API remains available. See
+[compact job lists](docs/compact-job-lists.md) for schema updates, verification,
+and query plans.
 
 JobDB supports versioned execution scopes, deferred task input construction,
 and scope-based restarts through `workflow.ExecutionWorker`. See the
