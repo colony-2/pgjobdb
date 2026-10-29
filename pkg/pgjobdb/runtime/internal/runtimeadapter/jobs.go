@@ -112,13 +112,29 @@ func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest
 			AppMetadata: summary.AppMetadata, SchemaHash: summary.SchemaHash, ParentJobID: string(summary.ParentJobID),
 			CreatedAt: summary.CreatedAt, AvailableAt: summary.AvailableAt, ExpiresAt: summary.ExpiresAt,
 			LeaseExpiresAt: summary.LeaseExpiresAt, ArchivedAt: summary.ArchivedAt, CancelRequested: summary.CancelRequested,
+			ClientPayload:         summary.ClientPayload,
 			ClientPayloadRevision: summary.ClientPayloadRevision, BlockingWaitSummary: summary.BlockingWaitSummary,
 		}
+		policy, err := runPolicyFromPgjobdb(summary.RunPolicy)
+		if err != nil {
+			return runtimecore.ListJobsResponse{}, err
+		}
+		row.RunPolicy = policy
+		for _, id := range summary.WaitFor {
+			row.WaitForJobIDs = append(row.WaitForJobIDs, string(id))
+		}
 		if summary.WorkKind == pgjobdb.WorkKindTask {
-			row.TaskWork = &runtimecore.TaskWork{TaskType: string(summary.TaskType)}
+			if summary.TaskType == "" || summary.ResumeJobType == "" || summary.TaskInputOrdinal == nil || summary.TaskOutputOrdinal == nil || summary.TaskInputHash == "" {
+				return runtimecore.ListJobsResponse{}, fmt.Errorf("task route for %s lacks coordinates", row.JobKey)
+			}
+			row.TaskWork = &runtimecore.TaskWork{TaskType: string(summary.TaskType), ResumeJobType: string(summary.ResumeJobType),
+				InputOrdinal: *summary.TaskInputOrdinal, OutputOrdinal: *summary.TaskOutputOrdinal, InputHash: summary.TaskInputHash}
 		}
 		if summary.CompletionStatus != nil {
 			row.Completion = &runtimecore.CompletionSnapshot{Status: string(*summary.CompletionStatus)}
+			if summary.CompletionDetail != nil {
+				row.Completion.Detail = *summary.CompletionDetail
+			}
 		}
 		result.Jobs = append(result.Jobs, row)
 	}

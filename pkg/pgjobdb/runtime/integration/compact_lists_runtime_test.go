@@ -101,14 +101,14 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 							require.Nil(t, row.BlockingWait)
 							require.Empty(t, row.OtherGoalIDs)
 							require.Empty(t, row.WaitFor)
-							require.Empty(t, row.CompletionDetail)
-							require.Empty(t, row.ClientPayload)
+							require.Equal(t, json.RawMessage(`{"secretDetail":true}`), row.ClientPayload)
 							require.Empty(t, row.ExecutionState)
 							require.EqualValues(t, 1, row.ClientPayloadRevision)
 							if row.ArchivedAt != nil {
 								archived++
 								require.Nil(t, row.BlockingWaitSummary)
 								require.Equal(t, "failed_app", row.CompletionStatus)
+								require.Equal(t, "full completion detail", row.CompletionDetail)
 							} else {
 								pending++
 								require.Equal(t, &jobdb.DependencyWaitSummary{WaitID: "submission"}, row.BlockingWaitSummary)

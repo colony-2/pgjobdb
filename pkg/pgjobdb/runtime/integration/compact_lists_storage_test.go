@@ -53,7 +53,7 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		producer := nativeGoalJob(t, ctx, db, "producer")
 		secondary := nativeGoalJob(t, ctx, db, "secondary")
-		// More than a page, with unrestricted metadata and large detail-only data.
+		// More than a page, with unrestricted metadata and large stored payloads.
 		metadata := json.RawMessage(`{"team":"blue","nested":{"large":"` + strings.Repeat("m", 4096) + `"}}`)
 		for i := 0; i < 240; i++ {
 			id := pgjobdb.JobID(fmt.Sprintf("consumer-%03d", i))
@@ -94,6 +94,7 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 						require.NotNil(t, j.BlockingWaitSummary)
 						require.Equal(t, "submission", j.BlockingWaitSummary.WaitID)
 						require.EqualValues(t, 1, j.ClientPayloadRevision)
+						require.Equal(t, json.RawMessage(`{"large":"`+strings.Repeat("p", 32768)+`"}`), j.ClientPayload)
 					}
 					if opts.PageToken == "" {
 						recordCompactListPlan(t, db, d, fmt.Sprintf("page-%d", size))
@@ -145,7 +146,9 @@ func recordCompactListPlan(t *testing.T, db *sql.DB, d *listQueryRecorder, name 
 	require.NotContains(t, d.query, "dependency_wait_info")
 	require.NotContains(t, d.query, "_evaluate_wait")
 	require.NotContains(t, d.query, "other_goal_ids")
-	require.NotContains(t, d.query, "c.client_payload")
+	require.Contains(t, d.query, "), c.client_payload")
+	require.Equal(t, 1, strings.Count(d.query, "JOIN pgjobdb.job_client_state"))
+	require.Equal(t, 1, strings.Count(d.query, "JOIN pgjobdb.dependency_waits"))
 }
 
 func TestCompactListWaitObservationAndRoutes(t *testing.T) {

@@ -12,7 +12,8 @@ import (
 )
 
 // JobListSummary is deliberately independent of JobDetail: listing never needs
-// payloads, policies, task coordinates, memberships, or dependency explanations.
+// membership enumeration or evaluated dependency explanations. Stored payloads,
+// policy, task coordinates, prerequisites, and completion detail are included.
 type JobListSummary struct {
 	TenantID              TenantID                     `json:"tenant_id"`
 	JobID                 JobID                        `json:"job_id"`
@@ -23,6 +24,12 @@ type JobListSummary struct {
 	RouteJobType          JobType                      `json:"route_job_type"`
 	WorkKind              WorkKind                     `json:"work_kind"`
 	TaskType              TaskType                     `json:"task_type"`
+	ResumeJobType         JobType                      `json:"resume_job_type"`
+	TaskInputOrdinal      *int64                       `json:"task_input_ordinal"`
+	TaskOutputOrdinal     *int64                       `json:"task_output_ordinal"`
+	TaskInputHash         string                       `json:"task_input_hash"`
+	RunPolicy             RunPolicy                    `json:"run_policy"`
+	WaitFor               []JobID                      `json:"wait_for"`
 	AppMetadata           json.RawMessage              `json:"app_metadata"`
 	SchemaHash            string                       `json:"schema_hash"`
 	ParentJobID           JobID                        `json:"parent_job_id"`
@@ -33,6 +40,8 @@ type JobListSummary struct {
 	ArchivedAt            *time.Time                   `json:"archived_at"`
 	CancelRequested       bool                         `json:"cancel_requested"`
 	CompletionStatus      *CompletionStatus            `json:"completion_status"`
+	CompletionDetail      *string                      `json:"completion_detail"`
+	ClientPayload         json.RawMessage              `json:"-"`
 	ClientPayloadRevision int64                        `json:"client_payload_revision"`
 	BlockingWaitSummary   *jobdb.DependencyWaitSummary `json:"blocking_wait_summary"`
 }
@@ -45,18 +54,20 @@ type ListJobSummariesResult struct {
 //go:embed compact_job_lists.sql
 var compactJobListSQL string
 
-// ListJobSummaries fetches a page with one set-based query. Detail-only storage
-// is never read, and dependency deadlines use the same time as job eligibility.
+// ListJobSummaries fetches stored fields with one set-based query, without
+// enrichment. Dependency deadlines use the same time as job eligibility.
 func ListJobSummaries(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobSummariesResult, error) {
 	page, err := listJobs(ctx, db, opts, compactJobListSQL, func(rows *sql.Rows) (JobListSummary, error) {
 		var item JobListSummary
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
+		// Keep the payload outside the JSONB summary to preserve its raw JSON.
+		var raw, payload []byte
+		if err := rows.Scan(&raw, &payload); err != nil {
 			return item, err
 		}
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return item, fmt.Errorf("pgjobdb: decode job summary: %w", err)
 		}
+		item.ClientPayload = payload
 		if item.BlockingWaitSummary != nil && item.BlockingWaitSummary.Deadline != nil {
 			deadline := item.BlockingWaitSummary.Deadline.UTC()
 			item.BlockingWaitSummary.Deadline = &deadline
