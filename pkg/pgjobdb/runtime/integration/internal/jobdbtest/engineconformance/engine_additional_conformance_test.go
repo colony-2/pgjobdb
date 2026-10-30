@@ -11,6 +11,7 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 	jobdbtest "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/integration/internal/jobdbtest"
+	"github.com/stretchr/testify/require"
 )
 
 type customIDJob struct{}
@@ -224,7 +225,7 @@ func TestAwaitJobsAcrossBuiltInRuntimes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list jobs: %v", err)
 			}
-			if len(resp.Jobs) != 1 || len(resp.Jobs[0].WaitFor) != 0 {
+			if len(resp.Jobs) != 1 || len(resp.Jobs[0].WaitFor) != 1 || resp.Jobs[0].WaitFor[0] != childJobID {
 				t.Fatalf("unexpected compact response %+v", resp.Jobs)
 			}
 			info, err := built.Engine.GetJob(ctx, resp.Jobs[0].JobKey)
@@ -344,13 +345,14 @@ func TestPendingTaskHandlesAcrossBuiltInRuntimes(t *testing.T) {
 			if len(resp.Jobs) != 1 {
 				t.Fatalf("expected 1 job summary, got %d", len(resp.Jobs))
 			}
-			if resp.Jobs[0].ExecutionState.TaskWait != nil {
-				t.Fatal("task coordinates populated in compact list")
+			if resp.Jobs[0].ExecutionState.TaskWait == nil {
+				t.Fatal("task coordinates missing from compact list")
 			}
 			info, err := built.Engine.GetJob(ctx, jobKey)
 			if err != nil || info.ExecutionState.TaskWait == nil {
 				t.Fatalf("missing task detail: %+v %v", info.ExecutionState, err)
 			}
+			require.Equal(t, info.ExecutionState, resp.Jobs[0].ExecutionState)
 			if info.ExecutionState.TaskWait == nil || info.ExecutionState.TaskWait.OutputOrdinal != handle.TaskOrdinalToComplete() {
 				t.Fatalf("unexpected task wait output %+v", info.ExecutionState.TaskWait.OutputOrdinal)
 			}

@@ -1,9 +1,12 @@
 # Compact job lists
 
 Runtime `ListJobs` and HTTP job queries use one SQL query per page. They retain
-identity, primary goal, full metadata, schema/parent, status, completion status,
-stored route, timestamps, cancellation, payload revision, and the persisted
-pending wait's ID/deadline. Deprecated detail fields are empty by default.
+identity, primary goal, full metadata, schema/parent, status, completion status
+and detail, stored route and task coordinates, run policy, prerequisite IDs,
+timestamps, cancellation, full client payload and revision, and the persisted
+pending wait's ID/deadline. Only `BlockingWait` and `OtherGoalIDs` are unloaded.
+JobDB v0.0.64 or later is required to preserve the stored fields in runtime and
+HTTP list responses; earlier compact mappers discard them even when SQL returns them.
 `GetJob`, dependency discovery, execution, and schedule-run inspection keep
 returning their details.
 
@@ -15,12 +18,13 @@ list calls the old detail projection or `BlockingDependencyWait`.
 
 The query reads active/archive rows and immutable facts, applies filters, sorts,
 and materializes at most the requested page plus one lookahead row. Output joins
-fetch only client-state revision and the current persisted wait's small columns.
+fetch client payload/revision and the current persisted wait's small columns.
 Without a status or availability filter, status calculation occurs only after
 the page limit. With those filters, readiness is evaluated before pagination.
-No list output fetches payload content, policies, task coordinates, prerequisite
-arrays, completion text, or memberships. No dependency explanations, chapters,
-or artifacts are read.
+Payload content is returned as raw JSON alongside the summary to preserve its
+representation and numeric precision. Policies, task coordinates, prerequisites,
+and completion text come from the existing facts and active/archive rows.
+No memberships, dependency explanations, chapters, or artifacts are read.
 
 Goal filters match primary goals or an `EXISTS` predicate on secondary membership;
 they do not enumerate memberships for output or duplicate jobs. Available-route
@@ -60,12 +64,13 @@ formats remain unsupported; this change does not introduce migration from them.
   persisted terminal waits, and agreement between listing and lease acquisition.
 - Reinstallation tests cover an existing format-7 table without the new column,
   preserving jobs, waits, and exact deadlines across repeated installs.
-- Existing workflow tests now read prerequisite lists and task coordinates from
-  `GetJob` and assert those fields are empty in ordinary lists.
+- Existing workflow tests verify prerequisite lists and task coordinates in both
+  ordinary lists and `GetJob`.
 
 ## Query plans
 
-Captured `EXPLAIN (ANALYZE, BUFFERS)` output from local embedded PostgreSQL is
+Captured `EXPLAIN (ANALYZE, BUFFERS)` output from the initial compact projection
+(before stored fields were restored) on local embedded PostgreSQL is
 checked in under [plans/compact-job-lists](plans/compact-job-lists). These are
 small warm-cache correctness fixtures, not production throughput benchmarks.
 The pending-only fixture has 240 consumers, two producers, 4 KiB of metadata and

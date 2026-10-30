@@ -7,6 +7,7 @@ import (
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWaitForDeserialization(t *testing.T) {
@@ -60,7 +61,7 @@ func TestWaitForDeserialization(t *testing.T) {
 		t.Fatalf("insert parent job: %v", err)
 	}
 
-	// Lists omit prerequisites; detail reads must still deserialize both IDs.
+	// Lists and detail reads must both deserialize the stored prerequisite IDs.
 	resp, err := engine.ListJobs(ctx, jobdb.ListJobsRequest{
 		TenantIds: []string{"tenant-1"},
 	})
@@ -80,9 +81,7 @@ func TestWaitForDeserialization(t *testing.T) {
 		t.Fatalf("parent job not found in response")
 	}
 
-	if len(parentJob.WaitFor) != 0 {
-		t.Fatalf("compact list unexpectedly includes WaitFor: %v", parentJob.WaitFor)
-	}
+	require.ElementsMatch(t, []string{childJobID1, childJobID2}, parentJob.WaitFor)
 	detail, err := engine.GetJob(ctx, parentJob.JobKey)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
