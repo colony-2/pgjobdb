@@ -57,7 +57,7 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 		metadata := json.RawMessage(`{"team":"blue","nested":{"large":"` + strings.Repeat("m", 4096) + `"}}`)
 		for i := 0; i < 240; i++ {
 			id := pgjobdb.JobID(fmt.Sprintf("consumer-%03d", i))
-			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: id, WorkerID: "test", JobType: "consumer", AppMetadata: metadata, Dependencies: []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: producer.GoalID}, Condition: jobdb.JobPrereqSuccess}}, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"large":"` + strings.Repeat("p", 32768) + `"}`)}})
+			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "test", JobType: "consumer", AppMetadata: metadata, Dependencies: []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: producer.GoalID}, Condition: jobdb.JobPrereqSuccess}}, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"large":"` + strings.Repeat("p", 32768) + `"}`)}})
 			require.NoError(t, err)
 			if i%20 == 0 {
 				_, err = pgjobdb.AddGoalCandidate(ctx, db, jobdb.AddGoalCandidateRequest{GoalKey: nativeGoalKey(secondary), JobID: string(id)})
@@ -80,7 +80,7 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 					d.queries = 0
 					page, err := pgjobdb.ListJobSummaries(ctx, d, opts)
 					require.NoError(t, err)
-					require.Equal(t, 1, d.queries)
+					require.Equal(t, 2, d.queries)
 					require.LessOrEqual(t, len(page.Jobs), size)
 					for _, j := range page.Jobs {
 						require.False(t, seen[j.JobID])
@@ -111,7 +111,7 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 		page, err := pgjobdb.ListJobSummaries(ctx, d, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, GoalIDs: []string{secondary.GoalID}, JobTypes: []pgjobdb.JobType{"consumer"}, MetadataPredicates: []pgjobdb.MetadataPredicate{{Path: []string{"team"}, Values: []json.RawMessage{json.RawMessage(`"blue"`)}}}, PageSize: 100})
 		require.NoError(t, err)
 		require.Len(t, page.Jobs, 12)
-		require.Equal(t, 1, d.queries)
+		require.Equal(t, 2, d.queries)
 		recordCompactListPlan(t, db, d, "secondary-goal-metadata")
 	})
 }

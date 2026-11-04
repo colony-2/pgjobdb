@@ -12,16 +12,13 @@ import (
 
 func TestNativeSubmitJob(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.schedules
-			(tenant_id, schedule_id, state, generation, spec_hash, trigger,
-			target_job_type, target_snapshot, overlap_policy, failure_policy)
-			VALUES ('tenant', 'daily', 'ACTIVE', 1, 'schedule-hash', '{}',
-			'collect', '{}', 'ALLOW', '{}')`); err != nil {
-			t.Fatalf("create schedule: %v", err)
+		if _, err := upsertCellSchedule(ctx, db, pgjobdb.UpsertScheduleRequest{TenantID: "tenant", ScheduleID: "daily", State: pgjobdb.ScheduleStateActive, SpecHash: "schedule-hash", Trigger: json.RawMessage(`{}`), TargetJobType: "collect", TargetSnapshot: json.RawMessage(`{}`), OverlapPolicy: "ALLOW", FailurePolicy: json.RawMessage(`{}`)}); err != nil {
+			t.Fatal(err)
 		}
+
 		scheduledAt := time.Now().UTC().Truncate(time.Microsecond)
 		timeout := int64(30000)
-		req := pgjobdb.SubmitJobRequest{
+		req := pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "job-1", WorkerID: "submitter", JobType: "collect",
 			RunPolicy:   pgjobdb.RunPolicy{InvocationTimeoutMillis: &timeout},
 			AppMetadata: json.RawMessage(`{"source":"api"}`),

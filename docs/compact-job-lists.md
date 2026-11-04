@@ -1,6 +1,8 @@
 # Compact job lists
 
-Runtime `ListJobs` and HTTP job queries use one SQL query per page. They retain
+Runtime `ListJobs` and HTTP job queries use one registry snapshot per requested
+tenant and one compact SQL row query per page. Cell selectors and policy are
+resolved before pagination, and cursors bind the resolved IDs and principal. They retain
 identity, primary goal, full metadata, schema/parent, status, completion status
 and detail, stored route and task coordinates, run policy, prerequisite IDs,
 timestamps, cancellation, full client payload and revision, and the persisted
@@ -36,22 +38,19 @@ archived waits are omitted.
 
 ## Schema update
 
-Startup adds `dependency_waits.deadline_exact`, a stored generated text column
-extracted from the wait outcome. This avoids loading the full outcome JSON to
-return the original deadline. New waits preserve the API deadline's nanoseconds;
-PostgreSQL's indexed `TIMESTAMPTZ` deadline still controls readiness at PostgreSQL
-precision. Existing rows retain their persisted precision.
+Format 8 defines `dependency_waits.deadline_exact` as a stored generated text
+column extracted from the wait outcome. This avoids loading the full outcome JSON
+to return the original nanosecond deadline; PostgreSQL's indexed `TIMESTAMPTZ`
+still controls readiness at PostgreSQL precision.
 
-This is an additive, idempotent update to format 7. Adding the stored generated
-column backfills existing rows and requires PostgreSQL's table rewrite/DDL lock
-on its first installation. Subsequent starts leave the column in place. Older
-formats remain unsupported; this change does not introduce migration from them.
+The cell release requires fresh state. Format 7 is rejected, with no additive
+upgrade or backfill. See [cells](cells.md) for the cutover.
 
 ## Verification
 
 - Upstream `RunCompactListConformance` runs against direct and HTTP runtimes,
   including full detail replacements and exact deadline round trips.
-- Driver-level instrumentation checks exactly one database operation for each
+- Driver-level instrumentation checks exactly two database operations for each single-tenant
   page at sizes 1, 100, and 200, including pending waits, archived outcomes, and
   secondary-goal filters. Metadata is checked without truncation. These fixtures
   have no chapter/artifact records, so listing cannot depend on those stores.
@@ -62,8 +61,8 @@ formats remain unsupported; this change does not introduce migration from them.
   hidden jobs, metadata equality, parents/roots, creation bounds, legacy waits,
   active leases, cancellation, stored task routes, due alternates, wait expiry,
   persisted terminal waits, and agreement between listing and lease acquisition.
-- Reinstallation tests cover an existing format-7 table without the new column,
-  preserving jobs, waits, and exact deadlines across repeated installs.
+- Reinstallation tests preserve current-format jobs, waits, and exact deadlines
+  across repeated installs; installer tests reject all earlier formats.
 - Existing workflow tests verify prerequisite lists and task coordinates in both
   ordinary lists and `GetJob`.
 

@@ -14,9 +14,9 @@ import (
 func alternateWaitingTask(t *testing.T, ctx context.Context, db *sql.DB, id string, after time.Duration) pgjobdb.ClaimTaskRequest {
 	t.Helper()
 	tenant := pgjobdb.TenantID(id)
-	_, err := pgjobdb.UpsertSchedule(ctx, db, pgjobdb.UpsertScheduleRequest{TenantID: tenant, ScheduleID: "daily", State: pgjobdb.ScheduleStateActive, SpecHash: "hash", Trigger: json.RawMessage(`{}`), TargetJobType: "collect", TargetSnapshot: json.RawMessage(`{}`), OverlapPolicy: "ALLOW", FailurePolicy: json.RawMessage(`{}`)})
+	_, err := upsertCellSchedule(ctx, db, pgjobdb.UpsertScheduleRequest{TenantID: tenant, ScheduleID: "daily", State: pgjobdb.ScheduleStateActive, SpecHash: "hash", Trigger: json.RawMessage(`{}`), TargetJobType: "collect", TargetSnapshot: json.RawMessage(`{}`), OverlapPolicy: "ALLOW", FailurePolicy: json.RawMessage(`{}`)})
 	require.NoError(t, err)
-	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: tenant, JobID: "job", WorkerID: "submitter", JobType: "collect", Runtime: pgjobdb.RuntimeMetadata{Schedule: &pgjobdb.ScheduleOccurrence{ScheduleID: "daily", Generation: 1, SpecHash: "hash", ScheduledAt: time.Now().UTC(), RunID: id}}})
+	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: tenant, JobID: "job", WorkerID: "submitter", JobType: "collect", Runtime: pgjobdb.RuntimeMetadata{Schedule: &pgjobdb.ScheduleOccurrence{ScheduleID: "daily", Generation: 1, SpecHash: "hash", ScheduledAt: time.Now().UTC(), RunID: id}}})
 	require.NoError(t, err)
 	task := pgjobdb.TaskWork{TaskType: "external", ResumeJobType: "collect", InputOrdinal: 1, OutputOrdinal: 2, InputHash: "hash"}
 	require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, tenant, "job", "submitter", pgjobdb.RescheduleRequest{RouteJobType: "collect", WorkKind: pgjobdb.WorkKindTask, Task: &task, Alternate: &pgjobdb.AlternateRoute{JobType: "collect", TaskType: "fallback", After: after}}))

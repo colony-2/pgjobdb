@@ -29,7 +29,7 @@ func TestCrashConcernExcludesNativeAcquisition(t *testing.T) {
 					claim = waitingClaim(t, ctx, db, string(id))
 					selector = pgjobdb.WorkSelector{Tasks: []pgjobdb.TaskSelector{{JobType: "collect", TaskType: "download"}, {JobType: "wrong", TaskType: "wrong"}}}
 				} else {
-					_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: id, JobType: "collect", WorkerID: "submitter"})
+					_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, JobType: "collect", WorkerID: "submitter"})
 					require.NoError(t, err)
 				}
 				get := func() *pgjobdb.JobLease {
@@ -104,7 +104,7 @@ func TestCrashConcernExcludesNativeAcquisition(t *testing.T) {
 
 func TestNativeReadyAcquisitionPreservesRowLocking(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: "job", JobType: "collect", WorkerID: "submitter"})
+		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "job", JobType: "collect", WorkerID: "submitter"})
 		require.NoError(t, err)
 		selector := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}
 		tx, err := db.BeginTx(ctx, nil)
@@ -114,7 +114,7 @@ func TestNativeReadyAcquisitionPreservesRowLocking(t *testing.T) {
 		require.NoError(t, err)
 		short, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
-		lease, err := pgjobdb.GetWork(short, db, "worker", selector, pgjobdb.GetWorkOptions{})
+		lease, err := pgjobdb.GetWork(short, db, "worker", selector, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}})
 		require.NoError(t, err, "status-view filtering must preserve SKIP LOCKED")
 		require.Nil(t, lease)
 		require.NoError(t, tx.Rollback())

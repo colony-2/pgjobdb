@@ -12,6 +12,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/lib/pq"
 )
 
@@ -43,6 +44,13 @@ func UpsertSchedule(ctx context.Context, db DB, req UpsertScheduleRequest) (*Sch
 	}
 	if req.ExpectedGeneration != nil && *req.ExpectedGeneration < 1 {
 		return nil, fmt.Errorf("pgjobdb: expected generation must be positive")
+	}
+	var target jobdb.ResolvedCell
+	if err := json.Unmarshal(req.TargetSnapshot, &target); err != nil {
+		return nil, err
+	}
+	if err := jobdb.AuthorizeCell(ctx, string(req.TenantID), target.CellID, "jobs.submit"); err != nil {
+		return nil, err
 	}
 	row := db.QueryRowContext(ctx, `SELECT * FROM pgjobdb.upsert_schedule(
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
@@ -93,6 +101,19 @@ func mutateSchedule(ctx context.Context, db DB, req ScheduleMutationRequest, sta
 	}
 	if req.ExpectedGeneration != nil && *req.ExpectedGeneration < 1 {
 		return nil, fmt.Errorf("pgjobdb: expected generation must be positive")
+	}
+	if state == ScheduleStateActive {
+		stored, err := GetSchedule(ctx, db, req.TenantID, req.ScheduleID)
+		if err != nil {
+			return nil, err
+		}
+		var target jobdb.ResolvedCell
+		if err = json.Unmarshal(stored.TargetSnapshot, &target); err != nil {
+			return nil, err
+		}
+		if err = jobdb.AuthorizeCell(ctx, string(req.TenantID), target.CellID, "jobs.submit"); err != nil {
+			return nil, err
+		}
 	}
 	var row *sql.Row
 	switch state {
@@ -192,10 +213,11 @@ func scanSchedule(row scheduleScanner) (*Schedule, error) {
 	var trigger, target, failure []byte
 	var nextFire sql.NullTime
 	var nextJob sql.NullString
+	var cellID, cellRepo string
 	if err := row.Scan(&tenant, &result.ScheduleID, &state, &result.Generation,
 		&result.SpecHash, &trigger, &jobType, &target, &result.OverlapPolicy,
-		&failure, &nextFire, &nextJob, &result.CreatedAt, &result.UpdatedAt); err != nil {
-		return nil, err
+		&failure, &nextFire, &nextJob, &result.CreatedAt, &result.UpdatedAt, &result.PauseReason, &cellID, &cellRepo); err != nil {
+		return nil, goalError(err)
 	}
 	result.TenantID = TenantID(tenant)
 	result.State = ScheduleState(state)

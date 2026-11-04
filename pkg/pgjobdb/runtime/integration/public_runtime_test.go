@@ -25,7 +25,7 @@ func TestPublicRuntimeInitializesFreshDatabase(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		handle, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+		handle, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "tenant", JobID: "fresh", JobType: "collect", Data: input,
 		}})
 		if err != nil || handle.JobKey.JobId != "fresh" {

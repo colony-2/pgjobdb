@@ -13,16 +13,19 @@ import (
 
 // JobPreparation durably identifies a submission before history is prepared.
 type JobPreparation struct {
-	Key          jobdb.JobKey
-	RequestID    string
-	PriorJobID   string
-	ShareGoal    bool
-	Descriptor   string
-	Dependencies []jobdb.Dependency
+	Cell, CellRepo, ParentJobID string
+	Target                      jobdb.ResolvedCell
+	Key                         jobdb.JobKey
+	RequestID                   string
+	PriorJobID                  string
+	ShareGoal                   bool
+	Descriptor                  string
+	Dependencies                []jobdb.Dependency
 }
 
 // PreparedJob identifies a reserved destination and whether it has been published.
 type PreparedJob struct {
+	Target    jobdb.ResolvedCell
 	Key       jobdb.JobKey
 	GoalID    string
 	Published bool
@@ -35,6 +38,12 @@ func goalError(err error) error {
 	}
 	var cause error
 	switch pg.Code {
+	case "JCN01":
+		cause = jobdb.ErrCellNotFound
+	case "JCR01":
+		cause = jobdb.ErrCellRetired
+	case "JCM01":
+		cause = jobdb.ErrCellRepoMismatch
 	case "JGN01":
 		cause = jobdb.ErrGoalNotFound
 	case "JJN01":
@@ -97,7 +106,7 @@ func goalQuery[T any](ctx context.Context, db DB, query string, args ...any) (ou
 }
 
 // PrepareJob reserves stable identities before chapter preparation.
-func PrepareJob(ctx context.Context, db DB, req JobPreparation) (PreparedJob, error) {
+func prepareJob(ctx context.Context, db DB, req JobPreparation) (PreparedJob, error) {
 	if strings.TrimSpace(req.Key.TenantId) == "" || req.Descriptor == "" || (req.RequestID != "" && strings.TrimSpace(req.RequestID) == "") {
 		return PreparedJob{}, jobdb.ErrInvalidDependency
 	}
@@ -112,7 +121,11 @@ func PrepareJob(ctx context.Context, db DB, req JobPreparation) (PreparedJob, er
 	if err != nil {
 		return PreparedJob{}, err
 	}
-	return goalQuery[PreparedJob](ctx, db, `SELECT pgjobdb.prepare_job($1,$2,$3,$4,$5,$6,$7)`, req.Key.TenantId, nilIfBlank(req.Key.JobId), nilIfBlank(req.RequestID), nilIfBlank(req.PriorJobID), req.ShareGoal, req.Descriptor, string(raw))
+	target, err := json.Marshal(req)
+	if err != nil {
+		return PreparedJob{}, err
+	}
+	return goalQuery[PreparedJob](ctx, db, `SELECT pgjobdb.prepare_job($1,$2,$3,$4,$5,$6,$7,$8)`, req.Key.TenantId, nilIfBlank(req.Key.JobId), nilIfBlank(req.RequestID), nilIfBlank(req.PriorJobID), req.ShareGoal, req.Descriptor, string(raw), string(target))
 }
 
 // GetGoal returns the durable goal outcome.

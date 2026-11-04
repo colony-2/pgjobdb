@@ -43,7 +43,7 @@ func TestNativeRuntimeCoreSubmitsAndReconcilesJob(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+		req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "tenant", JobID: "job", JobType: "collect", Data: data,
 			Metadata: json.RawMessage(`{"source":"api"}`),
 			RunPolicy: jobdb.RunPolicy{Retry: jobdb.RetryPolicy{

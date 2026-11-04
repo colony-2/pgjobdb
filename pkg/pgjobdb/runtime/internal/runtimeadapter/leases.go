@@ -27,6 +27,7 @@ func (s Scheduler) AcquireWork(ctx context.Context, req runtimecore.WorkRequest)
 	for len(leasings) < limit {
 		lease, err := pgjobdb.GetWork(ctx, s.DB, pgjobdb.WorkerID(req.WorkerID), selector,
 			pgjobdb.GetWorkOptions{
+				CellNames:          req.CellNames,
 				TenantIDs:          []pgjobdb.TenantID{pgjobdb.TenantID(req.TenantId)},
 				MetadataPredicates: predicates, LeaseDuration: req.LeaseDuration,
 			})
@@ -116,7 +117,7 @@ func leaseFromPgjobdb(lease pgjobdb.JobLease, requestedDuration time.Duration) (
 		duration = time.Minute
 	}
 	snapshot := runtimecore.LeaseSnapshot{
-		GoalID: lease.GoalID,
+		GoalID: lease.GoalID, Cell: lease.Cell,
 		Identity: runtimecore.LeaseIdentity{
 			JobKey:  jobdb.JobKey{TenantId: string(lease.TenantID), JobId: string(lease.JobID)},
 			LeaseID: lease.LeaseID, WorkerID: string(lease.WorkerID), ExpiresAt: lease.ExpiresAt,

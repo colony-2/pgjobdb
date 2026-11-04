@@ -55,6 +55,8 @@ type RuntimeMetadata struct {
 }
 
 type SubmitJobRequest struct {
+	Cell, CellRepo      string
+	Target              jobdb.ResolvedCell
 	GoalID              string
 	ShareGoal           bool
 	Dependencies        []jobdb.Dependency
@@ -102,6 +104,7 @@ type WorkSelector struct {
 }
 
 type GetWorkOptions struct {
+	CellNames           []string
 	TenantIDs           []TenantID
 	AppMetadataContains json.RawMessage
 	MetadataPredicates  []MetadataPredicate
@@ -123,6 +126,7 @@ type TaskWork struct {
 }
 
 type JobLease struct {
+	Cell                  jobdb.ResolvedCell
 	GoalID                string
 	TenantID              TenantID
 	JobID                 JobID
@@ -223,6 +227,9 @@ const (
 
 // JobDetail joins immutable job facts with current or final scheduler state.
 type JobDetail struct {
+	Cell                   string            `json:"cell"`
+	CellID                 string            `json:"cell_id"`
+	CellRepo               string            `json:"cell_repo"`
 	GoalID                 string            `json:"goal_id"`
 	OtherGoalIDs           []string          `json:"other_goal_ids"`
 	TenantID               TenantID          `json:"tenant_id"`
@@ -296,6 +303,7 @@ type MetadataPredicate struct {
 }
 
 type ListJobsOptions struct {
+	CellNames     []string
 	GoalIDs       []string
 	IncludeHidden bool
 	// AvailableRoutes restricts results to work acquirable at Now, before pagination.
@@ -348,6 +356,7 @@ const (
 // Schedule is the durable definition and control state of a JobDB schedule.
 // TargetSnapshot is opaque to pgjobdb; JobDB core owns its encoding.
 type Schedule struct {
+	PauseReason    string
 	TenantID       TenantID
 	ScheduleID     string
 	State          ScheduleState

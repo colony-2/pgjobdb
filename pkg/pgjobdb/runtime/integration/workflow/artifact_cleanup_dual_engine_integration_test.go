@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 	"github.com/stretchr/testify/require"
@@ -22,7 +24,7 @@ const (
 
 func TestArtifactCleanupAcrossEngines(t *testing.T) {
 	t.Run("toy", func(t *testing.T) {
-		ctx := context.Background()
+		ctx := celltest.Context(context.Background())
 		tempDir := t.TempDir()
 		fileNames := []string{"artifact-a.txt", "artifact-b.txt"}
 		copyNames := prefixedNames(jobCopyPrefix, fileNames)
@@ -42,7 +44,7 @@ func TestArtifactCleanupAcrossEngines(t *testing.T) {
 	})
 
 	t.Run("real", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 		defer cancel()
 
 		postgresDSN, stopPG := startEmbeddedPostgres(t)
@@ -117,7 +119,7 @@ func (j *artifactCleanupJob) downloadTaskArtifacts(ctx workflow.ExecutionContext
 func (j *artifactCleanupJob) copyArtifacts(artifacts []jobdb.Artifact) ([]jobdb.Artifact, error) {
 	reuploaded := make([]jobdb.Artifact, 0, len(artifacts))
 	for _, art := range artifacts {
-		data, err := art.Bytes(context.Background())
+		data, err := art.Bytes(celltest.Context(context.Background()))
 		if err != nil {
 			return nil, err
 		}
@@ -192,7 +194,7 @@ func newFileArtifact(path, name string) jobdb.Artifact {
 func runArtifactCleanupScenario(t *testing.T, ctx context.Context, engine workflow.Engine, filePaths []string) {
 	t.Helper()
 
-	jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: "test-tenant",
 		JobType:  artifactCleanupJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]string{"hello": "world"}),

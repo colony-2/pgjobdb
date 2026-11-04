@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	wf "github.com/colony-2/jobdb/pkg/workflow"
 	"github.com/stretchr/testify/require"
@@ -24,7 +26,7 @@ func (s scopeTask) Run(c wf.TaskContext, in jobdb.TaskData) (jobdb.TaskData, err
 
 func runScoped(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, w wf.ExecutionWorker, tasks ...wf.TaskWorker) wf.JobRunOutcome {
 	t.Helper()
-	runnable, err := wf.GetJobForRun(context.Background(), rt, wf.GetJobForRunRequest{JobKey: key, JobWorker: w, TaskWorkers: tasks, WorkerID: "scopes", LeaseDuration: time.Minute, ConsumerVersions: map[string]string{"pgjobdb-test": "1"}})
+	runnable, err := wf.GetJobForRun(celltest.Context(context.Background()), rt, wf.GetJobForRunRequest{JobKey: key, JobWorker: w, TaskWorkers: tasks, WorkerID: "scopes", LeaseDuration: time.Minute, ConsumerVersions: map[string]string{"pgjobdb-test": "1"}})
 	require.NoError(t, err)
 	out, err := runnable.Run(nil)
 	require.NoError(t, err)
@@ -32,7 +34,7 @@ func runScoped(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, w wf.Ex
 }
 func submitScoped(t *testing.T, rt jobdb.WorkflowRuntime, name string) jobdb.JobKey {
 	t.Helper()
-	h, err := rt.SubmitJob(context.Background(), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: name, Data: jobdb.NewTaskDataOrPanic("input")}})
+	h, err := rt.SubmitJob(celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: name, Data: jobdb.NewTaskDataOrPanic("input")}})
 	require.NoError(t, err)
 	return h.JobKey
 }
@@ -45,7 +47,7 @@ func TestPostgresExecutionScopes(t *testing.T) {
 	for _, transport := range []string{"embedded", "http"} {
 		t.Run(transport, func(t *testing.T) {
 			rt := configurationTransport(t, newRuntime(t), transport)
-			ctx := context.Background()
+			ctx := celltest.Context(context.Background())
 			t.Run("retry_history_and_replay", func(t *testing.T) {
 				var builds, runs atomic.Int32
 				task := scopeTask{func(c wf.TaskContext, in jobdb.TaskData) (jobdb.TaskData, error) {
@@ -142,7 +144,7 @@ func TestPostgresExecutionScopes(t *testing.T) {
 					}
 				}
 				require.NotEmpty(t, target)
-				restarted, err := rt.SubmitRestartJob(ctx, jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{PriorJobKey: key, ExecutionRestart: &jobdb.ExecutionRestart{ScopeID: target, Payload: json.RawMessage(`"patched"`)}}})
+				restarted, err := rt.SubmitRestartJob(ctx, jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{Cell: "test", PriorJobKey: key, ExecutionRestart: &jobdb.ExecutionRestart{ScopeID: target, Payload: json.RawMessage(`"patched"`)}}})
 				require.NoError(t, err)
 				out := runScoped(t, rt, restarted.JobKey, worker, task)
 				require.Equal(t, wf.JobRunCompleted, out.Status)
@@ -183,7 +185,7 @@ func TestPostgresDependencyDeadline(t *testing.T) {
 		for _, scenario := range []string{"child_first", "deadline_first", "already_completed", "no_deadline", "delay_only"} {
 			t.Run(transport+"/"+scenario, func(t *testing.T) {
 				rt := configurationTransport(t, newRuntime(t), transport)
-				ctx := context.Background()
+				ctx := celltest.Context(context.Background())
 				child := submitScoped(t, rt, "child")
 				parent := submitScoped(t, rt, "parent")
 				acquire := func(key jobdb.JobKey, name string) jobdb.ExecutionLease {

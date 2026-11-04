@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	remoteruntime "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 )
@@ -31,7 +33,7 @@ func TestContainerRuntimePersistenceAndArtifactBoundary(t *testing.T) {
 		t.Fatalf("build remote runtime: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 30*time.Second)
 	defer cancel()
 	switch phase := os.Getenv("JOBDB_CONTAINER_SMOKE_PHASE"); phase {
 	case "seed":
@@ -46,7 +48,7 @@ func TestContainerRuntimePersistenceAndArtifactBoundary(t *testing.T) {
 func seedContainerSmokeData(t *testing.T, ctx context.Context, runtime jobdb.WorkflowRuntime) {
 	t.Helper()
 	handle, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{
-		Job: jobdb.SubmitJob{
+		Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: containerSmokeTenantID,
 			JobID:    containerSmokeJobID,
 			JobType:  containerSmokeJobType,

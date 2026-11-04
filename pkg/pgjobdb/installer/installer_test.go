@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 )
 
 func TestInstallerValidation(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
+	ctx := celltest.Context(context.Background())
 	inst := Installer{}
 	if err := inst.Apply(ctx); err == nil {
 		t.Fatalf("expected error for nil DB apply")

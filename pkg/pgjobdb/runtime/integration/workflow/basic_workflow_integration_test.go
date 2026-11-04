@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 	_ "github.com/lib/pq"
@@ -18,7 +20,7 @@ import (
 // TestBasicWorkflowIntegration exercises the simplest end-to-end flow:
 // one job worker shared across two engines, with tasks split between them.
 func TestBasicWorkflowIntegration(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 	defer cancel()
 
 	// Start embedded Postgres on a random high port to avoid conflicts.
@@ -55,7 +57,7 @@ func TestBasicWorkflowIntegration(t *testing.T) {
 	}()
 
 	initial := jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 1})
-	jobKeyHandle, err := engine1.SubmitJob(ctx, jobdb.SubmitJob{
+	jobKeyHandle, err := engine1.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  pipeJobName,
 		Data:     initial,

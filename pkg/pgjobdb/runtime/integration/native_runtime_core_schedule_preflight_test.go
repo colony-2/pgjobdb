@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	chapterpostgres "github.com/colony-2/jobdb/pkg/jobdb/chapterstore/postgres"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
@@ -37,10 +39,10 @@ func TestNativeRuntimeCoreSchedulePreflight(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		info, err := runtime.UpsertSchedule(ctx, jobdb.UpsertScheduleRequest{
+		info, err := celltest.Schedule(ctx, runtime, jobdb.UpsertScheduleRequest{
 			TenantId: "tenant", ScheduleId: "hourly",
 			Trigger: jobdb.ScheduleTrigger{Kind: jobdb.ScheduleTriggerInterval, Interval: time.Hour},
-			Target:  jobdb.ScheduleTarget{JobType: "collect", Data: input},
+			Target:  jobdb.ScheduleTarget{Cell: "test", CellRepo: "example.test/test", JobType: "collect", Data: input},
 		})
 		if err != nil || info.NextJobKey == nil {
 			t.Fatalf("upsert = %+v, %v", info, err)

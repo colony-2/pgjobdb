@@ -24,7 +24,7 @@ func TestPublicRuntimeLeaseTransport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		root, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+		root, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "tenant", JobID: "root", JobType: "collect", Data: input,
 		}})
 		if err != nil {
@@ -42,7 +42,7 @@ func TestPublicRuntimeLeaseTransport(t *testing.T) {
 			t.Fatalf("renew lease = %s, %v", expires, err)
 		}
 		child, err := runtime.SubmitJobWithLeaseByID(ctx, root.JobKey,
-			lease.LeaseID(), "worker", jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+			lease.LeaseID(), "worker", jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: "tenant", JobID: "child", JobType: "collect", Data: input,
 			}})
 		if err != nil || child.JobKey.JobId != "child" {

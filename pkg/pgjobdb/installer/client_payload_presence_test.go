@@ -20,7 +20,7 @@ func TestNativeClientPayloadPresenceSurvivesRoutesAndArchive(t *testing.T) {
 			{id: "generated", visible: false},
 			{id: "explicit-empty", payload: json.RawMessage(`{}`), visible: true},
 		} {
-			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 				TenantID: "tenant", JobID: tc.id, WorkerID: "submitter",
 				JobType: "collect", ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: tc.payload},
 			})

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +22,7 @@ import (
 // TestArtifactStorageOnTaskError verifies that artifacts are stored even when a task errors
 func TestArtifactStorageOnTaskError(t *testing.T) {
 	t.Run("task error artifacts are stored and retrievable", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 		defer cancel()
 
 		// Start embedded Postgres
@@ -67,7 +69,7 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 		go engine.Run(ctx)
 
 		// Start the job
-		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"input": "data"}),
@@ -98,7 +100,7 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 	})
 
 	t.Run("task error artifacts are stored on retry attempts", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 		defer cancel()
 
 		// Start embedded Postgres
@@ -142,7 +144,7 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 		go engine.Run(ctx)
 
 		// Start the job with retry policy
-		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"input": "data"}),
@@ -177,7 +179,7 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 // TestArtifactStorageOnJobError verifies that artifacts are stored even when a job errors
 func TestArtifactStorageOnJobError(t *testing.T) {
 	t.Run("job error artifacts are stored and retrievable", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 		defer cancel()
 
 		// Start embedded Postgres
@@ -222,7 +224,7 @@ func TestArtifactStorageOnJobError(t *testing.T) {
 		go engine.Run(ctx)
 
 		// Start the job
-		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"input": "data"}),
@@ -322,7 +324,7 @@ func (j *errorJobWithArtifacts) Run(ctx workflow.ExecutionContext, input jobdb.J
 
 func executionErrorArtifacts(t *testing.T, engine workflow.Engine, key jobdb.JobKey, task bool) [][]jobdb.ExecutionArtifact {
 	t.Helper()
-	history, err := engine.GetJobRun(context.Background(), jobdb.GetJobRunRequest{JobKey: key, IncludeOutputs: true, IncludeArtifacts: true})
+	history, err := engine.GetJobRun(celltest.Context(context.Background()), jobdb.GetJobRunRequest{JobKey: key, IncludeOutputs: true, IncludeArtifacts: true})
 	require.NoError(t, err)
 	var artifacts [][]jobdb.ExecutionArtifact
 	for _, entry := range history.Execution {
@@ -338,7 +340,7 @@ func readExecutionErrorArtifact(t *testing.T, source any, tenant string, artifac
 	t.Helper()
 	require.NotNil(t, artifact.Key)
 	key := artifact.Key
-	reader, err := mustArtifactOpener(t, source).OpenArtifact(context.Background(), jobdb.ArtifactRef{JobKey: jobdb.JobKey{TenantId: tenant, JobId: key.JobId}, Ordinal: key.TaskOrdinal, Name: key.Name})
+	reader, err := mustArtifactOpener(t, source).OpenArtifact(celltest.Context(context.Background()), jobdb.ArtifactRef{JobKey: jobdb.JobKey{TenantId: tenant, JobId: key.JobId}, Ordinal: key.TaskOrdinal, Name: key.Name})
 	require.NoError(t, err)
 	stream, err := reader.Open()
 	require.NoError(t, err)

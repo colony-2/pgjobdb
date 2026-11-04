@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 	"github.com/lib/pq"
@@ -15,7 +17,7 @@ import (
 // TestJobsEventuallyComplete verifies that every job we start transitions to a completed
 // archive state (surfaceable via CheckJobStatus) rather than getting stuck in the active view.
 func TestJobsEventuallyComplete(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 	defer cancel()
 
 	postgresDSN, stopPG := startEmbeddedPostgres(t)
@@ -37,7 +39,7 @@ func TestJobsEventuallyComplete(t *testing.T) {
 	jobInputs := []int{1, 2, 3}
 	jobKeys := make([]jobdb.JobKey, 0, len(jobInputs))
 	for _, n := range jobInputs {
-		keyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		keyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: tenantID,
 			JobType:  statusJobName,
 			Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": n}),

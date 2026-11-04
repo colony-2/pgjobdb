@@ -21,7 +21,7 @@ func TestDirectGetJobRunRetryRepresentationParity(t *testing.T) {
 				job := &retryJob{}
 				ws := jobdbtest.MustWorkSet(t, job)
 				return observeViaMode(t, harness, mode, []workflow.WorkSet{ws}, func(t *testing.T, ctx context.Context, subject scenarioSubject) normalizedJobRun {
-					jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+					jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 						TenantId: subject.built.WorkerTenantID,
 						JobType:  job.Name(),
 						JobID:    "job-retry-shape",
@@ -58,7 +58,7 @@ func TestDirectGetJobRunRetryRepresentationParity(t *testing.T) {
 				task := &retryTask{}
 				ws := jobdbtest.MustWorkSet(t, job, task)
 				return observeViaMode(t, harness, mode, []workflow.WorkSet{ws}, func(t *testing.T, ctx context.Context, subject scenarioSubject) normalizedJobRun {
-					jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+					jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 						TenantId: subject.built.WorkerTenantID,
 						JobType:  job.Name(),
 						JobID:    "task-retry-shape",

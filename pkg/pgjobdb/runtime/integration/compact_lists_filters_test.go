@@ -117,11 +117,9 @@ func TestCompactListExistingInstallation(t *testing.T) {
 		wait := nativeGoalWait("precise", producer.GoalID)
 		wait.Deadline = &deadline
 		require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "consumer", "test", pgjobdb.RescheduleRequest{RouteJobType: "work", WorkKind: pgjobdb.WorkKindJob, DependencyWait: wait}))
-		// Simulate format 7 before the compact scalar existed, then reinstall twice.
-		_, err := db.Exec(`ALTER TABLE pgjobdb.dependency_waits DROP COLUMN deadline_exact`)
-		require.NoError(t, err)
+		// Reinstallation accepts only the current complete cell schema.
 		install := installer.Installer{DB: db}
-		require.Error(t, install.Verify(ctx))
+		require.NoError(t, install.Verify(ctx))
 		for range 2 {
 			require.NoError(t, install.Apply(ctx))
 			require.NoError(t, install.Verify(ctx))

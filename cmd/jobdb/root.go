@@ -9,6 +9,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb"
+
 	"github.com/colony-2/jobdb/pkg/jobdb/cli"
 	remoteruntime "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	pgjobdbruntime "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime"
@@ -97,7 +99,7 @@ func runDirectServer(ctx context.Context, cfg directServerConfig) error {
 	}
 
 	log.Printf("using direct Postgres runtime")
-	return cli.ServeHTTP(ctx, cfg.ListenAddr, handler, runtime.Close)
+	return cli.ServeHTTP(ctx, cfg.ListenAddr, administrativeCellIngress(handler), runtime.Close)
 }
 
 func resolveRequiredString(flagValue, envVar, fieldName string) (string, error) {
@@ -108,4 +110,13 @@ func resolveRequiredString(flagValue, envVar, fieldName string) (string, error) 
 		return envValue, nil
 	}
 	return "", fmt.Errorf("%s is required via --postgres-dsn or %s", fieldName, envVar)
+}
+
+// The standalone server retains its administrative ingress model. Deployments
+// must authenticate access upstream; embeddings install their own verified policy.
+func administrativeCellIngress(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := jobdb.WithCellAuthority(r.Context(), jobdb.CellAuthority{Principal: "server-administrator", TenantID: "*", Permissions: map[string]bool{"cells.create": true, "cells.bootstrapRoot": true, "cells.get": true, "cells.list": true, "cells.update": true, "cells.retire": true, "jobs.submit": true, "jobs.list": true, "jobs.acquire": true}})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }

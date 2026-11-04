@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/stretchr/testify/require"
 )
@@ -13,9 +15,9 @@ func TestPostgresSecretsWithoutProvider(t *testing.T) {
 	newRuntime := conformanceRuntimeFactory(t)
 	for _, transport := range []string{"embedded", "http"} {
 		t.Run(transport, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := celltest.Context(context.Background())
 			rt := configurationTransport(t, newRuntime(t), transport)
-			job, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: "job", Data: jobdb.NewTaskDataOrPanic(1)}})
+			job, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "job", Data: jobdb.NewTaskDataOrPanic(1)}})
 			require.NoError(t, err)
 			lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: job.JobKey, WorkerID: "worker", Routes: []jobdb.Route{{JobType: "job"}}, LeaseDuration: time.Minute})
 			require.NoError(t, err)

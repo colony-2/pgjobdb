@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	wf "github.com/colony-2/jobdb/pkg/workflow"
 	"github.com/stretchr/testify/require"
@@ -15,7 +17,7 @@ import (
 func TestPostgresLiveDeterminismFailureCompletes(t *testing.T) {
 	for _, transport := range []string{"embedded", "http"} {
 		t.Run(transport, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := celltest.Context(context.Background())
 			rt := configurationTransport(t, conformanceRuntimeFactory(t)(t), transport)
 			var taskRuns int
 			task := scopeTask{func(_ wf.TaskContext, in jobdb.TaskData) (jobdb.TaskData, error) {
@@ -37,7 +39,7 @@ func TestPostgresLiveDeterminismFailureCompletes(t *testing.T) {
 			}
 			engine, err := wf.NewEngineBuilder().WithRuntime(rt).BuildEngine()
 			require.NoError(t, err)
-			handle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{TenantId: "tenant", JobType: worker(1).Name(), Data: jobdb.NewTaskDataOrPanic("input")})
+			handle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: worker(1).Name(), Data: jobdb.NewTaskDataOrPanic("input")})
 			require.NoError(t, err)
 			require.NotEmpty(t, handle.GoalID)
 			key := handle.JobKey
@@ -78,7 +80,7 @@ func TestPostgresLiveDeterminismFailureCompletes(t *testing.T) {
 				}
 			}
 			require.Len(t, taskIDs, 2)
-			restart, err := engine.SubmitRestartJob(ctx, jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{PriorJobKey: key, ExecutionRestart: &jobdb.ExecutionRestart{ScopeID: taskIDs[1]}}})
+			restart, err := engine.SubmitRestartJob(ctx, jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{Cell: "test", PriorJobKey: key, ExecutionRestart: &jobdb.ExecutionRestart{ScopeID: taskIDs[1]}}})
 			require.NoError(t, err)
 			require.NotEmpty(t, restart.GoalID)
 			require.NotEqual(t, handle.GoalID, restart.GoalID)

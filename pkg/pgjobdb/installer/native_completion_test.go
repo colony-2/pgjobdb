@@ -12,9 +12,9 @@ import (
 func TestNativeCompletionPreservesFinalState(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, req := range []pgjobdb.SubmitJobRequest{
-			{TenantID: "tenant", JobID: "root", WorkerID: "submitter",
+			{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "root", WorkerID: "submitter",
 				JobType: "collect", ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"attempt":1}`)}},
-			{TenantID: "tenant", JobID: "child", WorkerID: "submitter",
+			{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "child", WorkerID: "submitter",
 				JobType: "collect", WaitFor: []pgjobdb.JobID{"root"}},
 		} {
 			if _, err := pgjobdb.SubmitJob(ctx, db, req); err != nil {
@@ -121,7 +121,7 @@ func TestNativeCompletionPreservesFinalState(t *testing.T) {
 				taskType, input, output, inputHash, cancelled, detail, errorKind, retryFlag)
 		}
 
-		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "unheld", WorkerID: "submitter", JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit unheld: %v", err)

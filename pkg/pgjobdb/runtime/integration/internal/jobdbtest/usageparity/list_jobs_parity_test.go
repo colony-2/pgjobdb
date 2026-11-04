@@ -33,7 +33,7 @@ func TestListJobsStatusParityAcrossBuiltInRuntimes(t *testing.T) {
 		harness := harness
 		t.Run(harness.Name, func(t *testing.T) {
 			compareAcrossModes(t, harness, []workflow.WorkSet{completedWS, cancelWS}, func(t *testing.T, ctx context.Context, subject scenarioSubject) listJobsObservation {
-				completeKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+				completeKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: subject.built.WorkerTenantID,
 					JobType:  completedWS.JobWorker.Name(),
 					JobID:    "completed",
@@ -44,7 +44,7 @@ func TestListJobsStatusParityAcrossBuiltInRuntimes(t *testing.T) {
 				}
 				subject.WaitForStatus(t, ctx, completeKey, jobdb.JobStatusCompleted)
 
-				cancelKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+				cancelKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: completeKey.TenantId,
 					JobType:  cancelWS.JobWorker.Name(),
 					JobID:    "cancelled",
@@ -104,7 +104,7 @@ func TestListJobsFilterParityAcrossBuiltInRuntimes(t *testing.T) {
 					t.Fatalf("marshal beta metadata: %v", err)
 				}
 
-				alphaKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+				alphaKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: tenantID,
 					JobType:  alphaWS.JobWorker.Name(),
 					JobID:    "alpha-job",
@@ -116,7 +116,7 @@ func TestListJobsFilterParityAcrossBuiltInRuntimes(t *testing.T) {
 				}
 				subject.WaitForStatus(t, ctx, alphaKey, jobdb.JobStatusCompleted)
 
-				betaKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+				betaKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: tenantID,
 					JobType:  betaWS.JobWorker.Name(),
 					JobID:    "beta-job",

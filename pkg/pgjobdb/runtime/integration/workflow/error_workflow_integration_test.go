@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 )
@@ -25,7 +27,7 @@ func TestTaskErrorsAreEnvelopedAndReturned(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 			defer cancel()
 
 			postgresDSN, stopPG := startEmbeddedPostgres(t)
@@ -47,7 +49,7 @@ func TestTaskErrorsAreEnvelopedAndReturned(t *testing.T) {
 
 			go engine.Run(ctx)
 
-			jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+			jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: tenantID,
 				JobType:  jobWorker.Name(),
 				Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 1}),
@@ -83,7 +85,7 @@ func TestJobErrorsAreEnvelopedAndReturned(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 			defer cancel()
 
 			postgresDSN, stopPG := startEmbeddedPostgres(t)
@@ -104,7 +106,7 @@ func TestJobErrorsAreEnvelopedAndReturned(t *testing.T) {
 
 			go engine.Run(ctx)
 
-			jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+			jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: tenantID,
 				JobType:  jobWorker.Name(),
 				Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 1}),
@@ -155,7 +157,7 @@ func (w errorJobWorker) Run(_ workflow.ExecutionContext, _ jobdb.JobData) (jobdb
 
 func assertTaskOutcomePayloadKind(t *testing.T, engine workflow.Engine, jobKey jobdb.JobKey, expected string) {
 	t.Helper()
-	run, err := engine.GetJobRun(context.Background(), jobdb.GetJobRunRequest{JobKey: jobKey})
+	run, err := engine.GetJobRun(celltest.Context(context.Background()), jobdb.GetJobRunRequest{JobKey: jobKey})
 	if err != nil {
 		t.Fatalf("get job run: %v", err)
 	}
@@ -170,7 +172,7 @@ func assertTaskOutcomePayloadKind(t *testing.T, engine workflow.Engine, jobKey j
 
 func assertJobOutcomePayloadKind(t *testing.T, engine workflow.Engine, jobKey jobdb.JobKey, expected string) {
 	t.Helper()
-	run, err := engine.GetJobRun(context.Background(), jobdb.GetJobRunRequest{JobKey: jobKey})
+	run, err := engine.GetJobRun(celltest.Context(context.Background()), jobdb.GetJobRunRequest{JobKey: jobKey})
 	if err != nil {
 		t.Fatalf("get job run: %v", err)
 	}
@@ -187,7 +189,7 @@ func waitForChapter(t *testing.T, source any, jobKey jobdb.JobKey, ordinal int64
 	reader := mustChapterReader(t, source)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		chap, err := reader.GetChapter(context.Background(), jobdb.ChapterRef{JobKey: jobKey, Ordinal: ordinal})
+		chap, err := reader.GetChapter(celltest.Context(context.Background()), jobdb.ChapterRef{JobKey: jobKey, Ordinal: ordinal})
 		if err == nil {
 			return chap
 		}
@@ -201,7 +203,7 @@ func waitForJobResult(t *testing.T, engine workflow.Engine, dsn string, jobKey j
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		td, err := jobResultForTest(engine, context.Background(), jobKey)
+		td, err := jobResultForTest(engine, celltest.Context(context.Background()), jobKey)
 		if err == nil {
 			t.Logf("job result succeeded unexpectedly: %+v", td)
 			return td, nil

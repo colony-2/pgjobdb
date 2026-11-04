@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
@@ -49,7 +51,7 @@ func (completionTimeoutWorker) Run(ctx workflow.ExecutionContext, input jobdb.Jo
 }
 
 func TestCompletionStatusAndDetail(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 	defer cancel()
 
 	postgresDSN, stopPG := startEmbeddedPostgres(t)
@@ -72,7 +74,7 @@ func TestCompletionStatusAndDetail(t *testing.T) {
 
 	go engine.Run(ctx)
 
-	successKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	successKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  completionSuccessJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 1}),
@@ -81,7 +83,7 @@ func TestCompletionStatusAndDetail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start success job: %v", err)
 	}
-	appKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	appKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  completionAppJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 2}),
@@ -90,7 +92,7 @@ func TestCompletionStatusAndDetail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start app error job: %v", err)
 	}
-	systemKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	systemKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  completionSystemJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 3}),
@@ -99,7 +101,7 @@ func TestCompletionStatusAndDetail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start system error job: %v", err)
 	}
-	timeoutKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	timeoutKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  completionTimeoutJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]interface{}{"n": 4}),
@@ -132,7 +134,7 @@ func TestCompletionStatusAndDetail(t *testing.T) {
 func assertCompletion(t *testing.T, db *sql.DB, key jobdb.JobKey, status pgjobdb.CompletionStatus, detailSubstring string) {
 	t.Helper()
 
-	job, err := pgjobdb.GetJob(context.Background(), db, pgjobdb.TenantID(key.TenantId), pgjobdb.JobID(key.JobId))
+	job, err := pgjobdb.GetJob(celltest.Context(context.Background()), db, pgjobdb.TenantID(key.TenantId), pgjobdb.JobID(key.JobId))
 	if err != nil {
 		t.Fatalf("get job %s: %v", key.String(), err)
 	}

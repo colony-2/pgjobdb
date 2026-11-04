@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 	jobdbtest "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/integration/internal/jobdbtest"
@@ -155,10 +157,10 @@ func TestCustomJobIDAcrossBuiltInRuntimes(t *testing.T) {
 			built := harness.New(t, ws)
 			defer built.Shutdown(t)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
 			defer cancel()
 
-			jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{
+			jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: built.WorkerTenantID,
 				JobType:  ws.JobWorker.Name(),
 				JobID:    "custom-job-id",
@@ -198,10 +200,10 @@ func TestAwaitJobsAcrossBuiltInRuntimes(t *testing.T) {
 			defer built.Shutdown(t)
 			tenantID := built.WorkerTenantID
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
 			defer cancel()
 
-			childDone := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{
+			childDone := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: tenantID,
 				JobType:  childWorker.Name(),
 				JobID:    childJobID,
@@ -213,7 +215,7 @@ func TestAwaitJobsAcrossBuiltInRuntimes(t *testing.T) {
 				t.Fatalf("child did not start: %v", ctx.Err())
 			}
 
-			parentDone := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{
+			parentDone := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: tenantID,
 				JobType:  parentWorker.Name(),
 				JobID:    parentJobID,
@@ -267,10 +269,10 @@ func TestTaskContextAwaitJobsAcrossBuiltInRuntimes(t *testing.T) {
 			defer built.Shutdown(t)
 			tenantID := built.WorkerTenantID
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
 			defer cancel()
 
-			childDone := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{
+			childDone := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: tenantID,
 				JobType:  childWorker.Name(),
 				JobID:    childJobID,
@@ -283,7 +285,7 @@ func TestTaskContextAwaitJobsAcrossBuiltInRuntimes(t *testing.T) {
 			}
 
 			parentKey := jobdb.JobKey{TenantId: tenantID, JobId: "parent"}
-			parentDone := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{
+			parentDone := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: tenantID,
 				JobType:  parentWorker.Name(),
 				JobID:    parentKey.JobId,
@@ -311,11 +313,11 @@ func TestPendingTaskHandlesAcrossBuiltInRuntimes(t *testing.T) {
 			built := harness.New(t, ws)
 			defer built.Shutdown(t)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
 			defer cancel()
 
 			jobKey := jobdb.JobKey{TenantId: built.WorkerTenantID, JobId: "pending"}
-			done := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{
+			done := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: jobKey.TenantId,
 				JobType:  ws.JobWorker.Name(),
 				JobID:    jobKey.JobId,
@@ -388,11 +390,11 @@ func TestReplayAfterExternalTaskCompletionAcrossBuiltInRuntimes(t *testing.T) {
 			built := harness.New(t, ws)
 			defer built.Shutdown(t)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
 			defer cancel()
 
 			jobKey := jobdb.JobKey{TenantId: built.WorkerTenantID, JobId: "approval"}
-			done := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{
+			done := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: jobKey.TenantId,
 				JobType:  ws.JobWorker.Name(),
 				JobID:    jobKey.JobId,
@@ -429,7 +431,7 @@ func TestGetJobRunRetryRepresentationOnDirectRuntime(t *testing.T) {
 			continue
 		}
 		t.Run(harness.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
 			defer cancel()
 
 			t.Run("job-retry", func(t *testing.T) {
@@ -438,7 +440,7 @@ func TestGetJobRunRetryRepresentationOnDirectRuntime(t *testing.T) {
 				built := harness.New(t, ws)
 				defer built.Shutdown(t)
 
-				jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{
+				jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: built.WorkerTenantID,
 					JobType:  job.Name(),
 					Data:     jobdbtest.NumberTaskData(1),
@@ -468,7 +470,7 @@ func TestGetJobRunRetryRepresentationOnDirectRuntime(t *testing.T) {
 				built := harness.New(t, ws)
 				defer built.Shutdown(t)
 
-				jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{
+				jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: built.WorkerTenantID,
 					JobType:  job.Name(),
 					Data:     jobdbtest.NumberTaskData(1),
@@ -517,7 +519,7 @@ func TestGetJobRunRecordedRetryBackoffOnDirectRuntime(t *testing.T) {
 			continue
 		}
 		t.Run(harness.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
 			defer cancel()
 
 			job := &retryJob{}
@@ -525,7 +527,7 @@ func TestGetJobRunRecordedRetryBackoffOnDirectRuntime(t *testing.T) {
 			built := harness.New(t, ws)
 			defer built.Shutdown(t)
 
-			jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{
+			jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: built.WorkerTenantID,
 				JobType:  job.Name(),
 				Data:     jobdbtest.NumberTaskData(1),
@@ -573,11 +575,11 @@ func TestCancelledJobReturnsCancelledOutputAcrossBuiltInRuntimes(t *testing.T) {
 			built := harness.New(t, ws)
 			defer built.Shutdown(t)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
 			defer cancel()
 
 			jobKey := jobdb.JobKey{TenantId: built.WorkerTenantID, JobId: "cancelled"}
-			done := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{
+			done := jobdbtest.MustStartJobAsync(t, built.Engine, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: jobKey.TenantId,
 				JobType:  ws.JobWorker.Name(),
 				JobID:    jobKey.JobId,
@@ -609,10 +611,10 @@ func TestEngineMetadataFilteredWorkersAndManualJobLeaseAcrossBuiltInRuntimes(t *
 			built := harness.New(t, ws)
 			defer built.Shutdown(t)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
 			defer cancel()
 
-			blueKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{
+			blueKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: built.WorkerTenantID,
 				JobType:  ws.JobWorker.Name(),
 				JobID:    "blue",
@@ -623,7 +625,7 @@ func TestEngineMetadataFilteredWorkersAndManualJobLeaseAcrossBuiltInRuntimes(t *
 			if err != nil {
 				t.Fatalf("submit blue job: %v", err)
 			}
-			greenKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{
+			greenKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: blueKey.TenantId,
 				JobType:  ws.JobWorker.Name(),
 				JobID:    "green",
@@ -679,10 +681,10 @@ func TestFindTasksWaitingWithMetadataFilterAcrossBuiltInRuntimes(t *testing.T) {
 			built := harness.New(t, ws)
 			defer built.Shutdown(t)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
 			defer cancel()
 
-			blueKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{
+			blueKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: built.WorkerTenantID,
 				JobType:  ws.JobWorker.Name(),
 				JobID:    "blue-pending",
@@ -693,7 +695,7 @@ func TestFindTasksWaitingWithMetadataFilterAcrossBuiltInRuntimes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("submit blue pending job: %v", err)
 			}
-			if _, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{
+			if _, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: blueKey.TenantId,
 				JobType:  ws.JobWorker.Name(),
 				JobID:    "green-pending",

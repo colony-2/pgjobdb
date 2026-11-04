@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 	pgruntime "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime"
@@ -53,7 +55,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 	counted := &countingListConnector{Connector: connector}
 	db := sql.OpenDB(counted)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	ctx := context.Background()
+	ctx := celltest.Context(context.Background())
 	backend, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, backend.Close(ctx)) })
@@ -64,7 +66,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 	// either store. Include both pending waits and archived outcomes on each page.
 	for i := 0; i < 240; i++ {
 		id := pgjobdb.JobID(fmt.Sprintf("consumer-%03d", i))
-		req := pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: id, WorkerID: "test", JobType: "consumer", AppMetadata: metadata, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"secretDetail":true}`)}}
+		req := pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "test", JobType: "consumer", AppMetadata: metadata, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"secretDetail":true}`)}}
 		if i%3 != 0 {
 			req.Dependencies = nativeGoalWait("", producer.GoalID).Dependencies
 		}
@@ -94,7 +96,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 						counted.queries.Store(0)
 						page, err := rt.ListJobs(ctx, req)
 						require.NoError(t, err)
-						require.EqualValues(t, 1, counted.queries.Load(), "listing query count must not grow with page size")
+						require.EqualValues(t, 2, counted.queries.Load(), "listing query count must not grow with page size")
 						for _, row := range page.Jobs {
 							total++
 							require.JSONEq(t, string(metadata), string(row.Metadata))
@@ -128,7 +130,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 			page, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, GoalIDs: []string{secondary.GoalID}, JobTypes: []string{"consumer"}})
 			require.NoError(t, err)
 			require.Len(t, page.Jobs, 12)
-			require.EqualValues(t, 1, counted.queries.Load())
+			require.EqualValues(t, 2, counted.queries.Load())
 		})
 	}
 }

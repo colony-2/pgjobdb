@@ -12,14 +12,14 @@ import (
 
 func TestNativeLeaseControls(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "job", WorkerID: "submitter", JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit: %v", err)
 		}
 		selector := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}
 		lease, err := pgjobdb.GetWork(ctx, db, "worker", selector,
-			pgjobdb.GetWorkOptions{LeaseDuration: 5 * time.Second})
+			pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, LeaseDuration: 5 * time.Second})
 		if err != nil || lease == nil {
 			t.Fatalf("get work = %+v, %v", lease, err)
 		}
@@ -61,13 +61,13 @@ func TestNativeLeaseControls(t *testing.T) {
 			t.Fatalf("completed lease validation = %v", err)
 		}
 
-		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "expired", WorkerID: "submitter", JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit expired test job: %v", err)
 		}
 		expiring, err := pgjobdb.GetWork(ctx, db, "worker", selector,
-			pgjobdb.GetWorkOptions{})
+			pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}})
 		if err != nil || expiring == nil {
 			t.Fatalf("lease expiring job = %+v, %v", expiring, err)
 		}

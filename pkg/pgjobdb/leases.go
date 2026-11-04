@@ -92,11 +92,18 @@ func getWork(ctx context.Context, db DB, worker WorkerID, selector WorkSelector,
 		}
 		tenantIDs = append(tenantIDs, string(tenant))
 	}
+	cellIDs, err := selectCells(ctx, db, opts.TenantIDs, opts.CellNames, "jobs.acquire")
+	if err != nil {
+		return nil, err
+	}
+	if len(opts.TenantIDs) == 0 {
+		return nil, fmt.Errorf("pgjobdb: tenant ids are required")
+	}
 	row := db.QueryRowContext(ctx, `SELECT * FROM pgjobdb.get_native_work(
-		$1, $2, $3, $4, $5, $6, $7, $8, $9)`, string(worker),
+		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, string(worker),
 		pq.Array(tenantIDs), pq.Array(jobTypes), string(tasks), string(metadata),
 		seconds, nilIfBlank(string(targetTenant)), nilIfBlank(string(targetJob)),
-		string(predicateJSON))
+		string(predicateJSON), pq.Array(cellIDs))
 	lease, err := scanJobLease(row, worker)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -123,12 +130,15 @@ func scanJobLease(row scheduleScanner, worker WorkerID) (*JobLease, error) {
 	var tenant, job, jobType, route, workKind string
 	var taskType, resumeType, inputHash, schemaHash sql.NullString
 	var inputOrdinal, outputOrdinal sql.NullInt64
-	var policy, payload []byte
+	var policy, payload, cell []byte
 	if err := row.Scan(&tenant, &job, &lease.LeaseID, &lease.ExpiresAt,
 		&jobType, &route, &workKind, &taskType, &resumeType,
 		&inputOrdinal, &outputOrdinal, &inputHash, &policy, &payload,
 		&lease.ClientPayloadRevision,
-		&schemaHash, &lease.GoalID); err != nil {
+		&schemaHash, &lease.GoalID, &cell); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(cell, &lease.Cell); err != nil {
 		return nil, err
 	}
 	lease.TenantID, lease.JobID, lease.WorkerID = TenantID(tenant), JobID(job), worker

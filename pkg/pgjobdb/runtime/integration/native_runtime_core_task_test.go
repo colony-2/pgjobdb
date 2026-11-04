@@ -38,7 +38,7 @@ func TestNativeRuntimeCoreCompletesWaitingTask(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		root, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+		root, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "tenant", JobID: "task-job", JobType: "collect", Data: input,
 			ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"keep":true}`)},
 		}})

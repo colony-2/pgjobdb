@@ -40,7 +40,7 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		root, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+		root, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "tenant", JobID: "root", JobType: "collect", Data: data, RunPolicy: jobdb.RunPolicy{Retry: jobdb.RetryPolicy{MaximumAttempts: 3}},
 		}})
 		if err != nil {
@@ -56,7 +56,7 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 			t.Fatalf("lease state = %+v", lease.ExecutionState())
 		}
 
-		child, err := lease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+		child, err := lease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "tenant", JobID: "child", JobType: "collect", Data: data,
 		}})
 		if err != nil || child.JobKey.JobId != "child" {
@@ -109,7 +109,7 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 		if err != nil || string(output) != `{"done":true}` {
 			t.Fatalf("completed output = %s, %v", output, err)
 		}
-		if _, err := jobLease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+		if _, err := jobLease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "tenant", JobID: "late", JobType: "collect", Data: data,
 		}}); !errors.Is(err, jobdb.ErrExecutionLeaseLost) {
 			t.Fatalf("stale child submission = %v", err)

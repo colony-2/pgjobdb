@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/colony-2/jobdb/pkg/jobdb"
 	"math"
+
+	"github.com/colony-2/jobdb/pkg/jobdb"
 
 	"github.com/lib/pq"
 )

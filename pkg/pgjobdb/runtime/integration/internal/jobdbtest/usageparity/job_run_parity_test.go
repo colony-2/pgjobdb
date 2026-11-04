@@ -39,7 +39,7 @@ func TestCompletedJobRunParityAcrossBuiltInRuntimes(t *testing.T) {
 		harness := harness
 		t.Run(harness.Name, func(t *testing.T) {
 			compareAcrossModes(t, harness, []workflow.WorkSet{ws}, func(t *testing.T, ctx context.Context, subject scenarioSubject) jobRunObservation {
-				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: subject.built.WorkerTenantID,
 					JobType:  jobdbtest.SequenceJobName,
 					JobID:    "completed-run",
@@ -82,7 +82,7 @@ func TestLazyOutputLoadParityAcrossBuiltInRuntimes(t *testing.T) {
 		harness := harness
 		t.Run(harness.Name, func(t *testing.T) {
 			compareAcrossModes(t, harness, []workflow.WorkSet{ws}, func(t *testing.T, ctx context.Context, subject scenarioSubject) jobRunOutputObservation {
-				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: subject.built.WorkerTenantID,
 					JobType:  jobdbtest.SequenceJobName,
 					JobID:    "lazy-output",
@@ -124,7 +124,7 @@ func TestFailedGetOutputParityAcrossBuiltInRuntimes(t *testing.T) {
 		harness := harness
 		t.Run(harness.Name, func(t *testing.T) {
 			compareAcrossModes(t, harness, []workflow.WorkSet{ws}, func(t *testing.T, ctx context.Context, subject scenarioSubject) jobRunOutputObservation {
-				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: subject.built.WorkerTenantID,
 					JobType:  jobdbtest.FailingJobName,
 					JobID:    "failed-output",
@@ -163,7 +163,7 @@ func TestPendingRuntimeViewParityAcrossBuiltInRuntimes(t *testing.T) {
 		harness := harness
 		t.Run(harness.Name, func(t *testing.T) {
 			compareAcrossModes(t, harness, []workflow.WorkSet{ws}, func(t *testing.T, ctx context.Context, subject scenarioSubject) jobRunObservation {
-				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: subject.built.WorkerTenantID,
 					JobType:  ws.JobWorker.Name(),
 					JobID:    "pending-run",
@@ -208,7 +208,7 @@ func TestCancelledGetOutputParityAcrossBuiltInRuntimes(t *testing.T) {
 		harness := harness
 		t.Run(harness.Name, func(t *testing.T) {
 			compareAcrossModes(t, harness, []workflow.WorkSet{ws}, func(t *testing.T, ctx context.Context, subject scenarioSubject) jobRunOutputObservation {
-				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{
+				jobKey, err := subject.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: subject.built.WorkerTenantID,
 					JobType:  jobdbtest.SequenceJobName,
 					JobID:    "cancelled-output",

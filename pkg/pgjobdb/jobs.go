@@ -11,7 +11,7 @@ import (
 
 // SubmitJob stores immutable JobDB facts and the initial scheduler route in
 // one database transaction. A matching active job ID is idempotent.
-func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResult, error) {
+func submitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResult, error) {
 	if err := validateScheduleDB(ctx, db); err != nil {
 		return nil, err
 	}
@@ -84,15 +84,19 @@ func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 	if err != nil {
 		return nil, err
 	}
+	cell, err := json.Marshal(req.Target)
+	if err != nil {
+		return nil, err
+	}
 	var result SubmitJobResult
 	var returnedID string
 	err = db.QueryRowContext(ctx, `SELECT job_id, created FROM pgjobdb.submit_native_job(
-		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 		string(req.TenantID), string(req.JobID), string(req.WorkerID),
 		string(req.JobType), string(policy), string(appMetadata),
 		nilIfBlank(req.Runtime.SchemaHash), nilIfBlank(string(req.Runtime.ParentJobID)),
 		schedule, pq.Array(waitFor), optionalTime(req.AvailableAt),
-		optionalTime(req.ExpiresAt), mode, value, nilIfBlank(req.GoalID), req.ShareGoal, string(dependencies)).Scan(&returnedID, &result.Created)
+		optionalTime(req.ExpiresAt), mode, value, nilIfBlank(req.GoalID), req.ShareGoal, string(dependencies), string(cell)).Scan(&returnedID, &result.Created)
 	if err != nil {
 		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "JDL01" {
 			return nil, ErrJobDeleted

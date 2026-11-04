@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func TestScheduleBindings(t *testing.T) {
 			OverlapPolicy: "ALLOW", FailurePolicy: json.RawMessage(`{}`),
 			NextFireAt: &next, NextJobID: &nextJob,
 		}
-		daily, err := pgjobdb.UpsertSchedule(ctx, db, req)
+		daily, err := upsertCellSchedule(ctx, db, req)
 		if err != nil {
 			t.Fatalf("upsert daily: %v", err)
 		}
@@ -32,7 +33,7 @@ func TestScheduleBindings(t *testing.T) {
 			t.Fatalf("daily = %+v", daily)
 		}
 		got, err := pgjobdb.GetSchedule(ctx, db, "tenant", "daily")
-		if err != nil || string(got.TargetSnapshot) != `{"input": 1}` {
+		if err != nil || !strings.Contains(string(got.TargetSnapshot), `"input": 1`) {
 			t.Fatalf("get daily = %+v, %v", got, err)
 		}
 		if _, err := pgjobdb.GetSchedule(ctx, db, "tenant", "missing"); !errors.Is(err, pgjobdb.ErrScheduleNotFound) {
@@ -42,7 +43,7 @@ func TestScheduleBindings(t *testing.T) {
 		req.ScheduleID = "weekly"
 		req.NextJobID = nil
 		req.NextFireAt = nil
-		if _, err := pgjobdb.UpsertSchedule(ctx, db, req); err != nil {
+		if _, err := upsertCellSchedule(ctx, db, req); err != nil {
 			t.Fatalf("upsert weekly: %v", err)
 		}
 		page, err := pgjobdb.ListSchedules(ctx, db, pgjobdb.ListSchedulesOptions{

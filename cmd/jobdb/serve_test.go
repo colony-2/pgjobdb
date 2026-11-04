@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 )
 
 func TestServeConfigDefaultsAndRequiredValues(t *testing.T) {
@@ -213,7 +215,7 @@ func TestServeCommandRejectsInheritedFlags(t *testing.T) {
 			cmd.SetArgs(args)
 			cmd.SetOut(io.Discard)
 			cmd.SetErr(io.Discard)
-			err := cmd.ExecuteContext(context.Background())
+			err := cmd.ExecuteContext(celltest.Context(context.Background()))
 			if err == nil || !strings.Contains(err.Error(), "does not accept flags") {
 				t.Fatalf("ExecuteContext error = %v, want serve flag rejection", err)
 			}
@@ -245,7 +247,7 @@ func TestServeCommandPassesValidatedConfigToDirectRuntime(t *testing.T) {
 	cmd.SetArgs([]string{"serve"})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	if err := cmd.ExecuteContext(context.Background()); err != nil {
+	if err := cmd.ExecuteContext(celltest.Context(context.Background())); err != nil {
 		t.Fatalf("ExecuteContext returned error: %v", err)
 	}
 	if called != 1 {
@@ -259,7 +261,7 @@ func TestServeCommandRejectsPositionalArguments(t *testing.T) {
 	cmd.SetArgs([]string{"serve", "sqlite"})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	if err := cmd.ExecuteContext(context.Background()); err == nil {
+	if err := cmd.ExecuteContext(celltest.Context(context.Background())); err == nil {
 		t.Fatal("ExecuteContext accepted a serve positional argument")
 	}
 }
@@ -294,7 +296,7 @@ func TestDirectCommandRetainsFlagConfiguration(t *testing.T) {
 	})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	if err := cmd.ExecuteContext(context.Background()); err != nil {
+	if err := cmd.ExecuteContext(celltest.Context(context.Background())); err != nil {
 		t.Fatalf("ExecuteContext returned error: %v", err)
 	}
 	if called != 1 {

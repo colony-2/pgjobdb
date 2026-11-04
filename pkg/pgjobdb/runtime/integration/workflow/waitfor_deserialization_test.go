@@ -5,13 +5,15 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 	"github.com/stretchr/testify/require"
 )
 
 func TestWaitForDeserialization(t *testing.T) {
-	ctx := context.Background()
+	ctx := celltest.Context(context.Background())
 	postgresDSN, stopPG := startEmbeddedPostgres(t)
 	defer stopPG()
 	if err := installPgjobdb(ctx, postgresDSN); err != nil {
@@ -35,7 +37,7 @@ func TestWaitForDeserialization(t *testing.T) {
 	parentJobID := "parent-job-1"
 
 	// Insert child jobs
-	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 		TenantID: "tenant-1", JobID: pgjobdb.JobID(childJobID1),
 		WorkerID: "submitter", JobType: "child-task",
 	})
@@ -43,7 +45,7 @@ func TestWaitForDeserialization(t *testing.T) {
 		t.Fatalf("insert child job 1: %v", err)
 	}
 
-	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 		TenantID: "tenant-1", JobID: pgjobdb.JobID(childJobID2),
 		WorkerID: "submitter", JobType: "child-task",
 	})
@@ -52,7 +54,7 @@ func TestWaitForDeserialization(t *testing.T) {
 	}
 
 	// Insert parent job waiting for child jobs
-	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 		TenantID: "tenant-1", JobID: pgjobdb.JobID(parentJobID),
 		WorkerID: "submitter", JobType: "parent-task",
 		WaitFor: []pgjobdb.JobID{pgjobdb.JobID(childJobID1), pgjobdb.JobID(childJobID2)},

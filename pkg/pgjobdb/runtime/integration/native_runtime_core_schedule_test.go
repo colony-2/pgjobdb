@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	chapterpostgres "github.com/colony-2/jobdb/pkg/jobdb/chapterstore/postgres"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
@@ -43,9 +45,9 @@ func TestNativeRuntimeCoreScheduleLifecycle(t *testing.T) {
 		request := jobdb.UpsertScheduleRequest{
 			TenantId: "tenant", ScheduleId: "daily", RequestTime: now,
 			Trigger: jobdb.ScheduleTrigger{Kind: jobdb.ScheduleTriggerInterval, Interval: time.Minute},
-			Target:  jobdb.ScheduleTarget{JobType: "collect", Data: input},
+			Target:  jobdb.ScheduleTarget{Cell: "test", CellRepo: "example.test/test", JobType: "collect", Data: input},
 		}
-		info, err := runtime.UpsertSchedule(ctx, request)
+		info, err := celltest.Schedule(ctx, runtime, request)
 		if err != nil || info.Generation != 1 || info.NextJobKey == nil {
 			t.Fatalf("upsert schedule = %+v, %v", info, err)
 		}
@@ -67,12 +69,12 @@ func TestNativeRuntimeCoreScheduleLifecycle(t *testing.T) {
 		}
 		expected := int64(1)
 		request.ExpectedGeneration = &expected
-		updated, err := runtime.UpsertSchedule(ctx, request)
+		updated, err := celltest.Schedule(ctx, runtime, request)
 		if err != nil || updated.Generation != 2 || updated.NextJobKey == nil ||
 			*updated.NextJobKey == *info.NextJobKey {
 			t.Fatalf("upsert next generation = %+v, %v", updated, err)
 		}
-		if _, err := runtime.UpsertSchedule(ctx, request); !errors.Is(err, jobdb.ErrConflict) {
+		if _, err := celltest.Schedule(ctx, runtime, request); !errors.Is(err, jobdb.ErrConflict) {
 			t.Fatalf("stale schedule generation = %v", err)
 		}
 		manual, err := runtime.TriggerSchedule(ctx, jobdb.TriggerScheduleRequest{

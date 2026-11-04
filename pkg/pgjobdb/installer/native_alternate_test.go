@@ -12,7 +12,7 @@ import (
 func TestNativeAlternateRoutes(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, id := range []pgjobdb.JobID{"job", "delayed", "task", "task-to-job"} {
-			if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+			if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 				TenantID: "tenant", JobID: id, WorkerID: "submitter", JobType: "collect",
 			}); err != nil {
 				t.Fatalf("submit %s: %v", id, err)

@@ -13,7 +13,7 @@ import (
 func TestNativeScheduleRunsFilterBeforePagination(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, scheduleID := range []string{"daily", "other"} {
-			if _, err := pgjobdb.UpsertSchedule(ctx, db, pgjobdb.UpsertScheduleRequest{
+			if _, err := upsertCellSchedule(ctx, db, pgjobdb.UpsertScheduleRequest{
 				TenantID: "tenant", ScheduleID: scheduleID,
 				State: pgjobdb.ScheduleStateActive, SpecHash: "hash",
 				Trigger: json.RawMessage(`{}`), TargetJobType: "collect",
@@ -37,7 +37,7 @@ func TestNativeScheduleRunsFilterBeforePagination(t *testing.T) {
 			{"run-3", "daily", third},
 			{"other-run", "other", fourth},
 		} {
-			if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+			if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 				TenantID: "tenant", JobID: item.jobID, WorkerID: "scheduler",
 				JobType: "collect", Runtime: pgjobdb.RuntimeMetadata{
 					Schedule: &pgjobdb.ScheduleOccurrence{

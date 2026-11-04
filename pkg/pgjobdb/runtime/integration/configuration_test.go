@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtimetest"
@@ -23,7 +25,7 @@ func configurationTransport(t *testing.T, rt *pgruntime.Runtime, transport strin
 	if transport == "embedded" {
 		return rt
 	}
-	server := httptest.NewServer(remote.NewServer(rt))
+	server := httptest.NewServer(celltest.Handler(remote.NewServer(rt)))
 	t.Cleanup(server.Close)
 	client, err := remote.New(server.URL, server.Client())
 	require.NoError(t, err)
@@ -32,9 +34,9 @@ func configurationTransport(t *testing.T, rt *pgruntime.Runtime, transport strin
 
 func openConfigurationRuntime(t *testing.T, dsn string, cfg pgruntime.Config) *pgruntime.Runtime {
 	t.Helper()
-	rt, err := pgruntime.OpenDSN(context.Background(), dsn, cfg)
+	rt, err := pgruntime.OpenDSN(celltest.Context(context.Background()), dsn, cfg)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rt.Close(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, rt.Close(celltest.Context(context.Background()))) })
 	return rt
 }
 
@@ -47,7 +49,7 @@ func TestTenantConfiguration(t *testing.T) {
 				runtimetest.RunConfigurationConformance(t, configurationTransport(t, rt, transport))
 			})
 			t.Run("concurrent_replicas_and_reopen", func(t *testing.T) {
-				ctx := context.Background()
+				ctx := celltest.Context(context.Background())
 				dsn := newDSN(t)
 				cfg := pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()}
 				first := openConfigurationRuntime(t, dsn, cfg)
@@ -119,7 +121,7 @@ func TestTenantConfiguration(t *testing.T) {
 				require.Equal(t, removedRevision, removed.Revision)
 			})
 			t.Run("limits_are_atomic", func(t *testing.T) {
-				ctx := context.Background()
+				ctx := celltest.Context(context.Background())
 				backend := openConfigurationRuntime(t, newDSN(t), pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir(), ConfigurationLimits: jobdb.ConfigurationLimits{MaxEntries: 1, MaxValueBytes: 4}})
 				admin := configurationTransport(t, backend, transport).(jobdb.ConfigurationAdmin)
 				revision, err := admin.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "one", Value: json.RawMessage(`true`)})
@@ -137,13 +139,13 @@ func TestTenantConfiguration(t *testing.T) {
 				require.Equal(t, map[string]json.RawMessage{"one": json.RawMessage(`true`)}, snapshot.Values)
 			})
 			t.Run("workflow_attempt_snapshot", func(t *testing.T) {
-				ctx := context.Background()
+				ctx := celltest.Context(context.Background())
 				rt := configurationTransport(t, openConfigurationRuntime(t, newDSN(t), pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()}), transport)
 				admin := rt.(jobdb.ConfigurationAdmin)
 				_, err := admin.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "setting", Value: json.RawMessage(`"initial"`)})
 				require.NoError(t, err)
 				job := &configurationReadingJob{admin: admin}
-				handle, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: job.Name(), Data: jobdb.NewTaskDataOrPanic("input")}})
+				handle, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: job.Name(), Data: jobdb.NewTaskDataOrPanic("input")}})
 				require.NoError(t, err)
 				run, err := wf.GetJobForRun(ctx, rt, wf.GetJobForRunRequest{JobKey: handle.JobKey, JobWorker: job, WorkerID: "worker", LeaseDuration: time.Minute})
 				require.NoError(t, err)
@@ -161,8 +163,8 @@ func TestTenantConfiguration(t *testing.T) {
 			})
 		})
 	}
-	t.Run("additive_upgrade_and_connection_ownership", func(t *testing.T) {
-		ctx := context.Background()
+	t.Run("reopen_and_connection_ownership", func(t *testing.T) {
+		ctx := celltest.Context(context.Background())
 		db, err := sql.Open("postgres", newDSN(t))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = db.Close() })
@@ -170,13 +172,11 @@ func TestTenantConfiguration(t *testing.T) {
 		before, err := pgruntime.NewSQLDB(ctx, db, cfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = before.Close(ctx) })
-		job, err := before.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: "existing", Data: jobdb.NewTaskDataOrPanic("existing-input")}})
+		job, err := before.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "existing", Data: jobdb.NewTaskDataOrPanic("existing-input")}})
 		require.NoError(t, err)
 		require.NoError(t, before.Close(ctx))
 		require.NoError(t, db.PingContext(ctx), "NewSQLDB must not own the pool")
-		// Model an existing format-6 database from before configuration support.
-		_, err = db.ExecContext(ctx, "DROP TABLE jobdb_configuration")
-		require.NoError(t, err)
+
 		after, err := pgruntime.NewSQLDB(ctx, db, cfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = after.Close(ctx) })
@@ -191,7 +191,7 @@ func TestTenantConfiguration(t *testing.T) {
 		require.JSONEq(t, `"existing-input"`, string(start.Input.Data))
 		var version int
 		require.NoError(t, db.QueryRowContext(ctx, "SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb'").Scan(&version))
-		require.Equal(t, 7, version)
+		require.Equal(t, 8, version)
 	})
 }
 
@@ -203,15 +203,15 @@ type configurationReadingJob struct {
 func (*configurationReadingJob) Name() string { return "configuration-job" }
 func (w *configurationReadingJob) Run(ctx wf.ExecutionContext, input jobdb.JobData) (jobdb.JobData, error) {
 	w.captured = ctx
-	first, err := ctx.GetConfiguration(context.Background())
+	first, err := ctx.GetConfiguration(celltest.Context(context.Background()))
 	if err != nil {
 		return nil, err
 	}
-	_, err = w.admin.SetTenantConfigurationValue(context.Background(), jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "setting", Value: json.RawMessage(`"configuration-updated-value"`)})
+	_, err = w.admin.SetTenantConfigurationValue(celltest.Context(context.Background()), jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "setting", Value: json.RawMessage(`"configuration-updated-value"`)})
 	if err != nil {
 		return nil, err
 	}
-	second, err := ctx.GetConfiguration(context.Background())
+	second, err := ctx.GetConfiguration(celltest.Context(context.Background()))
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func (w *configurationReadingJob) Run(ctx wf.ExecutionContext, input jobdb.JobDa
 	if first.Revision != second.Revision || string(first.Values["setting"]) != string(second.Values["setting"]) {
 		return nil, fmt.Errorf("configuration snapshot changed within one attempt")
 	}
-	fresh, err := w.admin.GetTenantConfiguration(context.Background(), "tenant")
+	fresh, err := w.admin.GetTenantConfiguration(celltest.Context(context.Background()), "tenant")
 	if err != nil {
 		return nil, err
 	}

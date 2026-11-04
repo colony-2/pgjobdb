@@ -122,7 +122,7 @@ func TestTaskCompletionRecoveryWithIndependentChapterDatabase(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				handle, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+				handle, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: "tenant", JobID: "recovery", JobType: "recover", Data: jobdb.NewTaskDataOrPanic(1),
 					ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"keep":true}`)},
 				}})
@@ -289,7 +289,7 @@ func TestTaskCompletionClaimsBeforeAppending(t *testing.T) {
 		}
 		for _, scenario := range []string{"changed_slot", "unavailable", "cancelled", "concurrent"} {
 			t.Run(scenario, func(t *testing.T) {
-				handle, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: scenario, JobType: "recover", Data: jobdb.NewTaskDataOrPanic(1)}})
+				handle, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: scenario, JobType: "recover", Data: jobdb.NewTaskDataOrPanic(1)}})
 				if err != nil {
 					t.Fatal(err)
 				}

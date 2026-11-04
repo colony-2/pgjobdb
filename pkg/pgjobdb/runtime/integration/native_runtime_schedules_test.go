@@ -17,10 +17,15 @@ func TestNativeSchedulerAdapterSchedulesAndRuns(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		adapter := runtimeadapter.Scheduler{DB: db}
 		key := jobdb.ScheduleKey{TenantId: "tenant", ScheduleId: "daily"}
+		cell, err := adapter.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		target, _ := json.Marshal(cell.Resolved())
 		schedule, err := adapter.UpsertSchedule(ctx, runtimecore.StoredScheduleMutation{
 			ScheduleKey: key, State: jobdb.ScheduleStateActive,
 			SpecHash: "hash", TriggerSnapshot: json.RawMessage(`{}`),
-			TargetJobType: "collect", TargetSnapshot: json.RawMessage(`{}`),
+			TargetJobType: "collect", TargetSnapshot: target,
 			OverlapPolicy:         jobdb.ScheduleOverlapSerial,
 			FailurePolicySnapshot: json.RawMessage(`{}`),
 		})
@@ -32,7 +37,7 @@ func TestNativeSchedulerAdapterSchedulesAndRuns(t *testing.T) {
 			t.Fatalf("list schedules = %+v, %v", listed, err)
 		}
 		scheduledAt := time.Now().UTC().Truncate(time.Microsecond)
-		_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+		_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "run-1", WorkerID: "submitter", JobType: "collect",
 			Runtime: pgjobdb.RuntimeMetadata{Schedule: &pgjobdb.ScheduleOccurrence{
 				ScheduleID: "daily", Generation: 1, SpecHash: "hash",

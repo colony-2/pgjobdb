@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/workflow"
@@ -70,17 +72,17 @@ type suppliedFixture struct {
 
 func newSuppliedFixture(t *testing.T, dsn string) *suppliedFixture {
 	t.Helper()
-	ctx := context.Background()
+	ctx := celltest.Context(context.Background())
 	f := &suppliedFixture{renewEntered: make(chan struct{}, 1), renewRelease: make(chan struct{})}
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	backend, err := pgjobdbruntime.NewSQLDB(ctx, db, pgjobdbruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir(), MaxInlineArtifactBytes: 1})
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, backend.Close(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, backend.Close(celltest.Context(context.Background()))) })
 	f.backend = backend
 	f.db = db
-	handler := remote.NewServer(backend)
+	handler := celltest.Handler(remote.NewServer(backend))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Receiver") == "yes" {
 			if r.URL.Path == "/v1/jobs/poll" || strings.HasSuffix(r.URL.Path, "/lease") {
@@ -114,7 +116,7 @@ func newSuppliedFixture(t *testing.T, dsn string) *suppliedFixture {
 	require.NoError(t, err)
 	f.receiver, err = remote.New(server.URL, &http.Client{Transport: receiverTransport{base: server.Client().Transport}})
 	require.NoError(t, err)
-	handle, err := f.dispatcher.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: "supplied", Data: jobdb.NewTaskDataOrPanic(7, jobdb.NewArtifactFromBytes("input.txt", []byte("artifact"))), ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"cursor":1}`)}}})
+	handle, err := f.dispatcher.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "supplied", Data: jobdb.NewTaskDataOrPanic(7, jobdb.NewArtifactFromBytes("input.txt", []byte("artifact"))), ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"cursor":1}`)}}})
 	require.NoError(t, err)
 	f.key = handle.JobKey
 	f.lease, err = f.dispatcher.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: f.key, WorkerID: "dispatcher", Routes: []jobdb.Route{{JobType: "supplied"}}, LeaseDuration: time.Second})
@@ -138,7 +140,7 @@ func (f *suppliedFixture) imported(t *testing.T) jobdb.RenewableExecutionLease {
 	require.NoError(t, err)
 	decoded, err := remote.DecodeLeaseCapability(encoded)
 	require.NoError(t, err)
-	lease, err := f.receiver.ImportLease(context.Background(), decoded)
+	lease, err := f.receiver.ImportLease(celltest.Context(context.Background()), decoded)
 	require.NoError(t, err)
 	require.Equal(t, f.lease.LeaseID(), lease.LeaseID())
 	require.Equal(t, "dispatcher", lease.LeaseWorkerID())
@@ -154,12 +156,12 @@ func runSuppliedRemoteLeaseRenewsAndPersists(t *testing.T, newFixture func(*test
 		if !time.Now().After(f.lease.(jobdb.RenewableExecutionLease).LeaseExpiry()) {
 			return nil, errors.New("expected execution past original token expiry")
 		}
-		if _, err := ctx.SubmitJob(context.Background(), jobdb.SubmitJob{JobType: "child", Data: jobdb.NewTaskDataOrPanic(1)}); err != nil {
+		if _, err := ctx.SubmitJob(celltest.Context(context.Background()), jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", JobType: "child", Data: jobdb.NewTaskDataOrPanic(1)}); err != nil {
 			return nil, err
 		}
 		return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "echo", TaskType: "echo", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return data, nil })
 	}}
-	runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: job, TaskWorkers: []workflow.TaskWorker{suppliedTask{}}, BeforeRun: func(_ context.Context, l jobdb.ExecutionLease) error {
+	runnable, err := workflow.GetJobForRunWithLease(celltest.Context(context.Background()), f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: job, TaskWorkers: []workflow.TaskWorker{suppliedTask{}}, BeforeRun: func(_ context.Context, l jobdb.ExecutionLease) error {
 		require.JSONEq(t, `{"cursor":1}`, string(l.ClientPayload()))
 		_, err := remote.ExportLease(l)
 		return err
@@ -173,7 +175,7 @@ func runSuppliedRemoteLeaseRenewsAndPersists(t *testing.T, newFixture func(*test
 	artifacts, err := outcome.Output.GetArtifacts()
 	require.NoError(t, err)
 	require.Len(t, artifacts, 1)
-	raw, err := artifacts[0].Bytes(context.Background())
+	raw, err := artifacts[0].Bytes(celltest.Context(context.Background()))
 	require.NoError(t, err)
 	require.Equal(t, "artifact", string(raw))
 	var completedLease, completedOwner string
@@ -187,7 +189,7 @@ func runSuppliedRemoteLeaseRenewsAndPersists(t *testing.T, newFixture func(*test
 func runSuppliedLeaseAdmissionReschedulesWithoutWork(t *testing.T, newFixture func(*testing.T) *suppliedFixture) {
 	f := newFixture(t)
 	var called atomic.Bool
-	runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(_ workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
+	runnable, err := workflow.GetJobForRunWithLease(celltest.Context(context.Background()), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(_ workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
 		called.Store(true)
 		return data, nil
 	}}, BeforeRun: func(ctx context.Context, l jobdb.ExecutionLease) error {
@@ -199,7 +201,7 @@ func runSuppliedLeaseAdmissionReschedulesWithoutWork(t *testing.T, newFixture fu
 	require.Equal(t, workflow.JobRunSuspended, out.Status)
 	require.False(t, called.Load())
 	require.Zero(t, f.acquisitions.Load())
-	chapters, err := f.backend.ListChapters(context.Background(), jobdb.ListChaptersRequest{JobKey: f.key})
+	chapters, err := f.backend.ListChapters(celltest.Context(context.Background()), jobdb.ListChaptersRequest{JobKey: f.key})
 	require.NoError(t, err)
 	require.Len(t, chapters, 1)
 }
@@ -209,7 +211,7 @@ func runSuppliedLeaseLossCancelsWithoutFailureChapter(t *testing.T, newFixture f
 			f := newFixture(t)
 			entered := make(chan struct{})
 			exited := make(chan struct{})
-			runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
+			runnable, err := workflow.GetJobForRunWithLease(celltest.Context(context.Background()), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, data jobdb.JobData) (jobdb.JobData, error) {
 				close(entered)
 				defer close(exited)
 				return nil, ctx.AwaitDuration(jobdb.Duration(time.Minute))
@@ -221,7 +223,7 @@ func runSuppliedLeaseLossCancelsWithoutFailureChapter(t *testing.T, newFixture f
 			if transport {
 				f.failRenew.Store(true)
 			} else {
-				require.NoError(t, f.backend.CancelJob(context.Background(), jobdb.CancelJobRequest{JobKey: f.key}))
+				require.NoError(t, f.backend.CancelJob(celltest.Context(context.Background()), jobdb.CancelJobRequest{JobKey: f.key}))
 			}
 			select {
 			case err := <-result:
@@ -236,7 +238,7 @@ func runSuppliedLeaseLossCancelsWithoutFailureChapter(t *testing.T, newFixture f
 			case <-time.After(time.Second):
 				t.Fatal("execution context not cancelled")
 			}
-			chapters, err := f.backend.ListChapters(context.Background(), jobdb.ListChaptersRequest{JobKey: f.key})
+			chapters, err := f.backend.ListChapters(celltest.Context(context.Background()), jobdb.ListChaptersRequest{JobKey: f.key})
 			require.NoError(t, err)
 			requireNoExecutionOutcome(t, chapters)
 			require.Zero(t, f.acquisitions.Load())
@@ -260,13 +262,13 @@ func runSuppliedLeaseInvalidBeforeExecution(t *testing.T, newFixture func(*testi
 				req.WorkerID = "receiver"
 			}
 			if kind == "unsupported_route" {
-				require.NoError(t, lease.Reschedule(context.Background(), jobdb.RescheduleExecutionRequest{NextRoute: jobdb.Route{JobType: "other"}}))
+				require.NoError(t, lease.Reschedule(celltest.Context(context.Background()), jobdb.RescheduleExecutionRequest{NextRoute: jobdb.Route{JobType: "other"}}))
 				var err error
-				f.lease, err = f.dispatcher.GetJobLease(context.Background(), jobdb.GetJobLeaseRequest{JobKey: f.key, WorkerID: "dispatcher", Routes: []jobdb.Route{{JobType: "other"}}})
+				f.lease, err = f.dispatcher.GetJobLease(celltest.Context(context.Background()), jobdb.GetJobLeaseRequest{JobKey: f.key, WorkerID: "dispatcher", Routes: []jobdb.Route{{JobType: "other"}}})
 				require.NoError(t, err)
 				lease = f.imported(t)
 			}
-			runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, lease, req)
+			runnable, err := workflow.GetJobForRunWithLease(celltest.Context(context.Background()), f.receiver, lease, req)
 			if kind == "wrong_job" || kind == "wrong_worker" {
 				require.ErrorIs(t, err, jobdb.ErrExecutionLeaseLost)
 				return
@@ -293,25 +295,25 @@ func runSuppliedLeaseTaskHandoffAndResume(t *testing.T, newFixture func(*testing
 	job := suppliedJob{run: func(ctx workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
 		return ctx.DoTask(workflow.TaskCall{Command: []byte("{}"), Site: "echo", TaskType: "echo", ContractVersion: 1, Policy: jobdb.RunPolicy{}}, func(context.Context) (jobdb.TaskData, error) { return d, nil })
 	}}
-	first, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: job})
+	first, err := workflow.GetJobForRunWithLease(celltest.Context(context.Background()), f.receiver, f.imported(t), workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: job})
 	require.NoError(t, err)
 	out, err := first.Run(nil)
 	require.NoError(t, err)
 	require.Equal(t, workflow.JobRunSuspended, out.Status)
 	require.Zero(t, f.acquisitions.Load())
-	f.lease, err = f.dispatcher.GetJobLease(context.Background(), jobdb.GetJobLeaseRequest{JobKey: f.key, WorkerID: "task-owner", Routes: []jobdb.Route{{JobType: "supplied", TaskType: "echo"}}})
+	f.lease, err = f.dispatcher.GetJobLease(celltest.Context(context.Background()), jobdb.GetJobLeaseRequest{JobKey: f.key, WorkerID: "task-owner", Routes: []jobdb.Route{{JobType: "supplied", TaskType: "echo"}}})
 	require.NoError(t, err)
 	require.NotNil(t, f.lease)
 	cap, err := remote.ExportLease(f.lease)
 	require.NoError(t, err)
-	imported, err := f.receiver.ImportLease(context.Background(), cap)
+	imported, err := f.receiver.ImportLease(celltest.Context(context.Background()), cap)
 	require.NoError(t, err)
 	require.Equal(t, f.lease.ExecutionState(), imported.ExecutionState())
 	require.Equal(t, f.lease.Route(), imported.Route())
 	require.NotNil(t, imported.ExecutionState().TaskWait)
 	require.Equal(t, f.lease.ClientPayloadRevision(), imported.ClientPayloadRevision())
 	require.JSONEq(t, string(f.lease.ClientPayload()), string(imported.ClientPayload()))
-	second, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, imported, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: job, TaskWorkers: []workflow.TaskWorker{suppliedTask{}}})
+	second, err := workflow.GetJobForRunWithLease(celltest.Context(context.Background()), f.receiver, imported, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: job, TaskWorkers: []workflow.TaskWorker{suppliedTask{}}})
 	require.NoError(t, err)
 	out, err = second.Run(nil)
 	require.NoError(t, err)
@@ -321,7 +323,7 @@ func runSuppliedLeaseTaskHandoffAndResume(t *testing.T, newFixture func(*testing
 
 func runSuppliedLeaseCallerCancellationStopsHeartbeat(t *testing.T, newFixture func(*testing.T) *suppliedFixture) {
 	f := newFixture(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 	defer cancel()
 	entered := make(chan struct{})
 	exited := make(chan struct{})
@@ -346,14 +348,14 @@ func runSuppliedLeaseCallerCancellationStopsHeartbeat(t *testing.T, newFixture f
 	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, count, f.renewals.Load())
 	require.Zero(t, f.acquisitions.Load())
-	chapters, err := f.backend.ListChapters(context.Background(), jobdb.ListChaptersRequest{JobKey: f.key})
+	chapters, err := f.backend.ListChapters(celltest.Context(context.Background()), jobdb.ListChaptersRequest{JobKey: f.key})
 	require.NoError(t, err)
 	requireNoExecutionOutcome(t, chapters)
 }
 
 func (f *suppliedFixture) invalidate(t *testing.T, kind string, lease jobdb.RenewableExecutionLease) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := celltest.Context(context.Background())
 	switch kind {
 	case "cancelled":
 		require.NoError(t, f.backend.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: f.key}))
@@ -382,7 +384,7 @@ func runSuppliedLeaseInvalidBeforeImport(t *testing.T, newFixture func(*testing.
 			capability, err := remote.ExportLease(f.lease)
 			require.NoError(t, err)
 			f.invalidate(t, kind, f.lease.(jobdb.RenewableExecutionLease))
-			_, err = f.receiver.ImportLease(context.Background(), capability)
+			_, err = f.receiver.ImportLease(celltest.Context(context.Background()), capability)
 			require.ErrorIs(t, err, jobdb.ErrExecutionLeaseLost)
 			require.Zero(t, f.acquisitions.Load())
 		})
@@ -407,7 +409,7 @@ func runRenewalDatabaseErrorsAndDeadlines(t *testing.T, newFixture func(*testing
 			lease := f.lease.(jobdb.RenewableExecutionLease)
 			var originalExpiry time.Time
 			require.NoError(t, f.db.QueryRow(`SELECT lease_expires_at FROM pgjobdb.jobs WHERE job_id=$1`, f.key.JobId).Scan(&originalExpiry))
-			ctx := context.Background()
+			ctx := celltest.Context(context.Background())
 			var cancel context.CancelFunc
 			switch kind {
 			case "database":
@@ -451,7 +453,7 @@ func runSuppliedLeaseDatabaseFailureStopsExecution(t *testing.T, newFixture func
 			lease := f.imported(t)
 			releaseRenewal := sync.OnceFunc(func() { close(f.renewRelease) })
 			defer releaseRenewal()
-			runCtx, cancel := context.WithCancel(context.Background())
+			runCtx, cancel := context.WithCancel(celltest.Context(context.Background()))
 			defer cancel()
 			entered, exited := make(chan struct{}), make(chan struct{})
 			runnable, err := workflow.GetJobForRunWithLease(runCtx, f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
@@ -505,7 +507,7 @@ func runSuppliedLeaseDatabaseFailureStopsExecution(t *testing.T, newFixture func
 			case <-time.After(time.Second):
 				t.Fatal("application was not cancelled")
 			}
-			chapters, err := f.backend.ListChapters(context.Background(), jobdb.ListChaptersRequest{JobKey: f.key})
+			chapters, err := f.backend.ListChapters(celltest.Context(context.Background()), jobdb.ListChaptersRequest{JobKey: f.key})
 			require.NoError(t, err)
 			requireNoExecutionOutcome(t, chapters)
 			var after time.Time
@@ -530,7 +532,7 @@ func runSuppliedLeaseReleaseDuringRenewal(t *testing.T, newFixture func(*testing
 			f := newFixture(t)
 			lease := f.imported(t)
 			entered, finish := make(chan struct{}), make(chan struct{})
-			runnable, err := workflow.GetJobForRunWithLease(context.Background(), f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
+			runnable, err := workflow.GetJobForRunWithLease(celltest.Context(context.Background()), f.receiver, lease, workflow.GetJobForRunRequest{JobKey: f.key, JobWorker: suppliedJob{run: func(ctx workflow.ExecutionContext, d jobdb.JobData) (jobdb.JobData, error) {
 				close(entered)
 				<-finish
 				if release == "reschedule" {
@@ -587,7 +589,7 @@ func runSuppliedLeaseRouteSnapshots(t *testing.T, newFixture func(*testing.T) *s
 	for _, kind := range []string{"job", "task", "job-alternate", "task-alternate"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t)
-			ctx := context.Background()
+			ctx := celltest.Context(context.Background())
 			req := jobdb.RescheduleExecutionRequest{NextRoute: jobdb.Route{JobType: "supplied"}}
 			expected := req.NextRoute
 			if kind != "job" {

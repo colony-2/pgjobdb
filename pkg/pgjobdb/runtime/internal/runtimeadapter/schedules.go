@@ -154,7 +154,7 @@ func scheduleFromPgjobdb(item pgjobdb.Schedule) runtimecore.StoredSchedule {
 	out := runtimecore.StoredSchedule{
 		ScheduleKey: jobdb.ScheduleKey{TenantId: string(item.TenantID), ScheduleId: item.ScheduleID},
 		State:       jobdb.ScheduleState(item.State), Generation: item.Generation,
-		SpecHash:              item.SpecHash,
+		SpecHash: item.SpecHash, PauseReason: item.PauseReason,
 		TriggerSnapshot:       append(json.RawMessage(nil), item.Trigger...),
 		TargetJobType:         string(item.TargetJobType),
 		TargetSnapshot:        append(json.RawMessage(nil), item.TargetSnapshot...),

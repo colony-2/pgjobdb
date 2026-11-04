@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	chapterpostgres "github.com/colony-2/jobdb/pkg/jobdb/chapterstore/postgres"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
@@ -20,18 +22,18 @@ func TestPostgresJobDeletionReopenAndChildren(t *testing.T) {
 	newDSN := conformanceDSNFactory(t)
 	for _, transport := range []string{"embedded", "http"} {
 		t.Run(transport, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := celltest.Context(context.Background())
 			dsn := newDSN(t)
 			cfg := pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()}
 			backend := openConfigurationRuntime(t, dsn, cfg)
 			rt := configurationTransport(t, backend, transport)
-			req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: "parent", JobType: "job", Data: jobdb.NewTaskDataOrPanic("input")}}
+			req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "parent", JobType: "job", Data: jobdb.NewTaskDataOrPanic("input")}}
 			parent, err := rt.SubmitJob(ctx, req)
 			require.NoError(t, err)
 			lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: parent.JobKey, WorkerID: "parent", Routes: []jobdb.Route{{JobType: "job"}}, LeaseDuration: time.Minute})
 			require.NoError(t, err)
 			require.NotNil(t, lease)
-			child, err := lease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{JobID: "child", JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
+			child, err := lease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", JobID: "child", JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
 			require.NoError(t, err)
 			_, err = rt.(jobdb.JobDeletionRuntime).DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []string{parent.JobKey.JobId}})
 			require.NoError(t, err)
@@ -101,14 +103,14 @@ func TestPostgresJobDeletionFencesInFlightChild(t *testing.T) {
 		defer unblock()
 		rt, err := runtimecore.NewRuntime(runtimecore.Config{Scheduler: gate, Chapters: chapters, Schemas: schemas, Configurations: newConfigurationStore(t, ctx, db)})
 		require.NoError(t, err)
-		parent, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: "parent", JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
+		parent, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "parent", JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
 		require.NoError(t, err)
 		lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: parent.JobKey, WorkerID: "parent", Routes: []jobdb.Route{{JobType: "job"}}, LeaseDuration: time.Minute})
 		require.NoError(t, err)
 		require.NotNil(t, lease)
 		done := make(chan error, 1)
 		go func() {
-			_, err := lease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{JobID: "child", JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
+			_, err := lease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", JobID: "child", JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
 			done <- err
 		}()
 		select {
@@ -130,7 +132,7 @@ func TestPostgresJobDeletionAcquisitionRace(t *testing.T) {
 	for _, transport := range []string{"embedded", "http"} {
 		t.Run(transport, func(t *testing.T) {
 			rt := configurationTransport(t, newRuntime(t), transport)
-			ctx := context.Background()
+			ctx := celltest.Context(context.Background())
 			for range 5 {
 				key := submitScoped(t, rt, "job")
 				start := make(chan struct{})

@@ -14,7 +14,7 @@ import (
 
 func nativeGoalJob(t *testing.T, ctx context.Context, db pgjobdb.DB, id string) *pgjobdb.JobDetail {
 	t.Helper()
-	_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID(id), WorkerID: "submit", JobType: "work"})
+	_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: pgjobdb.JobID(id), WorkerID: "submit", JobType: "work"})
 	require.NoError(t, err)
 	j, err := pgjobdb.GetJob(ctx, db, "tenant", pgjobdb.JobID(id))
 	require.NoError(t, err)
@@ -37,7 +37,7 @@ func nativeGoalWait(id, goal string) *jobdb.DependencyWait {
 
 func TestPostgresGoalReservationAndRetention(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		req := pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "tenant", JobId: "reserved"}, Descriptor: "semantic-request"}
+		req := pgjobdb.JobPreparation{Cell: "test", CellRepo: "example.test/test", Key: jobdb.JobKey{TenantId: "tenant", JobId: "reserved"}, Descriptor: "semantic-request"}
 		prepared, err := pgjobdb.PrepareJob(ctx, db, req)
 		require.NoError(t, err)
 		require.False(t, prepared.Published)
@@ -55,7 +55,7 @@ func TestPostgresGoalReservationAndRetention(t *testing.T) {
 		_, err = pgjobdb.PrepareJob(ctx, conn, req)
 		require.ErrorIs(t, err, jobdb.ErrConflict)
 		req.Descriptor = "semantic-request"
-		_, err = pgjobdb.SubmitJob(ctx, conn, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: "reserved", GoalID: prepared.GoalID, JobType: "work", WorkerID: "publisher"})
+		_, err = pgjobdb.SubmitJob(ctx, conn, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "reserved", GoalID: prepared.GoalID, JobType: "work", WorkerID: "publisher"})
 		require.NoError(t, err)
 		var active, facts string
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT j.goal_id,f.goal_id FROM pgjobdb.jobs j JOIN pgjobdb.job_facts f USING(tenant_id,job_id) WHERE j.job_id='reserved'`).Scan(&active, &facts))
@@ -195,10 +195,10 @@ func TestPostgresGoalIndependentWriters(t *testing.T) {
 		})
 		t.Run("publication_and_closure", func(t *testing.T) {
 			a := nativeGoalJob(t, ctx, db, "publish-a")
-			p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "tenant"}, RequestID: "restart-op", PriorJobID: "publish-a", ShareGoal: true, Descriptor: "same"})
+			p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Cell: "test", CellRepo: "example.test/test", Key: jobdb.JobKey{TenantId: "tenant"}, RequestID: "restart-op", PriorJobID: "publish-a", ShareGoal: true, Descriptor: "same"})
 			require.NoError(t, err)
 			errs := raceGoalWrites(t, ctx, db, func(q pgjobdb.DB) error {
-				_, e := pgjobdb.SubmitJob(ctx, q, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID(p.Key.JobId), GoalID: p.GoalID, ShareGoal: true, WorkerID: "publish", JobType: "work"})
+				_, e := pgjobdb.SubmitJob(ctx, q, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: pgjobdb.JobID(p.Key.JobId), GoalID: p.GoalID, ShareGoal: true, WorkerID: "publish", JobType: "work"})
 				return e
 			}, func(q pgjobdb.DB) error {
 				_, e := pgjobdb.FailGoal(ctx, q, jobdb.FailGoalRequest{GoalKey: nativeGoalKey(a), Message: "closed"})
@@ -283,7 +283,7 @@ func TestPostgresGoalOrderedOutcomesAndDeletion(t *testing.T) {
 		failed, err := pgjobdb.FailGoal(ctx, db, jobdb.FailGoalRequest{GoalKey: nativeGoalKey(bad), Message: "blocked"})
 		require.NoError(t, err)
 		deps := []jobdb.Dependency{{Target: jobdb.DependencyTarget{JobID: "good"}, Condition: jobdb.JobPrereqSuccess}, {Target: jobdb.DependencyTarget{GoalID: bad.GoalID}, Condition: jobdb.JobPrereqSuccess}, {Target: jobdb.DependencyTarget{GoalID: open.GoalID}, Condition: jobdb.JobPrereqSuccess}}
-		_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: "ordered", WorkerID: "submit", JobType: "work", Dependencies: deps})
+		_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "ordered", WorkerID: "submit", JobType: "work", Dependencies: deps})
 		require.NoError(t, err)
 		key := jobdb.DependencyWaitKey{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "ordered"}, WaitID: "submission"}
 		w, err := pgjobdb.GetDependencyWait(ctx, db, key)
@@ -294,7 +294,7 @@ func TestPostgresGoalOrderedOutcomesAndDeletion(t *testing.T) {
 		require.Equal(t, "good", w.Dependencies[0].SatisfiedByJobID)
 		require.Equal(t, jobdb.DependencyCancelled, w.Dependencies[2].State)
 		deps[0].Condition = jobdb.JobPrereqComplete
-		_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: "ordered", WorkerID: "submit", JobType: "work", Dependencies: deps})
+		_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "ordered", WorkerID: "submit", JobType: "work", Dependencies: deps})
 		require.ErrorIs(t, err, jobdb.ErrConflict)
 		// Cancelling a pending consumer removes subscriptions, retaining its outcome.
 		nativeGoalJob(t, ctx, db, "abandoned")

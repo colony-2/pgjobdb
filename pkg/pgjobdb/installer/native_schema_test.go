@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/colony-2/jobdb/pkg/jobdb"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
+
 	pgjobdbinstaller "github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
 )
 
@@ -15,28 +18,32 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 			t.Fatalf("reapply schema: %v", err)
 		}
 
+		cell, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
+		if err != nil {
+			t.Fatal(err)
+		}
 		const insertSchedule = `INSERT INTO pgjobdb.schedules
 			(tenant_id, schedule_id, state, generation, spec_hash, trigger,
 			target_job_type, target_snapshot, overlap_policy, failure_policy)
 			VALUES ('tenant', 'daily', 'ACTIVE', 1, 'hash', '{}',
-			'collect', '{}', 'ALLOW', '{}')`
-		if _, err := db.ExecContext(ctx, insertSchedule); err != nil {
+			'collect', jsonb_build_object('cellId',$1::text,'cellRepo','example.test/test'), 'ALLOW', '{}')`
+		if _, err := db.ExecContext(ctx, insertSchedule, cell.ID); err != nil {
 			t.Fatalf("insert schedule: %v", err)
 		}
 
-		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.goals(tenant_id,goal_id) VALUES ('tenant','goal-1')`); err != nil {
+		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.goals(tenant_id,goal_id,cell_id,cell_repo) VALUES ('tenant','goal-1',$1,'example.test/test')`, cell.ID); err != nil {
 			t.Fatal(err)
 		}
 		const insertFact = `INSERT INTO pgjobdb.job_facts
-			(tenant_id, job_id, goal_id, job_type, run_policy, app_metadata,
+			(cell_id,cell_name,cell_repo,tenant_id, job_id, goal_id, job_type, run_policy, app_metadata,
 			schedule_id, schedule_generation, schedule_spec_hash,
 			scheduled_at, schedule_run_id)
-			VALUES ('tenant', $1, 'goal-1', 'collect', '{}', '{"source":"test"}',
+			VALUES ($3,'test','example.test/test','tenant', $1, 'goal-1', 'collect', '{}', '{"source":"test"}',
 			'daily', 1, 'hash', now(), $2)`
-		if _, err := db.ExecContext(ctx, insertFact, "job-1", "run-1"); err != nil {
+		if _, err := db.ExecContext(ctx, insertFact, "job-1", "run-1", cell.ID); err != nil {
 			t.Fatalf("insert job fact: %v", err)
 		}
-		if _, err := db.ExecContext(ctx, insertFact, "job-2", "run-1"); err == nil {
+		if _, err := db.ExecContext(ctx, insertFact, "job-2", "run-1", cell.ID); err == nil {
 			t.Fatal("expected duplicate schedule run to fail")
 		}
 		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.job_facts
@@ -102,6 +109,15 @@ func TestGenericQueueProceduresAreAbsent(t *testing.T) {
 		}
 		if count != 0 {
 			t.Fatalf("found %d generic queue procedures", count)
+		}
+
+		// The hard break exposes one current signature, with no older overloads.
+		for name, args := range map[string]int{"submit_native_job": 18, "prepare_job": 8, "get_native_work": 10, "list_native_jobs": 20, "reschedule_native_job": 21} {
+			var total, matched int
+			err := db.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE p.pronargs=$2) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='pgjobdb' AND p.proname=$1`, name, args).Scan(&total, &matched)
+			if err != nil || total != 1 || matched != 1 {
+				t.Fatalf("%s signatures: total=%d current=%d err=%v", name, total, matched, err)
+			}
 		}
 	})
 }

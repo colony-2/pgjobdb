@@ -17,7 +17,7 @@ func TestNativeSchedulerAdapterMutatesTypedJob(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		adapter := runtimeadapter.Scheduler{DB: db}
 		key := jobdb.JobKey{TenantId: "tenant", JobId: "job"}
-		created, err := adapter.CreateJob(ctx, runtimecore.CreateJobRequest{
+		created, err := adapter.CreateJob(ctx, runtimecore.CreateJobRequest{Cell: jobdb.ResolvedCell{Cell: "test", CellRepo: "example.test/test"},
 			JobKey: key, JobType: "collect", WorkerID: "submitter",
 			RunPolicy: jobdb.RunPolicy{Retry: jobdb.RetryPolicy{
 				InitialInterval: jobdb.Duration(250 * time.Millisecond), MaximumAttempts: 3,

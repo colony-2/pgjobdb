@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	pgjobdbinstaller "github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
 )
 
@@ -73,7 +75,7 @@ func TestInstallerRejectsLegacyState(t *testing.T) {
 
 func TestInstallerRejectsInvalidSchemaName(t *testing.T) {
 	inst := pgjobdbinstaller.Installer{DB: new(sql.DB), Schema: `bad;DROP TABLE jobs`}
-	if err := inst.Apply(context.Background()); err == nil ||
+	if err := inst.Apply(celltest.Context(context.Background())); err == nil ||
 		!strings.Contains(err.Error(), "invalid schema name") {
 		t.Fatalf("expected invalid schema name, got %v", err)
 	}
@@ -81,14 +83,14 @@ func TestInstallerRejectsInvalidSchemaName(t *testing.T) {
 
 func TestInstallerRejectsAlternateSchema(t *testing.T) {
 	inst := pgjobdbinstaller.Installer{DB: new(sql.DB), Schema: "alternate"}
-	if err := inst.Apply(context.Background()); err == nil ||
+	if err := inst.Apply(celltest.Context(context.Background())); err == nil ||
 		!strings.Contains(err.Error(), "unsupported schema") {
 		t.Fatalf("expected unsupported schema error, got %v", err)
 	}
 }
 
 func TestInstallerRejectsPreviousFormats(t *testing.T) {
-	for _, old := range []int{1, 3, 4, 5, 6} {
+	for _, old := range []int{1, 2, 3, 4, 5, 6, 7} {
 		t.Run(fmt.Sprint(old), func(t *testing.T) {
 			withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
 				if _, err := db.ExecContext(ctx, `CREATE SCHEMA pgjobdb;CREATE TABLE pgjobdb.installation(name TEXT PRIMARY KEY,format_version INTEGER)`); err != nil {

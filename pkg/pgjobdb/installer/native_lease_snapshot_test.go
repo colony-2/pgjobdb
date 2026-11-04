@@ -16,7 +16,7 @@ func TestNativeLeaseExecutionSnapshot(t *testing.T) {
 		for _, kind := range []string{"job", "task", "job-alternate", "task-to-job", "task-alternate"} {
 			t.Run(kind, func(t *testing.T) {
 				id := pgjobdb.JobID(kind)
-				_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+				_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 					TenantID: "tenant", JobID: id, WorkerID: "submitter", JobType: "primary",
 					Runtime: pgjobdb.RuntimeMetadata{SchemaHash: "schema"}, RunPolicy: pgjobdb.RunPolicy{Retry: pgjobdb.RetryPolicy{MaximumAttempts: 3}},
 					ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"cursor":1}`)},
@@ -103,9 +103,9 @@ func TestNativeLeaseExecutionSnapshot(t *testing.T) {
 
 func TestNativeRenewalCannotReviveLeaseAfterLockWait(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: "locked", WorkerID: "submitter", JobType: "job"})
+		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "locked", WorkerID: "submitter", JobType: "job"})
 		require.NoError(t, err)
-		lease, err := pgjobdb.GetWork(ctx, db, "owner", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"job"}}, pgjobdb.GetWorkOptions{LeaseDuration: time.Second})
+		lease, err := pgjobdb.GetWork(ctx, db, "owner", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"job"}}, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, LeaseDuration: time.Second})
 		require.NoError(t, err)
 		require.NotNil(t, lease)
 		tx, err := db.BeginTx(ctx, nil)

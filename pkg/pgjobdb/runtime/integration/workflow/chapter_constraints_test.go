@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 )
@@ -30,18 +32,18 @@ func TestExecutionHistoryConstraintsAcrossEngines(t *testing.T) {
 			} else {
 				dsn, stop := startEmbeddedPostgres(t)
 				defer stop()
-				if err := installPgjobdb(context.Background(), dsn); err != nil {
+				if err := installPgjobdb(celltest.Context(context.Background()), dsn); err != nil {
 					t.Fatal(err)
 				}
 				uri, blobs := startChapterBlobStore(t)
 				defer blobs.Shutdown()
 				engine = buildDirectEngine(t, dsn, uri, configure)
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 				defer cancel()
 				go engine.Run(ctx)
 			}
-			ctx := context.Background()
-			keyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{TenantId: "test-tenant", JobType: worker.Name(), Data: jobdb.NewTaskDataOrPanic(map[string]int{"n": 1})})
+			ctx := celltest.Context(context.Background())
+			keyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "test-tenant", JobType: worker.Name(), Data: jobdb.NewTaskDataOrPanic(map[string]int{"n": 1})})
 			key := keyHandle.JobKey
 			if err != nil {
 				t.Fatal(err)
@@ -118,7 +120,7 @@ func waitForJobToComplete(t *testing.T, engine workflow.Engine, key jobdb.JobKey
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		status, err := jobStatusForTest(engine, context.Background(), key)
+		status, err := jobStatusForTest(engine, celltest.Context(context.Background()), key)
 		if err != nil {
 			t.Fatal(err)
 		}

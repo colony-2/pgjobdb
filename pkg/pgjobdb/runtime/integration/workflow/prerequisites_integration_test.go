@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 )
@@ -54,7 +56,7 @@ func (prereqRestartTaskWorker) Run(ctx workflow.TaskContext, input jobdb.TaskDat
 }
 
 func TestPrerequisitesSuccessAndComplete(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 	defer cancel()
 
 	postgresDSN, stopPG := startEmbeddedPostgres(t)
@@ -78,7 +80,7 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 	go engine.Run(ctx)
 
 	successJobID := "prereq-success"
-	successKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	successKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  prereqSuccessJobName,
 		JobID:    successJobID,
@@ -90,7 +92,7 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 	}
 
 	failJobID := "prereq-fail"
-	failKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	failKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  prereqFailJobName,
 		JobID:    failJobID,
@@ -101,7 +103,7 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 		t.Fatalf("start failed prereq: %v", err)
 	}
 
-	successDependentHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	successDependentHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  prereqDependentJobName,
 		JobID:    "dependent-success",
@@ -115,7 +117,7 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 		t.Fatalf("start dependent success: %v", err)
 	}
 
-	failedDependentHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	failedDependentHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  prereqDependentJobName,
 		JobID:    "dependent-failed",
@@ -129,7 +131,7 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 		t.Fatalf("start dependent failed: %v", err)
 	}
 
-	completeDependentHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	completeDependentHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  prereqDependentJobName,
 		JobID:    "dependent-complete",
@@ -165,7 +167,7 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 }
 
 func TestRestartPrerequisitesCheckedAtExecutionBoundary(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 	defer cancel()
 
 	postgresDSN, stopPG := startEmbeddedPostgres(t)
@@ -189,7 +191,7 @@ func TestRestartPrerequisitesCheckedAtExecutionBoundary(t *testing.T) {
 	go engine.Run(ctx)
 
 	baseInput := map[string]interface{}{"n": 1}
-	baseKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	baseKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  prereqRestartJobName,
 		JobID:    "restart-base",
@@ -203,7 +205,7 @@ func TestRestartPrerequisitesCheckedAtExecutionBoundary(t *testing.T) {
 		t.Fatalf("wait base job: %v", err)
 	}
 
-	failKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+	failKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 		TenantId: tenantID,
 		JobType:  prereqFailJobName,
 		JobID:    "restart-prereq-fail",
@@ -231,7 +233,7 @@ func TestRestartPrerequisitesCheckedAtExecutionBoundary(t *testing.T) {
 	if target == "" {
 		t.Fatal("missing task restart boundary")
 	}
-	restartKeyHandle, err := engine.SubmitRestartJob(ctx, jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{
+	restartKeyHandle, err := engine.SubmitRestartJob(ctx, jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{Cell: "test",
 		PriorJobKey:      baseKey,
 		ExecutionRestart: &jobdb.ExecutionRestart{ScopeID: target},
 		JobID:            "restart-with-prereqs",

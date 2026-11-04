@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/workflow"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +24,7 @@ import (
 // where files are deleted before they can be uploaded.
 func TestArtifactCleanupAfterUpload(t *testing.T) {
 	t.Run("file artifact cleanup waits for upload", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 		defer cancel()
 
 		// Start embedded Postgres
@@ -74,7 +76,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 
 		// Start the job
 		startTime := time.Now()
-		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"key": "value"}),
@@ -115,7 +117,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 	})
 
 	t.Run("cleanup happens even on task error", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 		defer cancel()
 
 		// Start embedded Postgres
@@ -160,7 +162,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 		go engine.Run(ctx)
 
 		// Start the job with artifact
-		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data: &jobdb.SimpleTaskData{
@@ -186,7 +188,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 	})
 
 	t.Run("task output artifact falls back after cleanup", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 		defer cancel()
 
 		postgresDSN, stopPG := startEmbeddedPostgres(t)
@@ -218,7 +220,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 
 		go engine.Run(ctx)
 
-		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{
+		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "test-tenant",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"key": "value"}),
@@ -284,7 +286,7 @@ func (j *fallbackArtifactJob) Run(ctx workflow.ExecutionContext, input jobdb.Job
 	if len(artifacts) != 1 {
 		return nil, fmt.Errorf("expected 1 artifact, got %d", len(artifacts))
 	}
-	data, err := artifacts[0].Bytes(context.Background())
+	data, err := artifacts[0].Bytes(celltest.Context(context.Background()))
 	if err != nil {
 		return nil, fmt.Errorf("read artifact: %w", err)
 	}

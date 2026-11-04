@@ -11,6 +11,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/lib/pq"
 )
 
@@ -24,7 +25,7 @@ type jobCursor struct {
 // ListJobs retains the native detail-list API. Workflow listing uses ListJobSummaries.
 func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult, error) {
 	page, err := listJobs(ctx, db, opts, `SELECT * FROM pgjobdb.list_native_jobs(
- $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
 		scanListedJobDetail, func(j JobDetail) jobCursor {
 			return jobCursor{CreatedAt: j.CreatedAt, TenantID: j.TenantID, JobID: j.JobID}
 		})
@@ -220,7 +221,12 @@ func listJobs[T any](ctx context.Context, db DB, opts ListJobsOptions, query str
 			return nil, fmt.Errorf("pgjobdb: empty goal filter")
 		}
 	}
-	filters := []any{
+	cellIDs, err := selectCells(ctx, db, opts.TenantIDs, opts.CellNames, "jobs.list")
+	if err != nil {
+		return nil, err
+	}
+	authority, _ := jobdb.CellAuthorityFromContext(ctx)
+	filters := []any{cellIDs, authority, opts.CellNames,
 		tenantIDs, statuses, stores, jobTypes, tasks, keys, parentIDs,
 		opts.RootOnly, predicates, opts.CreatedAfter, opts.CreatedBefore,
 	}
@@ -264,7 +270,7 @@ func listJobs[T any](ctx context.Context, db DB, opts ListJobsOptions, query str
 		string(taskJSON), string(keyJSON), pq.Array(nilIfEmpty(parentIDs)),
 		opts.RootOnly, string(predicateJSON), optionalTime(opts.CreatedAfter),
 		optionalTime(opts.CreatedBefore), beforeCreated, beforeTenant, beforeJob,
-		opts.PageSize+1, string(routeJSON), opts.Now, opts.IncludeHidden, pq.Array(nilIfEmpty(goalIDs)))
+		opts.PageSize+1, string(routeJSON), opts.Now, opts.IncludeHidden, pq.Array(nilIfEmpty(goalIDs)), pq.Array(cellIDs))
 	if err != nil {
 		return nil, err
 	}

@@ -58,8 +58,9 @@ func (s Scheduler) GetJob(ctx context.Context, key jobdb.JobKey) (runtimecore.St
 
 func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest) (runtimecore.ListJobsResponse, error) {
 	opts := pgjobdb.ListJobsOptions{
-		GoalIDs:  req.GoalIDs,
-		RootOnly: req.RootOnly, CreatedAfter: req.CreatedAfter, IncludeHidden: req.IncludeHidden,
+		CellNames: req.CellNames,
+		GoalIDs:   req.GoalIDs,
+		RootOnly:  req.RootOnly, CreatedAfter: req.CreatedAfter, IncludeHidden: req.IncludeHidden,
 		CreatedBefore: req.CreatedBefore, PageSize: req.PageSize,
 		PageToken: req.PageToken, Now: req.Now,
 	}
@@ -106,6 +107,7 @@ func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest
 	}
 	for _, summary := range listed.Jobs {
 		row := runtimecore.StoredJob{
+			Cell:   jobdb.ResolvedCell{Cell: summary.Cell, CellID: summary.CellID, CellRepo: summary.CellRepo},
 			JobKey: jobdb.JobKey{TenantId: string(summary.TenantID), JobId: string(summary.JobID)},
 			GoalID: summary.GoalID, Store: jobdb.JobStore(summary.Store), Status: jobdb.JobStatus(summary.Status),
 			JobType: string(summary.JobType), RouteJobType: string(summary.RouteJobType), WorkKind: runtimecore.WorkKind(summary.WorkKind),
@@ -159,6 +161,7 @@ func metadataPredicatesToPgjobdb(input []jobdb.MetadataPredicate) ([]pgjobdb.Met
 
 func storedJobFromDetail(detail pgjobdb.JobDetail) (runtimecore.StoredJob, error) {
 	row := runtimecore.StoredJob{
+		Cell:   jobdb.ResolvedCell{Cell: detail.Cell, CellID: detail.CellID, CellRepo: detail.CellRepo},
 		GoalID: detail.GoalID, OtherGoalIDs: detail.OtherGoalIDs,
 		JobKey: jobdb.JobKey{TenantId: string(detail.TenantID), JobId: string(detail.JobID)},
 		Store:  jobdb.JobStore(detail.Store), Status: jobdb.JobStatus(detail.Status),

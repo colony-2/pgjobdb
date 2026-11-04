@@ -6,12 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 )
 
 func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
-	ctx := context.Background()
+	ctx := celltest.Context(context.Background())
 	postgresDSN, stopPG := startEmbeddedPostgres(t)
 	defer stopPG()
 	if err := installPgjobdb(ctx, postgresDSN); err != nil {
@@ -35,7 +37,7 @@ func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
 	createdArchive := now.Add(-3 * time.Minute)
 
 	insertJob := func(id, jobType string, created time.Time, taskType string, cancel bool) {
-		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "test-tenant", JobID: pgjobdb.JobID(id),
 			WorkerID: "submitter", JobType: pgjobdb.JobType(jobType),
 		})

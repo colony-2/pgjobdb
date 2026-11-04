@@ -5,23 +5,30 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+
+	"github.com/colony-2/jobdb/pkg/jobdb"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 )
 
 func TestScheduleProcedures(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
+		cell, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
+		if err != nil {
+			t.Fatal(err)
+		}
 		var generation int64
 		var state, target string
 		const upsert = `SELECT generation, state, target_job_type
 			FROM pgjobdb.upsert_schedule('tenant', 'daily', 'ACTIVE', 'hash-1',
-			'{"kind":"interval"}', 'collect', '{"input":1}', 'ALLOW', '{}',
+			'{"kind":"interval"}', 'collect', jsonb_build_object('input',1,'cellId',$2::text,'cellRepo','example.test/test'), 'ALLOW', '{}',
 			now(), 'job-next', $1)`
-		if err := db.QueryRowContext(ctx, upsert, nil).Scan(&generation, &state, &target); err != nil {
+		if err := db.QueryRowContext(ctx, upsert, nil, cell.ID).Scan(&generation, &state, &target); err != nil {
 			t.Fatalf("create schedule: %v", err)
 		}
 		if generation != 1 || state != "ACTIVE" || target != "collect" {
 			t.Fatalf("created schedule = %d %q %q", generation, state, target)
 		}
-		if err := db.QueryRowContext(ctx, upsert, int64(1)).Scan(
+		if err := db.QueryRowContext(ctx, upsert, int64(1), cell.ID).Scan(
 			&generation, &state, &target,
 		); err != nil {
 			t.Fatalf("update schedule: %v", err)
@@ -29,7 +36,7 @@ func TestScheduleProcedures(t *testing.T) {
 		if generation != 2 {
 			t.Fatalf("updated generation = %d, want 2", generation)
 		}
-		if err := db.QueryRowContext(ctx, upsert, int64(1)).Scan(
+		if err := db.QueryRowContext(ctx, upsert, int64(1), cell.ID).Scan(
 			&generation, &state, &target,
 		); err == nil {
 			t.Fatal("expected stale generation to fail")
@@ -55,7 +62,7 @@ func TestScheduleProcedures(t *testing.T) {
 		}
 
 		var snapshot string
-		if err := db.QueryRowContext(ctx, `SELECT target_snapshot::text
+		if err := db.QueryRowContext(ctx, `SELECT (target_snapshot - 'cellId' - 'cellRepo')::text
 			FROM pgjobdb.get_schedule('tenant', 'daily')`).Scan(&snapshot); err != nil {
 			t.Fatalf("get schedule: %v", err)
 		}
@@ -63,13 +70,13 @@ func TestScheduleProcedures(t *testing.T) {
 			t.Fatalf("target snapshot = %q", snapshot)
 		}
 		if _, err := db.ExecContext(ctx, `SELECT pgjobdb.upsert_schedule(
-			'tenant', 'weekly', 'ACTIVE', 'hash-2', '{}', 'collect', '{}',
-			'ALLOW', '{}', now(), 'job-weekly')`); err != nil {
+			'tenant', 'weekly', 'ACTIVE', 'hash-2', '{}', 'collect', jsonb_build_object('cellId',$1::text,'cellRepo','example.test/test'),
+			'ALLOW', '{}', now(), 'job-weekly')`, cell.ID); err != nil {
 			t.Fatalf("create weekly schedule: %v", err)
 		}
 		if _, err := db.ExecContext(ctx, `SELECT pgjobdb.upsert_schedule(
-			'tenant', 'paused', 'PAUSED', 'hash-3', '{}', 'collect', '{}',
-			'ALLOW', '{}', NULL, NULL)`); err != nil {
+			'tenant', 'paused', 'PAUSED', 'hash-3', '{}', 'collect', jsonb_build_object('cellId',$1::text,'cellRepo','example.test/test'),
+			'ALLOW', '{}', NULL, NULL)`, cell.ID); err != nil {
 			t.Fatalf("create paused schedule: %v", err)
 		}
 		var count int
@@ -107,7 +114,7 @@ func TestScheduleProcedures(t *testing.T) {
 		if generation != 5 || state != "ARCHIVED" {
 			t.Fatalf("archived schedule = %d %q", generation, state)
 		}
-		if err := db.QueryRowContext(ctx, upsert, nil).Scan(
+		if err := db.QueryRowContext(ctx, upsert, nil, cell.ID).Scan(
 			&generation, &state, &target,
 		); err == nil {
 			t.Fatal("expected archived schedule update to fail")

@@ -28,7 +28,7 @@ func TestRestartPreservesOversizedLegacyChapters(t *testing.T) {
 		// Seed history admitted before the current 256 KiB write limit.
 		legacy, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, db), Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas, MaxChapterApplicationPayloadBytes: 2 * 1024 * 1024})
 		require.NoError(t, err)
-		source, err := legacy.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: "legacy", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
+		source, err := legacy.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "legacy", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
 		require.NoError(t, err)
 		leases, err := legacy.PollWork(ctx, jobdb.PollWorkRequest{TenantId: "tenant", WorkerID: "writer", Routes: []jobdb.Route{{JobType: "recipe"}}, Limit: 1})
 		require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestRestartPreservesOversizedLegacyChapters(t *testing.T) {
 		require.NoError(t, err)
 		defer rt.Close(ctx)
 		for i, schema := range []json.RawMessage{json.RawMessage(`{"chapterShape":true}`), json.RawMessage(`{"chapterShape":{"properties":{"ordinal":{"minimum":43}}}}`)} {
-			req := jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{PriorJobKey: source.JobKey, JobID: fmt.Sprintf("restart-%d", i), LastStepToKeep: 42, Schema: &jobdb.JobSchemaSelector{Schema: schema}}}
+			req := jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{Cell: "test", PriorJobKey: source.JobKey, JobID: fmt.Sprintf("restart-%d", i), LastStepToKeep: 42, Schema: &jobdb.JobSchemaSelector{Schema: schema}}}
 			clone, err := rt.SubmitRestartJob(ctx, req)
 			require.NoError(t, err)
 			inherited, err := rt.GetChapter(ctx, jobdb.ChapterRef{JobKey: clone.JobKey, Ordinal: 3})

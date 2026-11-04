@@ -11,8 +11,8 @@ require a `BlobStoreURI` for chapter artifacts. Call `Close` when finished.
 
 The first deployment requires a brand-new empty Postgres database. Startup
 creates the `pgjobdb` schema and the JobDB chapter and schema tables. Later
-starts accept an initialized format-7 `pgjobdb` installation. The job-goals
-upgrade requires a fresh database; format 6 and older are rejected unchanged.
+starts accept an initialized format-8 `pgjobdb` installation. The cells
+upgrade requires a fresh database; format 7 and older are rejected unchanged.
 Startup also rejects old `pgwf` databases, other configured scheduler schemas, and a fresh database
 that already contains user tables. There is no migration from earlier formats or dual-read period.
 
@@ -30,17 +30,32 @@ the Postgres runtime:
 go run ./cmd/jobdb direct --postgres-dsn "$JOBDB_POSTGRES_DSN" --blob-store-uri 'blobfs:///tmp/jobdb-blobs'
 ```
 
+## Cells
+
+Every submitted job requires a cell name; implicit creation additionally requires
+its repository. Live root leases may submit to any tenant cell. Cell names are
+unique and mutable; IDs and job repository snapshots are stable. PATCH supports
+repo, name, description, and metadata updates. Cells are retired rather than deleted.
+
+```sh
+jobdb cell create --tenant acme --name root --repo github.com/acme/root --url http://localhost:8080
+jobdb cell create --tenant acme --name payments --repo github.com/acme/payments --url http://localhost:8080
+```
+
+See [cells](docs/cells.md) for API, authorization, transaction guarantees, and the
+fresh-state cutover. The `create-root` command has been removed.
+
 ## JobDB consumer API
 
-The current dependency is JobDB v0.0.61-0.20261028013137-1077c32a9705
-(`1077c32a9705`, main as of 2026-10-28). Engine submission returns a `workflow.JobHandle`; use its `JobKey`
+The current dependency is JobDB `v0.0.68-0.20261104000410-a21636d234ce`.
+Engine submission returns a `workflow.JobHandle`; use its `JobKey`
 for job operations and `GoalID` for goal dependencies. Engine restart submission
 takes `SubmitRestartJobRequest{Job: ...}` and also returns a handle. Restarts
 inherit the source job's metadata. Goal and pending-dependency discovery are
 available through both direct and HTTP runtimes.
 
-Ordinary runtime job lists now return compact summaries in one database query
-per page. They retain full metadata, status, stored route, primary goal ID,
+Ordinary runtime job lists return compact summaries using one cell-registry
+snapshot per requested tenant and one row query per page. They retain full metadata, status, stored route, primary goal ID,
 payload revision, and a small pending-wait summary. Use `GetJob` for payloads,
 execution state, prerequisite lists, additional goal memberships, completion
 text, and dependency explanations. The native scheduler exposes this path as
@@ -89,7 +104,7 @@ rescheduling resets the streak. An operator can explicitly restore eligibility
 with `pgjobdb.clear_crash_concern(tenant_id, job_id, worker_id, reason)`.
 
 The acquisition fix itself changes functions rather than the database format.
-The current release also includes job goals and requires the format-7 cutover
+The current release also includes job goals and requires the format-8 cutover
 described above.
 
 ## Container image

@@ -43,14 +43,14 @@ func (i Installer) Verify(ctx context.Context) error {
 	}
 	schema := i.schemaName()
 
-	for _, tbl := range []string{"installation", "jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts", "job_client_state", "goals", "goal_candidates", "job_preparations", "dependency_waits", "dependency_targets"} {
+	for _, tbl := range []string{"cells", "cell_names", "cell_catalog", "installation", "jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts", "job_client_state", "goals", "goal_candidates", "job_preparations", "dependency_waits", "dependency_targets"} {
 		if err := i.assertTable(ctx, schema, tbl); err != nil {
 			return err
 		}
 	}
 	for table, columns := range map[string][]string{
 		"dependency_waits": {"deadline_exact"},
-		"job_facts":        {"hidden_at", "goal_id"},
+		"job_facts":        {"hidden_at", "goal_id", "cell_id", "cell_repo", "cell_name"},
 		"job_client_state": {"client_payload", "revision", "initial_payload_digest"},
 		"jobs":             {"goal_id", "dependency_wait_id", "route_job_type", "work_kind", "lease_worker_id", "lease_route_job_type", "lease_work_kind", "lease_task_type", "alternate_at", "wait_until_is_deadline"},
 		"jobs_archive":     {"final_route_job_type", "final_work_kind", "final_alternate_at"},
@@ -157,7 +157,7 @@ func (i Installer) assertInstallation(ctx context.Context, schema string) error 
 	if err := i.DB.QueryRowContext(ctx, query, schema).Scan(&version); err != nil {
 		return fmt.Errorf("pgjobdb: read installation marker: %w", err)
 	}
-	if version != 7 {
+	if version != 8 {
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil

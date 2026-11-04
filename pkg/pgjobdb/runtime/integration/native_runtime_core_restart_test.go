@@ -40,7 +40,7 @@ func TestNativeRuntimeCoreRestartsFromChapterPrefix(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		source, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+		source, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "tenant", JobID: "source", JobType: "collect", Data: data,
 		}})
 		if err != nil {
@@ -68,7 +68,7 @@ func TestNativeRuntimeCoreRestartsFromChapterPrefix(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req := jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{
+		req := jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{Cell: "test",
 			PriorJobKey: source.JobKey, LastStepToKeep: 0,
 			JobID: "restart", ExtraTaskOutput: extra,
 		}}

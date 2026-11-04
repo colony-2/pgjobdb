@@ -16,7 +16,7 @@ import (
 
 func TestNativeSchedulerAdapterLeasesTypedWork(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{
+		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "job", WorkerID: "submitter", JobType: "collect",
 			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{}`)},
 		})

@@ -19,9 +19,10 @@ WITH parameters AS NOT MATERIALIZED (SELECT
     $16::jsonb AS p_available_routes,
     $17::timestamptz AS p_now,
     $18::boolean AS p_include_hidden,
-    $19::text[] AS p_goal_ids
+    $19::text[] AS p_goal_ids,
+ $20::text[] AS p_cell_ids
 ), candidates AS NOT MATERIALIZED (
-    SELECT f.tenant_id,f.job_id,f.goal_id,'ACTIVE'::text AS store,
+    SELECT f.tenant_id,f.job_id,f.goal_id,f.cell_id,f.cell_repo,'ACTIVE'::text AS store,
         CASE WHEN p_statuses IS NOT NULL OR jsonb_array_length(p_available_routes)>0
             THEN pgjobdb.job_status_at(j,p_now) END AS status,
         f.job_type,j.route_job_type,j.work_kind,j.task_type,
@@ -39,7 +40,7 @@ WITH parameters AS NOT MATERIALIZED (SELECT
     CROSS JOIN LATERAL pgjobdb.effective_native_route(j,p_now) route
     WHERE j.route_job_type IS NOT NULL
     UNION ALL
-    SELECT f.tenant_id,f.job_id,f.goal_id,'ARCHIVED'::text,
+    SELECT f.tenant_id,f.job_id,f.goal_id,f.cell_id,f.cell_repo,'ARCHIVED'::text,
         CASE WHEN a.final_cancel_requested OR a.completion_status='cancelled'
             THEN 'CANCELLED' ELSE 'COMPLETED' END,
         f.job_type,a.final_route_job_type,a.final_work_kind,a.final_task_type,
@@ -55,7 +56,7 @@ WITH parameters AS NOT MATERIALIZED (SELECT
     WHERE a.final_route_job_type IS NOT NULL
 ), page AS MATERIALIZED (
     SELECT n.* FROM candidates n CROSS JOIN parameters
-    WHERE n.tenant_id = ANY(p_tenant_ids)
+    WHERE n.tenant_id = ANY(p_tenant_ids) AND n.cell_id=ANY(p_cell_ids)
       AND (p_goal_ids IS NULL OR n.goal_id=ANY(p_goal_ids) OR EXISTS(SELECT 1 FROM pgjobdb.goal_candidates gc WHERE gc.tenant_id=n.tenant_id AND gc.job_id=n.job_id AND gc.goal_id=ANY(p_goal_ids)))
       AND (p_include_hidden OR n.hidden_at IS NULL)
       AND (p_statuses IS NULL OR n.status = ANY(p_statuses))
@@ -100,7 +101,8 @@ WITH parameters AS NOT MATERIALIZED (SELECT
     LIMIT $15::integer
 )
 SELECT jsonb_build_object(
-    'tenant_id',n.tenant_id,'job_id',n.job_id,'goal_id',n.goal_id,
+    'cell_id',n.cell_id,'cell_repo',n.cell_repo,'cell',(SELECT name FROM pgjobdb.cells WHERE tenant_id=n.tenant_id AND cell_id=n.cell_id),
+ 'tenant_id',n.tenant_id,'job_id',n.job_id,'goal_id',n.goal_id,
     'store',n.store,'status',COALESCE(n.status,(SELECT pgjobdb.job_status_at(j,p_now)
         FROM pgjobdb.jobs j WHERE j.tenant_id=n.tenant_id AND j.job_id=n.job_id)),
     'job_type',n.job_type,

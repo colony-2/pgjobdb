@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	remoteruntime "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	sqliteruntime "github.com/colony-2/jobdb/pkg/jobdb/runtime/sqlite"
@@ -207,7 +209,7 @@ func MustStartJobAsync(t *testing.T, engine workflow.Engine, start jobdb.SubmitJ
 	t.Helper()
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.SubmitJob(context.Background(), start)
+		_, err := engine.SubmitJob(celltest.Context(context.Background()), start)
 		done <- err
 	}()
 	return done
@@ -334,7 +336,7 @@ func newToyHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarne
 
 func newDirectHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
-	embedded, err := directruntime.StartEmbeddedRuntime(context.Background())
+	embedded, err := directruntime.StartEmbeddedRuntime(celltest.Context(context.Background()))
 	if err != nil {
 		t.Fatalf("start embedded direct runtime: %v", err)
 	}
@@ -343,7 +345,7 @@ func newDirectHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHa
 
 func newSQLiteHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
-	embedded, err := sqliteruntime.StartEmbeddedRuntime(context.Background())
+	embedded, err := sqliteruntime.StartEmbeddedRuntime(celltest.Context(context.Background()))
 	if err != nil {
 		t.Fatalf("start embedded sqlite runtime: %v", err)
 	}
@@ -353,7 +355,7 @@ func newSQLiteHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHa
 func newRemoteToyHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
 	underlying := toyruntime.New()
-	server := httptest.NewServer(remoteruntime.NewServer(underlying))
+	server := httptest.NewServer(celltest.Handler(remoteruntime.NewServer(underlying)))
 	runtime, err := remoteruntime.New(server.URL, server.Client())
 	if err != nil {
 		server.Close()
@@ -364,11 +366,11 @@ func newRemoteToyHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntim
 
 func newRemoteDirectHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
-	embedded, err := directruntime.StartEmbeddedRuntime(context.Background())
+	embedded, err := directruntime.StartEmbeddedRuntime(celltest.Context(context.Background()))
 	if err != nil {
 		t.Fatalf("start embedded direct runtime: %v", err)
 	}
-	server := httptest.NewServer(remoteruntime.NewServer(embedded.Runtime))
+	server := httptest.NewServer(celltest.Handler(remoteruntime.NewServer(embedded.Runtime)))
 	runtime, err := remoteruntime.New(server.URL, server.Client())
 	if err != nil {
 		server.Close()
@@ -384,11 +386,11 @@ func newRemoteDirectHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRun
 
 func newRemoteSQLiteHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
-	embedded, err := sqliteruntime.StartEmbeddedRuntime(context.Background())
+	embedded, err := sqliteruntime.StartEmbeddedRuntime(celltest.Context(context.Background()))
 	if err != nil {
 		t.Fatalf("start embedded sqlite runtime: %v", err)
 	}
-	server := httptest.NewServer(remoteruntime.NewServer(embedded.Runtime))
+	server := httptest.NewServer(celltest.Handler(remoteruntime.NewServer(embedded.Runtime)))
 	runtime, err := remoteruntime.New(server.URL, server.Client())
 	if err != nil {
 		server.Close()
@@ -438,7 +440,7 @@ func buildHarness(t *testing.T, name string, runtime jobdb.WorkflowRuntime, star
 		runDone <-chan struct{}
 	)
 	if startLoop && len(workers) > 0 {
-		runCtx, runCancel := context.WithCancel(context.Background())
+		runCtx, runCancel := context.WithCancel(celltest.Context(context.Background()))
 		cancel = runCancel
 		done := make(chan struct{})
 		runDone = done
@@ -590,7 +592,7 @@ func (r *tenantNamespacedRuntime) ListJobs(ctx context.Context, req jobdb.ListJo
 
 func (r *tenantNamespacedRuntime) UpsertSchedule(ctx context.Context, req jobdb.UpsertScheduleRequest) (jobdb.ScheduleInfo, error) {
 	req.TenantId = r.prefixTenant(req.TenantId)
-	info, err := r.runtime.UpsertSchedule(ctx, req)
+	info, err := celltest.Schedule(ctx, r.runtime, req)
 	if err != nil {
 		return jobdb.ScheduleInfo{}, err
 	}
@@ -856,4 +858,40 @@ func (r *tenantNamespacedRuntime) GetDependencyWait(ctx context.Context, key job
 	info, err := r.runtime.GetDependencyWait(ctx, key)
 	info.JobKey = r.stripJobKey(info.JobKey)
 	return info, err
+}
+
+func (r *tenantNamespacedRuntime) CreateCell(ctx context.Context, req jobdb.CreateCellRequest) (out jobdb.Cell, err error) {
+	req.TenantID = r.prefixTenant(req.TenantID)
+	out, err = r.runtime.CreateCell(ctx, req)
+	out.TenantID = r.stripTenant(out.TenantID)
+	return
+}
+func (r *tenantNamespacedRuntime) GetCell(ctx context.Context, req jobdb.CellKey) (out jobdb.Cell, err error) {
+	req.TenantID = r.prefixTenant(req.TenantID)
+	out, err = r.runtime.GetCell(ctx, req)
+	out.TenantID = r.stripTenant(out.TenantID)
+	return
+}
+func (r *tenantNamespacedRuntime) ListCells(ctx context.Context, req jobdb.ListCellsRequest) (out jobdb.ListCellsResponse, err error) {
+	req.TenantID = r.prefixTenant(req.TenantID)
+	out, err = r.runtime.ListCells(ctx, req)
+	for i := range out.Cells {
+		out.Cells[i].TenantID = r.stripTenant(out.Cells[i].TenantID)
+	}
+	return
+}
+func (r *tenantNamespacedRuntime) UpdateCell(ctx context.Context, req jobdb.UpdateCellRequest) (out jobdb.Cell, err error) {
+	req.TenantID = r.prefixTenant(req.TenantID)
+	out, err = r.runtime.UpdateCell(ctx, req)
+	out.TenantID = r.stripTenant(out.TenantID)
+	return
+}
+func (r *tenantNamespacedRuntime) RetireCell(ctx context.Context, req jobdb.RetireCellRequest) (out jobdb.Cell, err error) {
+	req.TenantID = r.prefixTenant(req.TenantID)
+	out, err = r.runtime.RetireCell(ctx, req)
+	out.TenantID = r.stripTenant(out.TenantID)
+	return
+}
+func (l *tenantNamespacedLease) ResolveCell(ctx context.Context, name string) (jobdb.ResolvedCell, error) {
+	return l.lease.ResolveCell(ctx, name)
 }

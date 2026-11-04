@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb/configuration"
-	"github.com/fergusstrange/embedded-postgres"
+	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	_ "github.com/lib/pq"
 
 	pgjobdbinstaller "github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
@@ -52,7 +54,7 @@ func withBareDatabase(t *testing.T, fn func(context.Context, *sql.DB)) {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), time.Minute)
 	t.Cleanup(cancel)
 	fn(ctx, sqlDB)
 }

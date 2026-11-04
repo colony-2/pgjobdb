@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	toyruntime "github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
 	"github.com/colony-2/jobdb/pkg/workflow"
@@ -69,7 +71,7 @@ func waitForChapterValue(t *testing.T, source any, jobKey jobdb.JobKey, ordinal 
 	reader := mustChapterReader(t, source)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		chap, err := reader.GetChapter(context.Background(), jobdb.ChapterRef{JobKey: jobKey, Ordinal: ordinal})
+		chap, err := reader.GetChapter(celltest.Context(context.Background()), jobdb.ChapterRef{JobKey: jobKey, Ordinal: ordinal})
 		if err == nil {
 			return decodeNumber(t, chapterPayloadBytes(t, chap))
 		}
@@ -130,7 +132,7 @@ func mustArtifactOpener(t *testing.T, source any) testArtifactOpener {
 
 func readStoredArtifact(t *testing.T, source any, jobKey jobdb.JobKey, ordinal int64, art jobdb.StoredArtifact) []byte {
 	t.Helper()
-	reader, err := mustArtifactOpener(t, source).OpenArtifact(context.Background(), jobdb.ArtifactRef{
+	reader, err := mustArtifactOpener(t, source).OpenArtifact(celltest.Context(context.Background()), jobdb.ArtifactRef{
 		JobKey:  jobKey,
 		Ordinal: ordinal,
 		Name:    art.Name,
@@ -210,7 +212,7 @@ func buildToyEngine(t *testing.T, configure func(*workflow.EngineBuilder), opts 
 	if err != nil {
 		t.Fatalf("build toy engine: %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(celltest.Context(context.Background()))
 	go engine.Run(ctx)
 	return engine, cancel
 }
