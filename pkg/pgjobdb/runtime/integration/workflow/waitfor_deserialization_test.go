@@ -36,6 +36,8 @@ func TestWaitForDeserialization(t *testing.T) {
 	childJobID2 := "child-job-2"
 	parentJobID := "parent-job-1"
 
+	_, err = pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant-1", Name: "test", Repo: "example.test/test"})
+	require.NoError(t, err)
 	// Insert child jobs
 	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 		TenantID: "tenant-1", JobID: pgjobdb.JobID(childJobID1),

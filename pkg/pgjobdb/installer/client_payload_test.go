@@ -40,7 +40,7 @@ func TestNativeClientJSONMatchesGo(t *testing.T) {
 		if _, err := db.ExecContext(ctx, `SELECT pgjobdb._client_update_value($1::json,'patch','{}'::json)`, string(large)); err == nil {
 			t.Fatal("SQL accepted oversized escaped patch result")
 		}
-		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "precise", JobType: "collect", WorkerID: "submitter", ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"huge":1e999999,"n":9007199254740993}`)}})
+		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "precise", JobType: "collect", WorkerID: "submitter", ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"huge":1e999999,"n":9007199254740993}`)}})
 		if err != nil {
 			t.Fatal(err)
 		}

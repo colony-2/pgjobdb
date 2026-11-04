@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	chapterpostgres "github.com/colony-2/jobdb/pkg/jobdb/chapterstore/postgres"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
@@ -37,7 +39,7 @@ func TestNativeRuntimeCoreCancelsJob(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		handle, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
+		handle, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "tenant", JobID: "cancelled", JobType: "collect", Data: data,
 		}})
 		if err != nil {

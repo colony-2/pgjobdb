@@ -20,7 +20,7 @@ func TestNativeLeaseMetadataPredicates(t *testing.T) {
 			{"other", `{"source":"other","team":"alpha"}`},
 			{"beta", `{"source":"api","team":"beta"}`},
 		} {
-			if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+			if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 				TenantID: "tenant", JobID: item.id, WorkerID: "submitter",
 				JobType: "collect", AppMetadata: json.RawMessage(item.metadata),
 			}); err != nil {

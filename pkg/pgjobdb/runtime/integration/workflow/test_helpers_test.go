@@ -190,7 +190,7 @@ func buildDirectEngine(t *testing.T, postgresDSN, blobStoreURI string, configure
 		t.Fatalf("create direct runtime: %v", err)
 	}
 	builder := workflow.NewEngineBuilder()
-	builder.WithRuntime(runtime)
+	builder.WithRuntime(celltest.WithCells(runtime))
 	if configure != nil {
 		configure(builder)
 	}
@@ -204,7 +204,7 @@ func buildDirectEngine(t *testing.T, postgresDSN, blobStoreURI string, configure
 func buildToyEngine(t *testing.T, configure func(*workflow.EngineBuilder), opts ...toyruntime.Option) (workflow.Engine, context.CancelFunc) {
 	t.Helper()
 	runtime := toyruntime.New(opts...)
-	builder := workflow.NewEngineBuilder().WithRuntime(runtime)
+	builder := workflow.NewEngineBuilder().WithRuntime(celltest.WithCells(runtime))
 	if configure != nil {
 		configure(builder)
 	}

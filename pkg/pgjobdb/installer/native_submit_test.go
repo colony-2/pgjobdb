@@ -32,7 +32,7 @@ func TestNativeSubmitJob(t *testing.T) {
 			},
 			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"opaque":true}`)},
 		}
-		result, err := pgjobdb.SubmitJob(ctx, db, req)
+		result, err := submitCellJob(ctx, db, req)
 		if err != nil || !result.Created || result.JobID != "job-1" {
 			t.Fatalf("submit = %+v, %v", result, err)
 		}
@@ -67,12 +67,12 @@ func TestNativeSubmitJob(t *testing.T) {
 			gotPolicy.InvocationTimeoutMillis != timeout {
 			t.Fatalf("run policy = %q, %v", policy, err)
 		}
-		result, err = pgjobdb.SubmitJob(ctx, db, req)
+		result, err = submitCellJob(ctx, db, req)
 		if err != nil || result.Created {
 			t.Fatalf("repeat submit = %+v, %v", result, err)
 		}
 		req.AppMetadata = json.RawMessage(`{"source":"other"}`)
-		if _, err := pgjobdb.SubmitJob(ctx, db, req); err == nil {
+		if _, err := submitCellJob(ctx, db, req); err == nil {
 			t.Fatal("expected conflicting immutable facts to fail")
 		}
 
@@ -80,7 +80,7 @@ func TestNativeSubmitJob(t *testing.T) {
 		req.AppMetadata = json.RawMessage(`{"source":"api"}`)
 		req.Runtime.Schedule = nil
 		req.WaitFor = []pgjobdb.JobID{"job-1"}
-		if result, err := pgjobdb.SubmitJob(ctx, db, req); err != nil || !result.Created {
+		if result, err := submitCellJob(ctx, db, req); err != nil || !result.Created {
 			t.Fatalf("submit waiting job = %+v, %v", result, err)
 		}
 		var waitingFor string
@@ -94,7 +94,7 @@ func TestNativeSubmitJob(t *testing.T) {
 
 		req.JobID = "job-3"
 		req.WaitFor = []pgjobdb.JobID{"missing"}
-		if _, err := pgjobdb.SubmitJob(ctx, db, req); err == nil {
+		if _, err := submitCellJob(ctx, db, req); err == nil {
 			t.Fatal("expected missing dependency to fail")
 		}
 		var factCount int

@@ -3,7 +3,6 @@ package pgjobdb
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
@@ -28,21 +27,11 @@ func PrepareJob(ctx context.Context, db DB, req JobPreparation) (out PreparedJob
 		if e != nil {
 			return e
 		}
-		// A private reservation may converge with a concurrent publication, but
-		// retrying it must never change its target name/identity.
-		if previous, ok := s.ByName(out.Target.Cell); ok {
-			if previous.ID != target.CellID {
-				return jobdb.NewExistingJobMismatchError("cell identity differs")
-			}
-		} else if out.Target.Cell != target.Cell {
+		if out.Target.CellID != target.CellID {
 			return jobdb.NewExistingJobMismatchError("cell identity differs")
 		}
-		// Keep the originally reserved ID when retrying a private preparation.
 		if out.Target.CellRepo != target.CellRepo {
 			return jobdb.ErrCellRepoMismatch
-		}
-		if c, ok := s.ByName(target.Cell); ok {
-			out.Target.CellID = c.ID
 		}
 		out.Target.Cell = target.Cell
 		return nil
@@ -58,15 +47,12 @@ func DiscardJobPreparation(ctx context.Context, db DB, key jobdb.JobKey) error {
 func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (out *SubmitJobResult, err error) {
 	err = cellTx(ctx, db, string(req.TenantID), func(tx *sql.Tx, s *cellstate.State) error {
 		prep := JobPreparation{Key: jobdb.JobKey{TenantId: string(req.TenantID), JobId: string(req.JobID)}, Cell: req.Cell, CellRepo: req.CellRepo, ParentJobID: string(req.Runtime.ParentJobID)}
-		var raw []byte
-		e := tx.QueryRowContext(ctx, `SELECT cell_target FROM pgjobdb.job_preparations WHERE tenant_id=$1 AND job_id=$2`, req.TenantID, req.JobID).Scan(&raw)
-		if e == nil {
-			if e = json.Unmarshal(raw, &prep); e != nil {
-				return e
-			}
-		} else if !errors.Is(e, sql.ErrNoRows) {
+		var prior sql.NullString
+		e := tx.QueryRowContext(ctx, `SELECT requested_cell,requested_repo,cell_id,cell_name,cell_repo,parent_job_id,prior_job_id FROM pgjobdb.job_preparations WHERE tenant_id=$1 AND job_id=$2`, req.TenantID, req.JobID).Scan(&prep.Cell, &prep.CellRepo, &prep.Target.CellID, &prep.Target.Cell, &prep.Target.CellRepo, &prep.ParentJobID, &prior)
+		if e != nil && !errors.Is(e, sql.ErrNoRows) {
 			return e
 		}
+		prep.PriorJobID = prior.String
 		if err := jobdb.ValidateCellName(req.Cell); err != nil {
 			return err
 		}
@@ -90,21 +76,8 @@ func SubmitJob(ctx context.Context, db DB, req SubmitJobRequest) (out *SubmitJob
 		if req.Target.CellRepo != "" && req.Target.CellRepo != target.CellRepo {
 			return jobdb.ErrCellRepoMismatch
 		}
-		if _, ok := s.ByName(target.Cell); !ok && prep.Target.CellID != "" {
-			target.CellID = prep.Target.CellID
-		}
-		var exists bool
-		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pgjobdb.job_facts WHERE tenant_id=$1 AND job_id=$2)`, req.TenantID, req.JobID).Scan(&exists); e != nil {
-			return e
-		}
-		before := cellstate.Clone(*s)
-		if !exists && prep.PriorJobID == "" {
-			if e = s.Publish(target, string(req.TenantID)); e != nil {
-				return e
-			}
-		}
-		if e = saveCells(ctx, tx, string(req.TenantID), &before, s); e != nil {
-			return e
+		if prep.Target.CellID != "" && prep.Target.CellID != target.CellID {
+			return jobdb.NewExistingJobMismatchError("cell identity differs")
 		}
 		req.Target = target
 		out, e = submitJob(ctx, tx, req)

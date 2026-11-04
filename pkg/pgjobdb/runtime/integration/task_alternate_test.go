@@ -103,7 +103,7 @@ func runTaskAlternateLifecycle(t *testing.T, newRuntime func(testing.TB) *pgjobd
 				at := time.Now().UTC().Add(400 * time.Millisecond)
 				policy := jobdb.DefaultRunPolicy()
 				policy.Retry.MaximumAttempts = 1
-				handle, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "job", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Until(at)}), RunPolicy: policy}})
+				handle, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "job", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Until(at)}), RunPolicy: policy}})
 				require.NoError(t, err)
 				w := alternateJob{}
 				require.Equal(t, wf.JobRunSuspended, runAlternate(t, rt, handle.JobKey, w, true).Status)
@@ -189,7 +189,7 @@ func runTaskAlternateHardTimeout(t *testing.T, newRuntime func(testing.TB) *pgjo
 				case "job-total":
 					policy.TotalTimeout = jobdb.AsDuration(500 * time.Millisecond)
 				}
-				h, err := rt.SubmitJob(celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "deadline", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: 2 * time.Second}), RunPolicy: policy}})
+				h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "deadline", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: 2 * time.Second}), RunPolicy: policy}})
 				require.NoError(t, err)
 				w := alternateJob{taskPolicy}
 				require.Equal(t, wf.JobRunSuspended, runAlternate(t, rt, h.JobKey, w, true).Status)
@@ -214,7 +214,7 @@ func runTaskAlternateHonorsJobInvocationTimeout(t *testing.T, newRuntime func(te
 			policy.Retry.MaximumAttempts = 1
 			policy.InvocationTimeout = jobdb.AsDuration(500 * time.Millisecond)
 			at := time.Now().Add(1500 * time.Millisecond)
-			h, err := rt.SubmitJob(celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
+			h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: "tenant", JobType: "alternate-test", RunPolicy: policy,
 				Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Until(at)}),
 			}})
@@ -236,7 +236,7 @@ func runTaskAlternateClaimAfterHardDeadline(t *testing.T, newRuntime func(testin
 			rt := alternateRuntime(t, backend, newRuntime)
 			policy := jobdb.DefaultRunPolicy()
 			policy.Retry.MaximumAttempts = 1
-			h, err := rt.SubmitJob(celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
+			h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 				TenantId: "tenant", JobType: "alternate-test", RunPolicy: policy,
 				Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: 100 * time.Millisecond}),
 			}})
@@ -256,7 +256,7 @@ func runTaskAlternateSuppliedLease(t *testing.T, newRuntime func(testing.TB) *pg
 	ctx := celltest.Context(context.Background())
 	rt := alternateRuntime(t, "remote-postgres", newRuntime)
 	at := time.Now().Add(100 * time.Millisecond)
-	h, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "supplied", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Until(at)}), RunPolicy: jobdb.DefaultRunPolicy()}})
+	h, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "supplied", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Until(at)}), RunPolicy: jobdb.DefaultRunPolicy()}})
 	require.NoError(t, err)
 	w := alternateJob{}
 	require.Equal(t, wf.JobRunSuspended, runAlternate(t, rt, h.JobKey, w, true).Status)
@@ -286,7 +286,7 @@ func runCompletedExternalTaskReplaysAfterDeadline(t *testing.T, newRuntime func(
 		t.Run(backend, func(t *testing.T) {
 			ctx := celltest.Context(context.Background())
 			rt := alternateRuntime(t, backend, newRuntime)
-			h, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "completed-input", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: 2 * time.Second}), RunPolicy: jobdb.DefaultRunPolicy()}})
+			h, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "completed-input", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: 2 * time.Second}), RunPolicy: jobdb.DefaultRunPolicy()}})
 			require.NoError(t, err)
 			w := alternateJob{jobdb.RunPolicy{TotalTimeout: jobdb.AsDuration(200 * time.Millisecond)}}
 			require.Equal(t, wf.JobRunSuspended, runAlternate(t, rt, h.JobKey, w, true).Status)

@@ -12,7 +12,7 @@ import (
 
 func TestNativeLeaseControls(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "job", WorkerID: "submitter", JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit: %v", err)
@@ -61,7 +61,7 @@ func TestNativeLeaseControls(t *testing.T) {
 			t.Fatalf("completed lease validation = %v", err)
 		}
 
-		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "expired", WorkerID: "submitter", JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit expired test job: %v", err)

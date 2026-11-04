@@ -32,8 +32,8 @@ go run ./cmd/jobdb direct --postgres-dsn "$JOBDB_POSTGRES_DSN" --blob-store-uri 
 
 ## Cells
 
-Every submitted job requires a cell name; implicit creation additionally requires
-its repository. Live root leases may submit to any tenant cell. Cell names are
+Every submitted job requires an explicitly registered cell name. Submission never
+creates cells; `cellRepo` optionally asserts the existing repository. Cell names are
 unique and mutable; IDs and job repository snapshots are stable. PATCH supports
 repo, name, description, and metadata updates. Cells are retired rather than deleted.
 
@@ -43,11 +43,12 @@ jobdb cell create --tenant acme --name payments --repo github.com/acme/payments 
 ```
 
 See [cells](docs/cells.md) for API, authorization, transaction guarantees, and the
-fresh-state cutover. The `create-root` command has been removed.
+fresh-state cutover. `root` is an ordinary name with no special authority or
+rename restrictions. The `create-root` command has been removed.
 
 ## JobDB consumer API
 
-The current dependency is JobDB `v0.0.68-0.20261104000410-a21636d234ce`.
+The current dependency is JobDB `v0.0.68-0.20261104205641-8797908eaf7c`.
 Engine submission returns a `workflow.JobHandle`; use its `JobKey`
 for job operations and `GoalID` for goal dependencies. Engine restart submission
 takes `SubmitRestartJobRequest{Job: ...}` and also returns a handle. Restarts

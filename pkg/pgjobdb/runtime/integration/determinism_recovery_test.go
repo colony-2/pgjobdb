@@ -37,7 +37,7 @@ func TestPostgresLiveDeterminismFailureCompletes(t *testing.T) {
 					return c.DoTask(gate, func(context.Context) (jobdb.TaskData, error) { return out, nil })
 				}}
 			}
-			engine, err := wf.NewEngineBuilder().WithRuntime(rt).BuildEngine()
+			engine, err := wf.NewEngineBuilder().WithRuntime(celltest.WithCells(rt)).BuildEngine()
 			require.NoError(t, err)
 			handle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: worker(1).Name(), Data: jobdb.NewTaskDataOrPanic("input")})
 			require.NoError(t, err)

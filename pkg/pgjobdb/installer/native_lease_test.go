@@ -20,7 +20,7 @@ func TestNativeLeaseSelection(t *testing.T) {
 			{"job-batch", `{"source":"batch"}`},
 			{"job-task", `{"source":"api"}`},
 		} {
-			if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+			if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 				TenantID: "tenant", JobID: item.id, WorkerID: "submitter",
 				JobType: "collect", AppMetadata: json.RawMessage(item.metadata),
 			}); err != nil {
@@ -84,7 +84,7 @@ func TestNativeLeaseSelection(t *testing.T) {
 			{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "job-cancelled", WorkerID: "submitter",
 				JobType: "collect"},
 		} {
-			if _, err := pgjobdb.SubmitJob(ctx, db, req); err != nil {
+			if _, err := submitCellJob(ctx, db, req); err != nil {
 				t.Fatalf("submit blocked job %s: %v", req.JobID, err)
 			}
 		}

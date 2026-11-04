@@ -14,7 +14,7 @@ import (
 func TestNativeJobDeletionRollbackAndTime(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, id := range []pgjobdb.JobID{"a", "b"} {
-			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: "job"})
+			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: "job"})
 			require.NoError(t, err)
 		}
 		lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "a", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"job"}}, pgjobdb.GetJobLeaseOptions{LeaseDuration: time.Hour})
@@ -57,7 +57,7 @@ CREATE TRIGGER reject_second_hide BEFORE UPDATE ON pgjobdb.job_facts FOR EACH RO
 func TestNativeJobDeletionRaces(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		submit := func(id pgjobdb.JobID) *pgjobdb.JobLease {
-			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: "job"})
+			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: "job"})
 			require.NoError(t, err)
 			l, err := pgjobdb.GetJobLease(ctx, db, "tenant", id, "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"job"}}, pgjobdb.GetJobLeaseOptions{LeaseDuration: time.Hour})
 			require.NoError(t, err)

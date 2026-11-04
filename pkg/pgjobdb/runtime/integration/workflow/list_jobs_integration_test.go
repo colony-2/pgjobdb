@@ -36,6 +36,9 @@ func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
 	createdActiveB := now.Add(-2 * time.Minute)
 	createdArchive := now.Add(-3 * time.Minute)
 
+	if _, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "test-tenant", Name: "test", Repo: "example.test/test"}); err != nil {
+		t.Fatal(err)
+	}
 	insertJob := func(id, jobType string, created time.Time, taskType string, cancel bool) {
 		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "test-tenant", JobID: pgjobdb.JobID(id),

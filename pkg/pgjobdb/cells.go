@@ -8,14 +8,15 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"time"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/cellstate"
 )
 
 // Cell operations take the tenant goal/admission lock before any row lock.
-// Existing transactions must use the same order. No registry write commits
-// separately from the job that implicitly creates it.
+// Existing transactions must use the same order. Jobs reference explicitly
+// registered cells; publication never changes the registry.
 func cellTx(ctx context.Context, db DB, tenant string, fn func(*sql.Tx, *cellstate.State) error) (err error) {
 	if err := validateScheduleDB(ctx, db); err != nil {
 		return err
@@ -72,48 +73,75 @@ func cellTx(ctx context.Context, db DB, tenant string, fn func(*sql.Tx, *cellsta
 	return nil
 }
 
-type cellCatalog struct {
-	CursorKey []byte
-	Creations []cellstate.Creation
-}
-
+// A single statement reads the normalized registry at one MVCC snapshot.
+// JSON is used only for arbitrary metadata supplied by the caller.
 func loadCells(ctx context.Context, db DB, tenant string) (*cellstate.State, error) {
 	if err := validateScheduleDB(ctx, db); err != nil {
 		return nil, err
 	}
 	s := cellstate.New()
-	var raw []byte
-	// One snapshot for the registry and cursor/replay state. JSON (not JSONB)
-	// preserves canonical metadata bytes and numeric representations for replay
-	// and no-op revision checks.
-	err := db.QueryRowContext(ctx, `SELECT json_build_object('Cells',COALESCE((SELECT json_object_agg(cell_id,payload) FROM pgjobdb.cells WHERE tenant_id=$1),'{}'), 'Catalog',(SELECT metadata FROM pgjobdb.cell_catalog WHERE tenant_id=$1))`, tenant).Scan(&raw)
+	rows, err := db.QueryContext(ctx, `SELECT 0 AS kind,cell_id,name,repo,description,metadata::text,state,revision,created_at_ns,updated_at_ns,retired_at_ns,'' AS principal,'' AS request_id,'' AS descriptor,NULL::bytea AS cursor_key FROM pgjobdb.cells WHERE tenant_id=$1
+ UNION ALL SELECT 1,cell_id,name,'','','{}','','',0,0,NULL,'','','',NULL FROM pgjobdb.cell_names WHERE tenant_id=$1
+ UNION ALL SELECT 2,cell_id,name,repo,description,metadata::text,'ACTIVE',revision,created_at_ns,created_at_ns,NULL,principal,request_id,descriptor,NULL FROM pgjobdb.cell_requests WHERE tenant_id=$1
+ UNION ALL SELECT 3,'','','','','{}','','',0,0,NULL,'','','',cursor_key FROM pgjobdb.cell_catalog WHERE tenant_id=$1
+ ORDER BY kind,cell_id,name,principal,request_id`, tenant)
 	if err != nil {
 		return nil, err
 	}
-	var stored struct {
-		Cells   map[string]jobdb.Cell
-		Catalog *cellCatalog
+	defer rows.Close()
+	for rows.Next() {
+		var kind int
+		c := jobdb.Cell{TenantID: tenant, Aliases: []string{}}
+		var raw, key []byte
+		var created, updated int64
+		var retired sql.NullInt64
+		var principal, request, descriptor string
+		if err = rows.Scan(&kind, &c.ID, &c.Name, &c.Repo, &c.Description, &raw, &c.State, &c.Revision, &created, &updated, &retired, &principal, &request, &descriptor, &key); err != nil {
+			return nil, err
+		}
+		switch kind {
+		case 0, 2:
+			if err = json.Unmarshal(raw, &c.Metadata); err != nil {
+				return nil, err
+			}
+			c.CreatedAt = time.Unix(0, created).UTC()
+			c.UpdatedAt = time.Unix(0, updated).UTC()
+			if retired.Valid {
+				t := time.Unix(0, retired.Int64).UTC()
+				c.RetiredAt = &t
+			}
+			if kind == 0 {
+				s.Cells[c.ID] = c
+			} else {
+				s.Creations = append(s.Creations, cellstate.Creation{Principal: principal, RequestID: request, Descriptor: descriptor, Result: c})
+			}
+		case 1:
+			stored := s.Cells[c.ID]
+			if stored.Name != c.Name {
+				stored.Aliases = append(stored.Aliases, c.Name)
+				s.Cells[c.ID] = stored
+			}
+		case 3:
+			s.CursorKey = key
+		}
 	}
-	if err = json.Unmarshal(raw, &stored); err != nil {
-		return nil, err
-	}
-	s.Cells = stored.Cells
-	if stored.Catalog != nil {
-		s.CursorKey = stored.Catalog.CursorKey
-		s.Creations = stored.Catalog.Creations
-	}
-	return s, nil
+	return s, rows.Err()
 }
 func saveCells(ctx context.Context, tx *sql.Tx, tenant string, before, after *cellstate.State) error {
 	for id, c := range after.Cells {
 		if reflect.DeepEqual(before.Cells[id], c) {
 			continue
 		}
-		raw, err := json.Marshal(c)
+		raw, err := json.Marshal(c.Metadata)
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO pgjobdb.cells(tenant_id,cell_id,name,repo,state,is_root,payload) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(tenant_id,cell_id) DO UPDATE SET name=excluded.name,repo=excluded.repo,state=excluded.state,payload=excluded.payload`, tenant, id, c.Name, c.Repo, c.State, c.IsRoot, string(raw)); err != nil {
+		var retired any
+		if c.RetiredAt != nil {
+			retired = c.RetiredAt.UnixNano()
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO pgjobdb.cells(tenant_id,cell_id,name,repo,description,metadata,state,revision,created_at_ns,updated_at_ns,retired_at_ns) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(tenant_id,cell_id) DO UPDATE SET name=excluded.name,repo=excluded.repo,description=excluded.description,metadata=excluded.metadata,state=excluded.state,revision=excluded.revision,updated_at_ns=excluded.updated_at_ns,retired_at_ns=excluded.retired_at_ns`, tenant, id, c.Name, c.Repo, c.Description, string(raw), c.State, c.Revision, c.CreatedAt.UnixNano(), c.UpdatedAt.UnixNano(), retired)
+		if err != nil {
 			return err
 		}
 		for _, name := range append([]string{c.Name}, c.Aliases...) {
@@ -122,12 +150,20 @@ func saveCells(ctx context.Context, tx *sql.Tx, tenant string, before, after *ce
 			}
 		}
 	}
-	raw, err := json.Marshal(cellCatalog{after.CursorKey, after.Creations})
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO pgjobdb.cell_catalog VALUES($1,$2) ON CONFLICT(tenant_id) DO NOTHING`, tenant, after.CursorKey); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO pgjobdb.cell_catalog VALUES($1,$2) ON CONFLICT(tenant_id) DO UPDATE SET metadata=excluded.metadata`, tenant, string(raw))
-	return err
+	for _, r := range after.Creations {
+		c := r.Result
+		raw, err := json.Marshal(c.Metadata)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO pgjobdb.cell_requests(tenant_id,principal,request_id,descriptor,cell_id,name,repo,description,metadata,revision,created_at_ns) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(tenant_id,principal,request_id) DO NOTHING`, tenant, r.Principal, r.RequestID, r.Descriptor, c.ID, c.Name, c.Repo, c.Description, string(raw), c.Revision, c.CreatedAt.UnixNano()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func CreateCell(ctx context.Context, db DB, req jobdb.CreateCellRequest) (out jobdb.Cell, err error) {
 	err = cellTx(ctx, db, req.TenantID, func(_ *sql.Tx, s *cellstate.State) error { var e error; out, e = s.Create(ctx, req); return e })
@@ -163,7 +199,7 @@ func RetireCell(ctx context.Context, db DB, req jobdb.RetireCellRequest) (out jo
 			var busy bool
 			e := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pgjobdb.jobs j JOIN pgjobdb.job_facts f USING(tenant_id,job_id) WHERE f.tenant_id=$1 AND f.cell_id=$2)
     OR EXISTS(SELECT 1 FROM pgjobdb.goals WHERE tenant_id=$1 AND cell_id=$2 AND state='OPEN')
-    OR EXISTS(SELECT 1 FROM pgjobdb.job_preparations p WHERE tenant_id=$1 AND NOT published AND (cell_target#>>'{Target,cellId}'=$2 OR EXISTS(SELECT 1 FROM pgjobdb.cell_names n WHERE n.tenant_id=p.tenant_id AND n.name=p.cell_target#>>'{Target,cell}' AND n.cell_id=$2)))
+    OR EXISTS(SELECT 1 FROM pgjobdb.job_preparations p WHERE tenant_id=$1 AND NOT published AND cell_id=$2)
     OR EXISTS(SELECT 1 FROM pgjobdb.schedules WHERE tenant_id=$1 AND cell_id=$2 AND state='ACTIVE')`, req.TenantID, id).Scan(&busy)
 			return busy, e
 		})
@@ -203,18 +239,14 @@ func resolvePreparation(ctx context.Context, tx *sql.Tx, s *cellstate.State, req
 		if key.TenantId != tenant {
 			return jobdb.ResolvedCell{}, jobdb.ErrCellForbidden
 		}
-		var raw []byte
+		var target jobdb.ResolvedCell
 		var state string
-		err = tx.QueryRowContext(ctx, `SELECT target_snapshot,state FROM pgjobdb.schedules WHERE tenant_id=$1 AND schedule_id=$2 FOR UPDATE`, tenant, key.ScheduleId).Scan(&raw, &state)
+		err = tx.QueryRowContext(ctx, `SELECT cell_id,cell_repo,state FROM pgjobdb.schedules WHERE tenant_id=$1 AND schedule_id=$2 FOR UPDATE`, tenant, key.ScheduleId).Scan(&target.CellID, &target.CellRepo, &state)
 		if errors.Is(err, sql.ErrNoRows) || state == "ARCHIVED" {
 			return jobdb.ResolvedCell{}, jobdb.ErrCellNotFound
 		}
 		if err != nil {
 			return jobdb.ResolvedCell{}, err
-		}
-		var target jobdb.ResolvedCell
-		if err = json.Unmarshal(raw, &target); err != nil {
-			return target, err
 		}
 		c, ok := s.Cells[target.CellID]
 		if !ok {

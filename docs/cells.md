@@ -1,109 +1,111 @@
 # Tenant cells
 
-pgjobdb implements the JobDB cell contract using storage format **8** and JobDB
-commit `a21636d234ce`. Every job requires a cell name. Job IDs remain tenant-wide.
-Cells have server-generated IDs, tenant-unique names and canonical repository
-locators, descriptions, arbitrary JSON metadata, revisions, and active/retired
-state. Renaming reserves the previous name as an alias. Retiring reserves both
-names and the repository; there is no delete or restore operation.
+pgjobdb implements the JobDB cell contract using storage format **9** and JobDB
+commit `8797908eaf7c`. Jobs require an explicitly registered cell name and retain
+tenant-wide job IDs. Cells have server-generated immutable IDs, tenant-unique
+mutable names and canonical repository locators, descriptions, arbitrary JSON
+metadata, revisions, and ACTIVE/RETIRED state. Previous names remain aliases.
+Retirement preserves identity and reserves names/repo; there is no delete or
+restore operation.
 
-Use the shared JobDB administrative API and CLI:
+Register a cell through the administrative API or shared CLI before submission:
 
 ```sh
-jobdb cell create --tenant acme --name root --repo github.com/acme/root --url https://jobs.example.com
 jobdb cell create --tenant acme --name payments --repo github.com/acme/payments --url https://jobs.example.com
 ```
 
-`--url` identifies the JobDB API server. `--repo` identifies the Git repository.
-`JOBDB_BEARER_TOKEN` supplies deployment authentication. The old `create-root`
-command is removed. Creating `root` requires `cells.bootstrapRoot` as well as
-`cells.create`; its name and root designation are permanent. Its repository,
-description, and metadata remain editable. The standard cell endpoints support
-creation, listing/name lookup, retrieval, revision-checked PATCH, and retirement.
-Metadata PATCH replaces the map; `{}` clears it. Use the returned strong ETag in
-`If-Match` for PATCH and retirement.
+`--url` identifies JobDB; `--repo` identifies Git. `JOBDB_BEARER_TOKEN` supplies
+deployment authentication. All creation requires `cells.create`. The name
+`root` is ordinary: it conveys no authority and has the same rename/retirement
+rules as any other name. There is no root flag, binding, bootstrap permission,
+list filter, or root-only command.
 
-A live root lease can submit to any cell name in its tenant. A missing ordinary
-cell additionally requires `cellRepo`; subsequent submissions may use only the
-name. Root itself always requires explicit administrative creation. Ordinary
-leases submit to their own cell unless verified backend policy grants additional
-existing targets. Signed delegation restrictions still intersect these rights.
-Administrative submission requires `jobs.submit`, plus `cells.create` when it
-implicitly registers a cell.
+Submission never creates cells, including when the caller has `cells.create`.
+Unknown targets return `not_found` with or without `cellRepo`. For an existing
+cell, `cellRepo` is an optional repository assertion; name-only submission works.
+A lease defaults to its own cell. Trusted backend policy may grant additional
+existing target IDs; signed delegation restrictions intersect that ceiling.
+No lease inherits cell creation or tenant-wide submission from a cell name.
 
-Jobs, goals, preparations, schedules, handles, and leases carry cell identity.
-Jobs retain the repository captured at submission, including retries and
-restarts after a repository edit. Job reads show the current cell name; leases
-keep their original snapshot. Schedules pin a cell ID and expected repository.
-Changing the repository pauses active schedules with `cell_repo_mismatch`;
-explicitly update their target before resuming. Already emitted jobs retain their
-snapshots.
+The standard cell endpoints support creation, filtered/paginated listing,
+retrieval, conditional PATCH, and retirement. PATCH accepts name, repository,
+description, and arbitrary metadata. Metadata replaces the map; `{}` clears it.
+Use a strong current ETag in `If-Match`; missing validators return 428, malformed
+validators 400, and stale validators 412. Changes are atomic. Creation request
+IDs are scoped to tenant/principal; matching replay returns the original
+snapshot after authority and retirement checks.
+
+Job facts, goals, preparations, schedules, handles, and leases carry cell
+identity. Jobs keep the repository captured at submission across retries and
+restarts after repo edits. Reads show the current name; leases retain their
+issued snapshot. Schedules pin existing cell IDs and repositories. Repo changes
+pause active schedules with `cell_repo_mismatch`; update the target explicitly
+before resuming. Already emitted jobs retain their snapshots.
 
 ## Storage and transaction boundaries
 
-`cells` stores the registry, `cell_names` reserves current names and aliases, and
-`cell_catalog` stores replay records and the cell-list cursor signing key.
-Postgres uses case-sensitive C collation for names and repository identity.
-Registry payloads use JSON to preserve nested metadata and numeric
-representations during replay and no-op revision checks.
-Job facts and goals have required same-tenant cell foreign keys. Active/archive
-rows derive ownership through their required retained job facts. Schedules have
-required generated cell ownership columns and the same foreign key. Private
-preparations reserve an identity without making a cell visible.
+`cells` stores fixed properties in ordinary columns; only arbitrary `metadata`
+is JSON. `cell_names` reserves names/aliases. `cell_catalog` stores the byte
+cursor key; `cell_requests` stores principal/request ID, normalized request hash,
+and the original result in ordinary columns, plus its arbitrary metadata.
+Nanosecond timestamps preserve exact replay results. Registry reads use one SQL
+statement over these rows for a consistent MVCC snapshot.
 
-Cell operations, job preparation/publication, scheduling, retirement, and work
-acquisition take the tenant goal/admission advisory lock **before row locks**.
-Multi-tenant acquisition takes tenant locks in sorted order. Callers supplying
-an existing transaction must follow this order. Operations use a savepoint in
-borrowed transactions so a failed publication cannot leave a cell behind if the
-caller later commits. An owned transaction commits the cell, job, goal, and
-initial dependencies together. Chapter storage is staged before publication;
-the runtime exposes chapters only through a published job.
+Job facts, goals, preparations, and schedules reference existing cells through
+same-tenant foreign keys. Preparation requested name/repo, resolved ID/name/repo,
+and parent/prior job IDs are columns. No provisional cell identity is reserved.
+Schedule ownership columns are ordinary columns; their legacy target JSON does
+not duplicate cell fields. Go reconstructs the core's wire snapshot on reads.
+Active/archive rows retain ownership through required job facts. Broader
+normalization of old non-cell structured JSON is a separate change.
 
-The backend validates a parent lease against the locked stored job during both
-preparation and publication. Completion, cancellation, and lease loss therefore
-prevent delayed publication. Concurrent matching first submissions converge on
-one cell; competing repository claims fail without partial registration.
-Retirement checks active jobs (including hidden/waiting jobs), pending
-preparations, open goals, and active schedules under the same lock.
+Registry mutations, preparation/publication, scheduling, retirement, and work
+acquisition take the tenant admission advisory lock before row locks.
+Multi-tenant acquisition locks tenants in sorted order. Caller-owned
+transactions must use the same order. Savepoints ensure a failed borrowed
+operation leaves no partial writes even if the caller commits afterward.
+Publication atomically writes the job, goal, and dependencies against an
+existing cell; it never writes a new cell. Chapters are staged before publication
+and are exposed only through a published job.
 
-All Go mutations require a transaction-capable database (`*sql.DB`, `*sql.Tx`, or
-a wrapper exposing `BeginTx`). Raw SQL access is a trusted database boundary;
-applications should use the typed API for registry validation and policy.
+The backend validates the stored parent lease at preparation and publication.
+Completion, cancellation, replacement, or expiry prevents delayed publication.
+Registration conflicts and concurrent repo claims leave no partial cell records.
+Retirement checks active jobs/leases, open goals, active schedules, and
+unpublished preparations by immutable ID, including after rename.
+
+Go mutations require a transaction-capable database (`*sql.DB`, `*sql.Tx`, or a
+wrapper exposing `BeginTx`). Raw SQL is a trusted database boundary; applications
+use the typed API for validation and policy.
 
 ## Policy and queries
 
-Embeddings install `jobdb.CellAuthority` from authenticated policy in context.
-Request bodies and client headers cannot establish this authority. The standalone
-server retains an administrative ingress policy: authenticate and restrict access
-at the deployment boundary, or embed the server with your own policy middleware.
-This release adds policy hooks for registry operations, submission, job listing,
-and acquisition. It does not claim complete RBAC for history, artifacts, goals,
-waits, or every other mutation. Root submission rights do not grant those rights.
+Embeddings install verified `jobdb.CellAuthority` context. Request bodies and
+client headers cannot establish it. The standalone server retains explicit
+administrative ingress; authenticate at the deployment boundary or embed your
+own policy middleware. This release covers registry, submission, listing, and
+acquisition hooks. It does not retrofit full RBAC onto every history, artifact,
+goal, wait, secret, or mutation operation.
 
-Native `GetWork` requires explicit tenant IDs. `CellNames` selectors resolve
-aliases and intersect allowed IDs before SQL pagination or claiming work.
-Unknown or inaccessible named selectors fail. Job cursors bind the principal,
-authority, filters, and resolved cell IDs; access is reevaluated on every page.
-Listing takes one registry snapshot per requested tenant and one compact row
-query, independent of the number of jobs returned. It never issues per-job
-registry, history, or artifact queries.
+Native `GetWork` requires explicit tenant IDs. `CellNames` resolve aliases and
+intersect allowed IDs before pagination/acquisition. Unknown or inaccessible
+names fail. Cursors bind principal, authority, filters, and resolved IDs and
+recheck access on each page. Listing takes one registry snapshot per tenant and
+one compact row query, independently of page size; no per-job history, registry,
+or artifact lookup is needed.
 
 ## Hard cutover and validation
 
-Use a new empty database and a fresh artifact location. Format 7 and all earlier
-formats are rejected unchanged, including populated installations. No job,
-chapter, schedule, lease, or metadata-based identity migration is provided.
-Recreate tenant administration and root/ordinary cells, then use compatible
+Use a new database and artifact location. Format 8 and earlier are rejected
+unchanged. No jobs, histories, schedules, leases, or metadata-derived identities
+are migrated. Explicitly register configured cells before starting compatible
 clients and workers. Reinstalling the current schema is supported.
 
-The Go module pins the exact JobDB commit with checksums. Publish JobDB commit
-`a21636d234ce` before building this pgjobdb commit on another machine. Local tests
-also run against the exact committed JobDB module archive, without a checked-in
-filesystem replacement.
+The module pins the exact JobDB commit and checksums. Publish JobDB commit
+`8797908eaf7c` before building this pgjobdb revision elsewhere. Local tests use
+that committed module archive, with no checked-in filesystem replacement.
 
-Validation includes shared workflow, compact-list and cell conformance over
-both direct and HTTP runtimes; previous-format rejection; concurrent registration,
-repository claims, retirement/admission and schedule/edit races; lease loss after
-preparation; borrowed-transaction rollback; pending-preparation retirement; and
-cell filtering before pagination and acquisition.
+Validation covers direct/HTTP shared conformance, native SQL integration,
+previous-format rejection, normalized storage, original-result replay,
+registration/retirement/schedule races, lease loss between preparation and
+publication, borrowed-transaction rollback, and authorized discovery/acquisition.

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -33,8 +32,14 @@ func TestScheduleBindings(t *testing.T) {
 			t.Fatalf("daily = %+v", daily)
 		}
 		got, err := pgjobdb.GetSchedule(ctx, db, "tenant", "daily")
-		if err != nil || !strings.Contains(string(got.TargetSnapshot), `"input": 1`) {
+		if err != nil {
 			t.Fatalf("get daily = %+v, %v", got, err)
+		}
+		var snapshot struct {
+			Input int `json:"input"`
+		}
+		if err := json.Unmarshal(got.TargetSnapshot, &snapshot); err != nil || snapshot.Input != 1 {
+			t.Fatalf("target snapshot = %s, %v", got.TargetSnapshot, err)
 		}
 		if _, err := pgjobdb.GetSchedule(ctx, db, "tenant", "missing"); !errors.Is(err, pgjobdb.ErrScheduleNotFound) {
 			t.Fatalf("missing schedule error = %v", err)

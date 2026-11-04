@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	directruntime "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime"
 )
@@ -25,7 +27,7 @@ func TestPublicRuntimeInitializesFreshDatabase(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		handle, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
+		handle, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: "tenant", JobID: "fresh", JobType: "collect", Data: input,
 		}})
 		if err != nil || handle.JobKey.JobId != "fresh" {

@@ -116,7 +116,7 @@ func resolveRequiredString(flagValue, envVar, fieldName string) (string, error) 
 // must authenticate access upstream; embeddings install their own verified policy.
 func administrativeCellIngress(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := jobdb.WithCellAuthority(r.Context(), jobdb.CellAuthority{Principal: "server-administrator", TenantID: "*", Permissions: map[string]bool{"cells.create": true, "cells.bootstrapRoot": true, "cells.get": true, "cells.list": true, "cells.update": true, "cells.retire": true, "jobs.submit": true, "jobs.list": true, "jobs.acquire": true}})
+		ctx := jobdb.WithCellAuthority(r.Context(), jobdb.CellAuthority{Principal: "server-administrator", TenantID: "*", Permissions: map[string]bool{"cells.create": true, "cells.get": true, "cells.list": true, "cells.update": true, "cells.retire": true, "jobs.submit": true, "jobs.list": true, "jobs.acquire": true}})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

@@ -53,11 +53,11 @@ func UpsertSchedule(ctx context.Context, db DB, req UpsertScheduleRequest) (*Sch
 		return nil, err
 	}
 	row := db.QueryRowContext(ctx, `SELECT * FROM pgjobdb.upsert_schedule(
-		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		string(req.TenantID), req.ScheduleID, string(req.State), req.SpecHash,
 		string(req.Trigger), string(req.TargetJobType), string(req.TargetSnapshot),
 		req.OverlapPolicy, string(req.FailurePolicy), optionalTime(req.NextFireAt),
-		optionalJobID(req.NextJobID), optionalInt64(req.ExpectedGeneration))
+		optionalJobID(req.NextJobID), target.CellID, target.Cell, target.CellRepo, optionalInt64(req.ExpectedGeneration))
 	return scanSchedule(row)
 }
 
@@ -213,17 +213,30 @@ func scanSchedule(row scheduleScanner) (*Schedule, error) {
 	var trigger, target, failure []byte
 	var nextFire sql.NullTime
 	var nextJob sql.NullString
-	var cellID, cellRepo string
+	var cellID, cellName, cellRepo string
 	if err := row.Scan(&tenant, &result.ScheduleID, &state, &result.Generation,
 		&result.SpecHash, &trigger, &jobType, &target, &result.OverlapPolicy,
-		&failure, &nextFire, &nextJob, &result.CreatedAt, &result.UpdatedAt, &result.PauseReason, &cellID, &cellRepo); err != nil {
+		&failure, &nextFire, &nextJob, &result.CreatedAt, &result.UpdatedAt, &result.PauseReason, &cellID, &cellName, &cellRepo); err != nil {
 		return nil, goalError(err)
 	}
 	result.TenantID = TenantID(tenant)
 	result.State = ScheduleState(state)
 	result.TargetJobType = JobType(jobType)
 	result.Trigger = append(json.RawMessage(nil), trigger...)
-	result.TargetSnapshot = append(json.RawMessage(nil), target...)
+	// Cell fields are reconstructed for the core wire snapshot; they are stored
+	// only in ordinary columns in PostgreSQL.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(target, &fields); err != nil {
+		return nil, err
+	}
+	fields["cell"], _ = json.Marshal(cellName)
+	fields["cellId"], _ = json.Marshal(cellID)
+	fields["cellRepo"], _ = json.Marshal(cellRepo)
+	var err error
+	result.TargetSnapshot, err = json.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
 	result.FailurePolicy = append(json.RawMessage(nil), failure...)
 	if nextFire.Valid {
 		t := nextFire.Time.UTC()

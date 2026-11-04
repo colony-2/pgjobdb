@@ -57,7 +57,7 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 		metadata := json.RawMessage(`{"team":"blue","nested":{"large":"` + strings.Repeat("m", 4096) + `"}}`)
 		for i := 0; i < 240; i++ {
 			id := pgjobdb.JobID(fmt.Sprintf("consumer-%03d", i))
-			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "test", JobType: "consumer", AppMetadata: metadata, Dependencies: []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: producer.GoalID}, Condition: jobdb.JobPrereqSuccess}}, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"large":"` + strings.Repeat("p", 32768) + `"}`)}})
+			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "test", JobType: "consumer", AppMetadata: metadata, Dependencies: []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: producer.GoalID}, Condition: jobdb.JobPrereqSuccess}}, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"large":"` + strings.Repeat("p", 32768) + `"}`)}})
 			require.NoError(t, err)
 			if i%20 == 0 {
 				_, err = pgjobdb.AddGoalCandidate(ctx, db, jobdb.AddGoalCandidateRequest{GoalKey: nativeGoalKey(secondary), JobID: string(id)})

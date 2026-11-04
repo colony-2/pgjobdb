@@ -70,7 +70,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 		if i%3 != 0 {
 			req.Dependencies = nativeGoalWait("", producer.GoalID).Dependencies
 		}
-		_, err := pgjobdb.SubmitJob(ctx, db, req)
+		_, err := submitCellJob(ctx, db, req)
 		require.NoError(t, err)
 		if i%3 == 0 {
 			require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", id, "test", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp, Detail: "full completion detail"}))

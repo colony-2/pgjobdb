@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	chapterpostgres "github.com/colony-2/jobdb/pkg/jobdb/chapterstore/postgres"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
@@ -28,7 +30,7 @@ func TestRestartPreservesOversizedLegacyChapters(t *testing.T) {
 		// Seed history admitted before the current 256 KiB write limit.
 		legacy, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, db), Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas, MaxChapterApplicationPayloadBytes: 2 * 1024 * 1024})
 		require.NoError(t, err)
-		source, err := legacy.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "legacy", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
+		source, err := celltest.Submit(legacy, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "legacy", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
 		require.NoError(t, err)
 		leases, err := legacy.PollWork(ctx, jobdb.PollWorkRequest{TenantId: "tenant", WorkerID: "writer", Routes: []jobdb.Route{{JobType: "recipe"}}, Limit: 1})
 		require.NoError(t, err)

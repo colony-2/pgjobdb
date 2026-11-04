@@ -14,7 +14,7 @@ import (
 func TestNativeGetJobKeepsArchivedFields(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		future := time.Now().UTC().Add(time.Hour)
-		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "future", WorkerID: "submitter",
 			JobType: "collect", AvailableAt: &future,
 			AppMetadata: json.RawMessage(`{"source":"api"}`),
@@ -32,7 +32,7 @@ func TestNativeGetJobKeepsArchivedFields(t *testing.T) {
 			t.Fatalf("missing job error = %v", err)
 		}
 
-		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "task", WorkerID: "submitter",
 			JobType: "collect",
 		}); err != nil {

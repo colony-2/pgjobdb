@@ -15,7 +15,7 @@ import (
 
 func waitingClaim(t *testing.T, ctx context.Context, db *sql.DB, id string) pgjobdb.ClaimTaskRequest {
 	t.Helper()
-	_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+	_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 		TenantID: "tenant", JobID: pgjobdb.JobID(id), WorkerID: "submitter", JobType: "collect",
 		ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"keep":true}`)},
 	})

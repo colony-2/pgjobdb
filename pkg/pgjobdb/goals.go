@@ -121,11 +121,7 @@ func prepareJob(ctx context.Context, db DB, req JobPreparation) (PreparedJob, er
 	if err != nil {
 		return PreparedJob{}, err
 	}
-	target, err := json.Marshal(req)
-	if err != nil {
-		return PreparedJob{}, err
-	}
-	return goalQuery[PreparedJob](ctx, db, `SELECT pgjobdb.prepare_job($1,$2,$3,$4,$5,$6,$7,$8)`, req.Key.TenantId, nilIfBlank(req.Key.JobId), nilIfBlank(req.RequestID), nilIfBlank(req.PriorJobID), req.ShareGoal, req.Descriptor, string(raw), string(target))
+	return goalQuery[PreparedJob](ctx, db, `SELECT pgjobdb.prepare_job($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, req.Key.TenantId, nilIfBlank(req.Key.JobId), nilIfBlank(req.RequestID), nilIfBlank(req.PriorJobID), req.ShareGoal, req.Descriptor, string(raw), req.Cell, req.CellRepo, req.Target.CellID, req.Target.Cell, req.Target.CellRepo, req.ParentJobID)
 }
 
 // GetGoal returns the durable goal outcome.

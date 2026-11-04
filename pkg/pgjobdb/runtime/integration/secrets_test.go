@@ -17,7 +17,7 @@ func TestPostgresSecretsWithoutProvider(t *testing.T) {
 		t.Run(transport, func(t *testing.T) {
 			ctx := celltest.Context(context.Background())
 			rt := configurationTransport(t, newRuntime(t), transport)
-			job, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "job", Data: jobdb.NewTaskDataOrPanic(1)}})
+			job, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "job", Data: jobdb.NewTaskDataOrPanic(1)}})
 			require.NoError(t, err)
 			lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: job.JobKey, WorkerID: "worker", Routes: []jobdb.Route{{JobType: "job"}}, LeaseDuration: time.Minute})
 			require.NoError(t, err)

@@ -37,7 +37,7 @@ func TestNativeSchedulerAdapterSchedulesAndRuns(t *testing.T) {
 			t.Fatalf("list schedules = %+v, %v", listed, err)
 		}
 		scheduledAt := time.Now().UTC().Truncate(time.Microsecond)
-		_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+		_, err = submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "run-1", WorkerID: "submitter", JobType: "collect",
 			Runtime: pgjobdb.RuntimeMetadata{Schedule: &pgjobdb.ScheduleOccurrence{
 				ScheduleID: "daily", Generation: 1, SpecHash: "hash",

@@ -17,7 +17,7 @@ func TestNativeCompletionPreservesFinalState(t *testing.T) {
 			{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "child", WorkerID: "submitter",
 				JobType: "collect", WaitFor: []pgjobdb.JobID{"root"}},
 		} {
-			if _, err := pgjobdb.SubmitJob(ctx, db, req); err != nil {
+			if _, err := submitCellJob(ctx, db, req); err != nil {
 				t.Fatalf("submit %s: %v", req.JobID, err)
 			}
 		}
@@ -121,7 +121,7 @@ func TestNativeCompletionPreservesFinalState(t *testing.T) {
 				taskType, input, output, inputHash, cancelled, detail, errorKind, retryFlag)
 		}
 
-		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "unheld", WorkerID: "submitter", JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit unheld: %v", err)

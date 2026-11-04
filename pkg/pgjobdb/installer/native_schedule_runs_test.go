@@ -37,7 +37,7 @@ func TestNativeScheduleRunsFilterBeforePagination(t *testing.T) {
 			{"run-3", "daily", third},
 			{"other-run", "other", fourth},
 		} {
-			if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+			if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 				TenantID: "tenant", JobID: item.jobID, WorkerID: "scheduler",
 				JobType: "collect", Runtime: pgjobdb.RuntimeMetadata{
 					Schedule: &pgjobdb.ScheduleOccurrence{

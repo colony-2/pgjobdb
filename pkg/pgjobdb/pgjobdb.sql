@@ -6,7 +6,7 @@ SET LOCAL search_path = pgjobdb, public;
 
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 8 THEN
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 9 THEN
    RAISE EXCEPTION 'unsupported pgjobdb format; create a fresh database';
   END IF;
  END IF;
@@ -14,12 +14,12 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 8),
+    format_version INTEGER NOT NULL CHECK (format_version = 9),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
 INSERT INTO pgjobdb.installation (name, format_version)
-VALUES ('pgjobdb', 8)
+VALUES ('pgjobdb', 9)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -28,21 +28,28 @@ CREATE SEQUENCE IF NOT EXISTS pgjobdb.jobs_trace_id_seq;
 
 -- Cells and aliases share the tenant admission lock with goals and jobs.
 CREATE TABLE IF NOT EXISTS pgjobdb.cell_catalog (
- tenant_id TEXT PRIMARY KEY, metadata JSON NOT NULL
+ tenant_id TEXT PRIMARY KEY, cursor_key BYTEA NOT NULL
 );
 CREATE TABLE IF NOT EXISTS pgjobdb.cells (
  tenant_id TEXT NOT NULL, cell_id TEXT NOT NULL, name TEXT COLLATE "C" NOT NULL,
  repo TEXT COLLATE "C" NOT NULL, state TEXT NOT NULL CHECK(state IN ('ACTIVE','RETIRED')),
- is_root BOOLEAN NOT NULL, payload JSON NOT NULL,
- PRIMARY KEY(tenant_id,cell_id), UNIQUE(tenant_id,repo), UNIQUE(tenant_id,name),
- CHECK(is_root = (name='root')), CHECK(NOT is_root OR state='ACTIVE')
+ description TEXT NOT NULL, metadata JSON NOT NULL, revision TEXT NOT NULL,
+ created_at_ns BIGINT NOT NULL, updated_at_ns BIGINT NOT NULL, retired_at_ns BIGINT,
+ PRIMARY KEY(tenant_id,cell_id), UNIQUE(tenant_id,repo), UNIQUE(tenant_id,name)
 );
 CREATE TABLE IF NOT EXISTS pgjobdb.cell_names (
  tenant_id TEXT NOT NULL, name TEXT COLLATE "C" NOT NULL, cell_id TEXT NOT NULL,
  PRIMARY KEY(tenant_id,name), FOREIGN KEY(tenant_id,cell_id) REFERENCES pgjobdb.cells(tenant_id,cell_id)
 );
 
--- Goal state shares the scheduler transaction domain. Format 8 is a fresh-data cutover.
+CREATE TABLE IF NOT EXISTS pgjobdb.cell_requests (
+ tenant_id TEXT NOT NULL, principal TEXT NOT NULL, request_id TEXT NOT NULL, descriptor TEXT NOT NULL,
+ cell_id TEXT NOT NULL, name TEXT NOT NULL, repo TEXT NOT NULL, description TEXT NOT NULL,
+ metadata JSON NOT NULL, revision TEXT NOT NULL, created_at_ns BIGINT NOT NULL,
+ PRIMARY KEY(tenant_id,principal,request_id),FOREIGN KEY(tenant_id,cell_id) REFERENCES pgjobdb.cells(tenant_id,cell_id)
+);
+
+-- Goal state shares the scheduler transaction domain. Format 9 is a fresh-data cutover.
 CREATE TABLE IF NOT EXISTS pgjobdb.goals (
  tenant_id TEXT NOT NULL, goal_id TEXT NOT NULL,
  cell_id TEXT NOT NULL, cell_repo TEXT NOT NULL,
@@ -62,10 +69,12 @@ CREATE TABLE IF NOT EXISTS pgjobdb.job_preparations (
  request_id TEXT, prior_job_id TEXT, share_goal BOOLEAN NOT NULL,
  descriptor TEXT NOT NULL, dependencies JSONB NOT NULL,
  published BOOLEAN NOT NULL DEFAULT FALSE,
- cell_target JSONB NOT NULL CHECK (cell_target#>>'{Target,cellId}' IS NOT NULL),
+ requested_cell TEXT NOT NULL, requested_repo TEXT NOT NULL,
+ cell_id TEXT NOT NULL, cell_name TEXT NOT NULL, cell_repo TEXT NOT NULL, parent_job_id TEXT NOT NULL,
+ FOREIGN KEY(tenant_id,cell_id) REFERENCES pgjobdb.cells(tenant_id,cell_id),
  PRIMARY KEY(tenant_id,job_id)
 );
-CREATE INDEX IF NOT EXISTS preparation_cell_idx ON pgjobdb.job_preparations(tenant_id,(cell_target#>>'{Target,cellId}')) WHERE NOT published;
+CREATE INDEX IF NOT EXISTS preparation_cell_idx ON pgjobdb.job_preparations(tenant_id,cell_id) WHERE NOT published;
 CREATE UNIQUE INDEX IF NOT EXISTS preparation_request_idx ON pgjobdb.job_preparations(tenant_id,request_id) WHERE request_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS pgjobdb.goal_candidates (
  tenant_id TEXT NOT NULL, goal_id TEXT NOT NULL, job_id TEXT NOT NULL,
@@ -1126,11 +1135,11 @@ CREATE TABLE IF NOT EXISTS pgjobdb.schedules (
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     pause_reason TEXT NOT NULL DEFAULT '',
-    cell_id TEXT GENERATED ALWAYS AS (target_snapshot->>'cellId') STORED NOT NULL,
-    cell_repo TEXT GENERATED ALWAYS AS (target_snapshot->>'cellRepo') STORED NOT NULL,
+    cell_id TEXT NOT NULL,
+    cell_name TEXT NOT NULL,
+    cell_repo TEXT NOT NULL,
     FOREIGN KEY(tenant_id,cell_id) REFERENCES pgjobdb.cells(tenant_id,cell_id),
-    PRIMARY KEY (tenant_id, schedule_id),
-    CHECK(target_snapshot->>'cellId' IS NOT NULL AND target_snapshot->>'cellRepo' IS NOT NULL)
+    PRIMARY KEY (tenant_id, schedule_id)
 );
 
 CREATE INDEX IF NOT EXISTS schedules_cell_idx ON pgjobdb.schedules(tenant_id,cell_id) WHERE state='ACTIVE';
@@ -1222,14 +1231,14 @@ CREATE INDEX IF NOT EXISTS jobs_native_route_idx
 
 
 
-CREATE OR REPLACE FUNCTION pgjobdb._check_schedule_cell(t TEXT,target JSONB) RETURNS VOID LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION pgjobdb._check_schedule_cell(t TEXT,target_id TEXT,target_repo TEXT) RETURNS VOID LANGUAGE plpgsql AS $$
 DECLARE c pgjobdb.cells%ROWTYPE;
 BEGIN
  PERFORM pgjobdb._goal_lock(t);
- SELECT * INTO c FROM pgjobdb.cells WHERE tenant_id=t AND cell_id=target->>'cellId';
+ SELECT * INTO c FROM pgjobdb.cells WHERE tenant_id=t AND cell_id=target_id;
  IF NOT FOUND THEN RAISE EXCEPTION 'cell not found' USING ERRCODE='JCN01'; END IF;
  IF c.state<>'ACTIVE' THEN RAISE EXCEPTION 'cell retired' USING ERRCODE='JCR01'; END IF;
- IF c.repo IS DISTINCT FROM target->>'cellRepo' THEN RAISE EXCEPTION 'cell repo mismatch' USING ERRCODE='JCM01'; END IF;
+ IF c.repo IS DISTINCT FROM target_repo THEN RAISE EXCEPTION 'cell repo mismatch' USING ERRCODE='JCM01'; END IF;
 END $$;
 
 CREATE OR REPLACE FUNCTION pgjobdb.upsert_schedule(
@@ -1244,6 +1253,9 @@ CREATE OR REPLACE FUNCTION pgjobdb.upsert_schedule(
     p_failure_policy JSONB,
     p_next_fire_at TIMESTAMPTZ,
     p_next_job_id TEXT,
+    p_cell_id TEXT,
+    p_cell_name TEXT,
+    p_cell_repo TEXT,
     p_expected_generation BIGINT DEFAULT NULL
 )
 RETURNS pgjobdb.schedules
@@ -1253,7 +1265,7 @@ DECLARE
     v_existing pgjobdb.schedules%ROWTYPE;
     v_result pgjobdb.schedules%ROWTYPE;
 BEGIN
-    PERFORM pgjobdb._check_schedule_cell(p_tenant_id,p_target_snapshot);
+    PERFORM pgjobdb._check_schedule_cell(p_tenant_id,p_cell_id,p_cell_repo);
     IF p_state NOT IN ('ACTIVE', 'PAUSED') THEN
         RAISE EXCEPTION 'schedule upsert requires ACTIVE or PAUSED state';
     END IF;
@@ -1280,7 +1292,8 @@ BEGIN
             spec_hash = p_spec_hash,
             trigger = p_trigger,
             target_job_type = p_target_job_type,
-            target_snapshot = p_target_snapshot,
+            target_snapshot = p_target_snapshot - ARRAY['cell','cellId','cellRepo'],
+            cell_id=p_cell_id,cell_name=p_cell_name,cell_repo=p_cell_repo,
             overlap_policy = p_overlap_policy,
             failure_policy = p_failure_policy,
             next_fire_at = p_next_fire_at,
@@ -1294,11 +1307,11 @@ BEGIN
         END IF;
         INSERT INTO pgjobdb.schedules (
             tenant_id, schedule_id, state, generation, spec_hash, trigger,
-            target_job_type, target_snapshot, overlap_policy, failure_policy,
+            target_job_type, target_snapshot, cell_id,cell_name,cell_repo, overlap_policy, failure_policy,
             next_fire_at, next_job_id
         ) VALUES (
             p_tenant_id, p_schedule_id, p_state, 1, p_spec_hash, p_trigger,
-            p_target_job_type, p_target_snapshot, p_overlap_policy,
+            p_target_job_type, p_target_snapshot - ARRAY['cell','cellId','cellRepo'],p_cell_id,p_cell_name,p_cell_repo,p_overlap_policy,
             p_failure_policy, p_next_fire_at, p_next_job_id
         ) RETURNING * INTO v_result;
     END IF;
@@ -1344,7 +1357,7 @@ BEGIN
     IF v_existing.state = 'ARCHIVED' AND p_state <> 'ARCHIVED' THEN
         RAISE EXCEPTION 'archived schedule cannot change state';
     END IF;
-    IF p_state='ACTIVE' THEN PERFORM pgjobdb._check_schedule_cell(p_tenant_id,v_existing.target_snapshot); END IF;
+    IF p_state='ACTIVE' THEN PERFORM pgjobdb._check_schedule_cell(p_tenant_id,v_existing.cell_id,v_existing.cell_repo); END IF;
     UPDATE pgjobdb.schedules SET
         state = p_state,
         generation = v_existing.generation + 1,
@@ -1650,7 +1663,7 @@ BEGIN
  END LOOP;
  RETURN 'different job preparation';
 END $$;
-CREATE OR REPLACE FUNCTION pgjobdb.prepare_job(t TEXT,j TEXT,r TEXT,prior TEXT,sharing BOOLEAN,descr TEXT,deps JSONB,target JSONB) RETURNS JSONB LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION pgjobdb.prepare_job(t TEXT,j TEXT,r TEXT,prior TEXT,sharing BOOLEAN,descr TEXT,deps JSONB,requested_cell TEXT,requested_repo TEXT,target_id TEXT,target_name TEXT,target_repo TEXT,parent_id TEXT) RETURNS JSONB LANGUAGE plpgsql AS $$
 DECLARE p pgjobdb.job_preparations%ROWTYPE; g TEXT;
 BEGIN
  IF COALESCE(btrim(t),'')='' OR COALESCE(descr,'')='' OR (sharing AND j IS NULL AND r IS NULL) THEN RAISE EXCEPTION 'invalid preparation' USING ERRCODE='JGI01'; END IF;
@@ -1658,12 +1671,12 @@ BEGIN
  PERFORM pgjobdb._goal_lock(t);
  SELECT * INTO p FROM pgjobdb.job_preparations WHERE tenant_id=t AND ((j IS NOT NULL AND job_id=j) OR (r IS NOT NULL AND request_id=r)) ORDER BY job_id LIMIT 1;
  IF FOUND THEN
-  IF p.descriptor<>descr OR p.prior_job_id IS DISTINCT FROM prior OR p.share_goal<>sharing OR p.dependencies<>deps
+  IF p.cell_id<>target_id OR p.descriptor<>descr OR p.prior_job_id IS DISTINCT FROM prior OR p.share_goal<>sharing OR p.dependencies<>deps
    OR (j IS NOT NULL AND p.job_id<>j) OR (r IS NOT NULL AND p.request_id IS NOT NULL AND p.request_id<>r)
    OR EXISTS(SELECT 1 FROM pgjobdb.job_preparations x WHERE x.tenant_id=t AND x.request_id=r AND x.job_id<>p.job_id)
   THEN RAISE EXCEPTION '%',pgjobdb._preparation_mismatch(p.descriptor,descr) USING ERRCODE='JGM01'; END IF;
   IF r IS NOT NULL AND p.request_id IS NULL THEN UPDATE pgjobdb.job_preparations SET request_id=r WHERE tenant_id=t AND job_id=p.job_id; END IF;
-  RETURN jsonb_build_object('Key',jsonb_build_object('tenantId',t,'jobId',p.job_id),'GoalID',p.goal_id,'Published',p.published,'Target',p.cell_target->'Target');
+  RETURN jsonb_build_object('Key',jsonb_build_object('tenantId',t,'jobId',p.job_id),'GoalID',p.goal_id,'Published',p.published,'Target',jsonb_build_object('cellId',p.cell_id,'cell',p.cell_name,'cellRepo',p.cell_repo));
  END IF;
  IF j IS NOT NULL AND EXISTS(SELECT 1 FROM pgjobdb.job_facts WHERE tenant_id=t AND job_id=j) THEN RAISE EXCEPTION 'destination already exists without preparation' USING ERRCODE='JGM01'; END IF;
  IF prior IS NOT NULL THEN
@@ -1675,8 +1688,8 @@ BEGIN
   IF (pgjobdb.goal_info(t,g)->>'state')<>'OPEN' THEN RAISE EXCEPTION 'goal is closed' USING ERRCODE='JGF01'; END IF;
  ELSE g:=gen_random_uuid()::TEXT; END IF;
  j:=COALESCE(j,gen_random_uuid()::TEXT);
- INSERT INTO pgjobdb.job_preparations VALUES(t,j,g,r,prior,sharing,descr,deps,FALSE,target);
- RETURN jsonb_build_object('Key',jsonb_build_object('tenantId',t,'jobId',j),'GoalID',g,'Published',FALSE,'Target',target->'Target');
+ INSERT INTO pgjobdb.job_preparations VALUES(t,j,g,r,prior,sharing,descr,deps,FALSE,requested_cell,requested_repo,target_id,target_name,target_repo,parent_id);
+ RETURN jsonb_build_object('Key',jsonb_build_object('tenantId',t,'jobId',j),'GoalID',g,'Published',FALSE,'Target',jsonb_build_object('cellId',target_id,'cell',target_name,'cellRepo',target_repo));
 END $$;
 CREATE OR REPLACE FUNCTION pgjobdb._resolve_goal(t TEXT,g TEXT,j TEXT) RETURNS VOID LANGUAGE plpgsql AS $$
 DECLARE at TIMESTAMPTZ:=clock_timestamp();

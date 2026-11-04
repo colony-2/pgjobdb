@@ -13,7 +13,7 @@ import (
 func TestNativeAvailableRoutesAtTime(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		expiry := time.Now().Add(3 * time.Hour)
-		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "task", WorkerID: "submit", JobType: "recipe", ExpiresAt: &expiry})
+		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "task", WorkerID: "submit", JobType: "recipe", ExpiresAt: &expiry})
 		require.NoError(t, err)
 		lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "task", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetJobLeaseOptions{})
 		require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestNativeAvailableRoutesAtTime(t *testing.T) {
 func TestNativeAvailableRouteCursor(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, id := range []pgjobdb.JobID{"one", "two"} {
-			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: pgjobdb.JobType(id)})
+			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: pgjobdb.JobType(id)})
 			require.NoError(t, err)
 		}
 		opts := pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, AvailableRoutes: []pgjobdb.Route{{JobType: "one"}, {JobType: "two"}}, PageSize: 1}

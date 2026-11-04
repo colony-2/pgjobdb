@@ -26,7 +26,7 @@ func TestNativeListJobsFiltersBeforePagination(t *testing.T) {
 			{"other-tenant", "other", "", "collect", "api"},
 		} {
 			metadata, _ := json.Marshal(map[string]string{"source": item.source})
-			if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+			if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 				TenantID: item.tenant, JobID: item.id, WorkerID: "submitter",
 				JobType: item.jobType, AppMetadata: metadata,
 				Runtime: pgjobdb.RuntimeMetadata{ParentJobID: item.parent},

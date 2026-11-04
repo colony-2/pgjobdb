@@ -34,7 +34,7 @@ func runScoped(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, w wf.Ex
 }
 func submitScoped(t *testing.T, rt jobdb.WorkflowRuntime, name string) jobdb.JobKey {
 	t.Helper()
-	h, err := rt.SubmitJob(celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: name, Data: jobdb.NewTaskDataOrPanic("input")}})
+	h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: name, Data: jobdb.NewTaskDataOrPanic("input")}})
 	require.NoError(t, err)
 	return h.JobKey
 }

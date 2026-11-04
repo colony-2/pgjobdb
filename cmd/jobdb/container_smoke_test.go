@@ -47,6 +47,10 @@ func TestContainerRuntimePersistenceAndArtifactBoundary(t *testing.T) {
 
 func seedContainerSmokeData(t *testing.T, ctx context.Context, runtime jobdb.WorkflowRuntime) {
 	t.Helper()
+	_, err := runtime.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: containerSmokeTenantID, Name: "test", Repo: "example.test/test"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	handle, err := runtime.SubmitJob(ctx, jobdb.SubmitJobRequest{
 		Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 			TenantId: containerSmokeTenantID,

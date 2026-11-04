@@ -145,7 +145,7 @@ func TestTenantConfiguration(t *testing.T) {
 				_, err := admin.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "setting", Value: json.RawMessage(`"initial"`)})
 				require.NoError(t, err)
 				job := &configurationReadingJob{admin: admin}
-				handle, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: job.Name(), Data: jobdb.NewTaskDataOrPanic("input")}})
+				handle, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: job.Name(), Data: jobdb.NewTaskDataOrPanic("input")}})
 				require.NoError(t, err)
 				run, err := wf.GetJobForRun(ctx, rt, wf.GetJobForRunRequest{JobKey: handle.JobKey, JobWorker: job, WorkerID: "worker", LeaseDuration: time.Minute})
 				require.NoError(t, err)
@@ -172,7 +172,7 @@ func TestTenantConfiguration(t *testing.T) {
 		before, err := pgruntime.NewSQLDB(ctx, db, cfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = before.Close(ctx) })
-		job, err := before.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "existing", Data: jobdb.NewTaskDataOrPanic("existing-input")}})
+		job, err := celltest.Submit(before, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "existing", Data: jobdb.NewTaskDataOrPanic("existing-input")}})
 		require.NoError(t, err)
 		require.NoError(t, before.Close(ctx))
 		require.NoError(t, db.PingContext(ctx), "NewSQLDB must not own the pool")
@@ -191,7 +191,7 @@ func TestTenantConfiguration(t *testing.T) {
 		require.JSONEq(t, `"existing-input"`, string(start.Input.Data))
 		var version int
 		require.NoError(t, db.QueryRowContext(ctx, "SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb'").Scan(&version))
-		require.Equal(t, 8, version)
+		require.Equal(t, 9, version)
 	})
 }
 

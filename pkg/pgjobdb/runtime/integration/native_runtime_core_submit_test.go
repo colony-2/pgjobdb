@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	chapterpostgres "github.com/colony-2/jobdb/pkg/jobdb/chapterstore/postgres"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
@@ -50,7 +52,7 @@ func TestNativeRuntimeCoreSubmitsAndReconcilesJob(t *testing.T) {
 				InitialInterval: jobdb.Duration(250 * time.Millisecond), MaximumAttempts: 3,
 			}},
 		}, WorkerID: "submitter"}
-		handle, err := runtime.SubmitJob(ctx, req)
+		handle, err := celltest.Submit(runtime, ctx, req)
 		if err != nil || handle.JobKey.JobId != "job" {
 			t.Fatalf("submit job = %+v, %v", handle, err)
 		}
@@ -84,7 +86,7 @@ func TestNativeRuntimeCoreSubmitsAndReconcilesJob(t *testing.T) {
 			string(stored.AppMetadata) != `{"source": "api"}` {
 			t.Fatalf("native job = %+v, %v", stored, err)
 		}
-		handle, err = runtime.SubmitJob(ctx, req)
+		handle, err = celltest.Submit(runtime, ctx, req)
 		if err != nil || handle.JobKey.JobId != "job" {
 			t.Fatalf("repeat submit = %+v, %v", handle, err)
 		}
@@ -92,7 +94,7 @@ func TestNativeRuntimeCoreSubmitsAndReconcilesJob(t *testing.T) {
 			pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}); err != nil {
 			t.Fatal(err)
 		}
-		handle, err = runtime.SubmitJob(ctx, req)
+		handle, err = celltest.Submit(runtime, ctx, req)
 		if err != nil || handle.JobKey.JobId != "job" {
 			t.Fatalf("repeat archived submit = %+v, %v", handle, err)
 		}
@@ -101,7 +103,7 @@ func TestNativeRuntimeCoreSubmitsAndReconcilesJob(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Job.Data = changed
-		if _, err := runtime.SubmitJob(ctx, req); !errors.Is(err, jobdb.ErrExistingJobMismatch) {
+		if _, err := celltest.Submit(runtime, ctx, req); !errors.Is(err, jobdb.ErrExistingJobMismatch) {
 			t.Fatalf("changed explicit job input = %v", err)
 		}
 	})

@@ -26,7 +26,7 @@ func TestPostgresJobDeletionFiltersAndLeases(t *testing.T) {
 			rt := configurationTransport(t, conformanceRuntimeFactory(t)(t), backend)
 			admin := rt.(jobdb.JobDeletionRuntime)
 			submit := func(tenant, id, metadata string) jobdb.JobKey {
-				h, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: tenant, JobID: id, JobType: "cleanup", Data: jobdb.NewTaskDataOrPanic("input"), Metadata: json.RawMessage(metadata)}})
+				h, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: tenant, JobID: id, JobType: "cleanup", Data: jobdb.NewTaskDataOrPanic("input"), Metadata: json.RawMessage(metadata)}})
 				require.NoError(t, err)
 				return h.JobKey
 			}
@@ -113,7 +113,7 @@ func TestPostgresJobDeletionBeyondListingPage(t *testing.T) {
 			rt := configurationTransport(t, conformanceRuntimeFactory(t)(t), backend)
 			admin := rt.(jobdb.JobDeletionRuntime)
 			for i := 0; i < jobdb.MaxListJobsPageSize+3; i++ {
-				_, err := rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: fmt.Sprint(i), JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
+				_, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: fmt.Sprint(i), JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
 				require.NoError(t, err)
 			}
 			result, err := admin.DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []string{"0", "0", "missing", "1"}})

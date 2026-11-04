@@ -14,7 +14,7 @@ import (
 func TestNativeDependencyDeadline(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, id := range []pgjobdb.JobID{"parent", "child1", "child2", "unfinished"} {
-			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: pgjobdb.JobType(id)})
+			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: pgjobdb.JobType(id)})
 			require.NoError(t, err)
 		}
 		selector := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"parent"}}

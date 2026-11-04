@@ -21,7 +21,7 @@ func TestScheduleProcedures(t *testing.T) {
 		const upsert = `SELECT generation, state, target_job_type
 			FROM pgjobdb.upsert_schedule('tenant', 'daily', 'ACTIVE', 'hash-1',
 			'{"kind":"interval"}', 'collect', jsonb_build_object('input',1,'cellId',$2::text,'cellRepo','example.test/test'), 'ALLOW', '{}',
-			now(), 'job-next', $1)`
+			now(), 'job-next', $2, 'test', 'example.test/test', $1)`
 		if err := db.QueryRowContext(ctx, upsert, nil, cell.ID).Scan(&generation, &state, &target); err != nil {
 			t.Fatalf("create schedule: %v", err)
 		}
@@ -71,12 +71,12 @@ func TestScheduleProcedures(t *testing.T) {
 		}
 		if _, err := db.ExecContext(ctx, `SELECT pgjobdb.upsert_schedule(
 			'tenant', 'weekly', 'ACTIVE', 'hash-2', '{}', 'collect', jsonb_build_object('cellId',$1::text,'cellRepo','example.test/test'),
-			'ALLOW', '{}', now(), 'job-weekly')`, cell.ID); err != nil {
+			'ALLOW', '{}', now(), 'job-weekly', $1, 'test', 'example.test/test')`, cell.ID); err != nil {
 			t.Fatalf("create weekly schedule: %v", err)
 		}
 		if _, err := db.ExecContext(ctx, `SELECT pgjobdb.upsert_schedule(
 			'tenant', 'paused', 'PAUSED', 'hash-3', '{}', 'collect', jsonb_build_object('cellId',$1::text,'cellRepo','example.test/test'),
-			'ALLOW', '{}', NULL, NULL)`, cell.ID); err != nil {
+			'ALLOW', '{}', NULL, NULL, $1, 'test', 'example.test/test')`, cell.ID); err != nil {
 			t.Fatalf("create paused schedule: %v", err)
 		}
 		var count int

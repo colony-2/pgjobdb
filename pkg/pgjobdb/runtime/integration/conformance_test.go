@@ -117,7 +117,7 @@ func TestConformanceFixturesAreIsolated(t *testing.T) {
 	first, second := newRuntime(t), newRuntime(t)
 	ctx := celltest.Context(context.Background())
 	req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "same-id", JobType: "job", Data: jobdb.NewTaskDataOrPanic(1)}}
-	handle, err := first.SubmitJob(ctx, req)
+	handle, err := celltest.Submit(first, ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestConformanceFixturesAreIsolated(t *testing.T) {
 		t.Fatalf("chapter leaked across fixtures: %v", err)
 	}
 	req.Job.Data = jobdb.NewTaskDataOrPanic(2)
-	if _, err := second.SubmitJob(ctx, req); err != nil {
+	if _, err := celltest.Submit(second, ctx, req); err != nil {
 		t.Fatalf("independent submission: %v", err)
 	}
 	if err := first.Close(ctx); err != nil {

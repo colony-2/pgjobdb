@@ -14,7 +14,7 @@ import (
 func TestNativeRescheduleTypedState(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, id := range []pgjobdb.JobID{"job", "blocker"} {
-			if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+			if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 				TenantID: "tenant", JobID: id, WorkerID: "submitter", JobType: "collect",
 			}); err != nil {
 				t.Fatalf("submit %s: %v", id, err)
@@ -109,7 +109,7 @@ func TestNativeRescheduleTypedState(t *testing.T) {
 		if err != nil || ready == nil || ready.WorkKind != pgjobdb.WorkKindJob || ready.Task != nil {
 			t.Fatalf("ready job lease = %+v, %v", ready, err)
 		}
-		if _, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "unheld", WorkerID: "submitter", JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit unheld job: %v", err)

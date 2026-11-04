@@ -15,7 +15,7 @@ import (
 
 func TestNativeSchedulerAdapterReadsArchivedTask(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
+		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "job", WorkerID: "submitter", JobType: "collect",
 			RunPolicy: pgjobdb.RunPolicy{Retry: pgjobdb.RetryPolicy{
 				InitialIntervalMillis: 250, MaximumAttempts: 4,
