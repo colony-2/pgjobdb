@@ -10,6 +10,10 @@ import (
 func (s Scheduler) CreateCell(ctx context.Context, req jobdb.CreateCellRequest) (jobdb.Cell, error) {
 	return pgjobdb.CreateCell(ctx, s.DB, req)
 }
+
+func (s Scheduler) CreateCellWithLeaseByID(ctx context.Context, key jobdb.JobKey, leaseID, workerID string, req jobdb.CreateCellRequest) (jobdb.Cell, error) {
+	return pgjobdb.CreateCellWithLeaseByID(ctx, s.DB, key, leaseID, workerID, req)
+}
 func (s Scheduler) GetCell(ctx context.Context, req jobdb.CellKey) (jobdb.Cell, error) {
 	return pgjobdb.GetCell(ctx, s.DB, req)
 }

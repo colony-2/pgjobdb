@@ -37,6 +37,10 @@ creates cells; `cellRepo` optionally asserts the existing repository. Cell names
 unique and mutable; IDs and job repository snapshots are stable. PATCH supports
 repo, name, description, and metadata updates. Cells are retired rather than deleted.
 
+Normal execution leases can explicitly register cells with `lease.CreateCell`.
+Delegated leases require a `cells.create` name selector. Creation is restricted to
+the lease's tenant and does not expand its job-submission scope.
+
 ```sh
 jobdb cell create --tenant acme --name root --repo github.com/acme/root --url http://localhost:8080
 jobdb cell create --tenant acme --name payments --repo github.com/acme/payments --url http://localhost:8080

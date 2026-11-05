@@ -27,6 +27,20 @@ A lease defaults to its own cell. Trusted backend policy may grant additional
 existing target IDs; signed delegation restrictions intersect that ceiling.
 No lease inherits cell creation or tenant-wide submission from a cell name.
 
+Normal execution leases can explicitly call `CreateCell` within their tenant.
+Delegated leases need `DelegationPermissions.CreateCells` (`cells.create` on the
+wire), using `DelegationNames` to allow exact names or all names. Omission denies
+creation and descendants may only narrow the grant. Creation does not grant
+submission access to the new cell.
+
+The HTTP endpoint is
+`POST /v1/tenants/{tenantId}/jobs/{parentJobId}/leases/{leaseId}/cells`, with the
+lease token and the usual cell creation body. It returns 201 with the cell,
+ETag, and Location. `CreateCellWithLeaseByID` validates the live parent and writes
+the registry in the same transaction. Request-id replay is scoped to that parent
+lease identity and still requires the lease to be live. A borrowed transaction
+can roll back both the registration and its replay record.
+
 The standard cell endpoints support creation, filtered/paginated listing,
 retrieval, conditional PATCH, and retirement. PATCH accepts name, repository,
 description, and arbitrary metadata. Metadata replaces the map; `{}` clears it.

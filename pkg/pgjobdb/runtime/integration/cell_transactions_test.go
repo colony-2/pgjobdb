@@ -127,6 +127,39 @@ func TestCellTransactions(t *testing.T) {
 				}
 			}
 		})
+		t.Run("lease creation rollback and identity", func(t *testing.T) {
+			const tenant = "lease-create"
+			_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: tenant, Name: "ordinary", Repo: "example.test/ordinary"})
+			require.NoError(t, err)
+			_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: tenant, JobID: "parent", WorkerID: "submitter", JobType: "recipe", Cell: "ordinary"})
+			require.NoError(t, err)
+			lease, err := pgjobdb.GetJobLease(ctx, db, tenant, "parent", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetJobLeaseOptions{})
+			require.NoError(t, err)
+			require.NotNil(t, lease)
+			key := jobdb.JobKey{TenantId: tenant, JobId: "parent"}
+			req := jobdb.CreateCellRequest{Name: "new", Repo: "example.test/new", RequestID: "once"}
+			plain := context.Background()
+			_, err = pgjobdb.CreateCellWithLeaseByID(plain, db, key, lease.LeaseID, "wrong-worker", req)
+			require.ErrorIs(t, err, jobdb.ErrExecutionLeaseLost)
+			tx, err := db.BeginTx(plain, nil)
+			require.NoError(t, err)
+			defer tx.Rollback()
+			uncommitted, err := pgjobdb.CreateCellWithLeaseByID(plain, tx, key, lease.LeaseID, "worker", req)
+			require.NoError(t, err)
+			require.NoError(t, tx.Rollback())
+			list, err := pgjobdb.ListCells(ctx, db, jobdb.ListCellsRequest{TenantID: tenant, Name: req.Name})
+			require.NoError(t, err)
+			require.Empty(t, list.Cells)
+			created, err := pgjobdb.CreateCellWithLeaseByID(plain, db, key, lease.LeaseID, "worker", req)
+			require.NoError(t, err)
+			require.NotEqual(t, uncommitted.ID, created.ID, "creation replay must roll back with the cell")
+			again, err := pgjobdb.CreateCellWithLeaseByID(plain, db, key, lease.LeaseID, "worker", req)
+			require.NoError(t, err)
+			require.Equal(t, created, again)
+			require.NoError(t, pgjobdb.CompleteJob(ctx, db, lease.Identity(), pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}))
+			_, err = pgjobdb.CreateCellWithLeaseByID(plain, db, key, lease.LeaseID, "worker", req)
+			require.ErrorIs(t, err, jobdb.ErrExecutionLeaseLost)
+		})
 		t.Run("repository claims are unique across connections", func(t *testing.T) {
 			start := make(chan struct{})
 			var wg sync.WaitGroup

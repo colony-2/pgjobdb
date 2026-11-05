@@ -169,6 +169,20 @@ func CreateCell(ctx context.Context, db DB, req jobdb.CreateCellRequest) (out jo
 	err = cellTx(ctx, db, req.TenantID, func(_ *sql.Tx, s *cellstate.State) error { var e error; out, e = s.Create(ctx, req); return e })
 	return
 }
+
+func CreateCellWithLeaseByID(ctx context.Context, db DB, key jobdb.JobKey, leaseID, workerID string, req jobdb.CreateCellRequest) (out jobdb.Cell, err error) {
+	p := cellstate.LeaseProof{JobKey: key, LeaseID: leaseID, WorkerID: workerID}
+	ctx = cellstate.WithLease(ctx, p)
+	err = cellTx(ctx, db, key.TenantId, func(tx *sql.Tx, s *cellstate.State) error {
+		if _, e := cellParent(ctx, tx, s, key.TenantId); e != nil {
+			return e
+		}
+		var e error
+		out, e = s.CreateWithLease(ctx, p, req)
+		return e
+	})
+	return
+}
 func GetCell(ctx context.Context, db DB, key jobdb.CellKey) (out jobdb.Cell, err error) {
 	s, err := loadCells(ctx, db, key.TenantID)
 	if err != nil {
