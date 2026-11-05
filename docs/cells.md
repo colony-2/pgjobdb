@@ -23,8 +23,10 @@ list filter, or root-only command.
 Submission never creates cells, including when the caller has `cells.create`.
 Unknown targets return `not_found` with or without `cellRepo`. For an existing
 cell, `cellRepo` is an optional repository assertion; name-only submission works.
-A lease defaults to its own cell. Trusted backend policy may grant additional
-existing target IDs; signed delegation restrictions intersect that ceiling.
+A normal lease permits submission and resolution throughout its tenant. A
+delegated `jobs.submit` grant with an explicit cell-name list permits only those
+names; omitted lists add no restriction to the ancestor scope. Explicit principal
+cell restrictions still apply. There is no separate cross-cell permission.
 No lease inherits cell creation or tenant-wide submission from a cell name.
 
 Normal execution leases can explicitly call `CreateCell` within their tenant.
