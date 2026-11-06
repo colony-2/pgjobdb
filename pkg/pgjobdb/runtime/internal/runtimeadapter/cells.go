@@ -32,6 +32,9 @@ func (s Scheduler) DiscardJobPreparation(ctx context.Context, key jobdb.JobKey) 
 func (s Scheduler) ResolveCellWithLeaseByID(ctx context.Context, key jobdb.JobKey, leaseID, workerID, name string) (jobdb.ResolvedCell, error) {
 	return pgjobdb.ResolveCellWithLeaseByID(ctx, s.DB, key, leaseID, workerID, name)
 }
+func (s Scheduler) LookupCellWithLeaseByID(ctx context.Context, key jobdb.JobKey, leaseID, workerID, name string) (jobdb.ResolvedCell, error) {
+	return pgjobdb.LookupCellWithLeaseByID(ctx, s.DB, key, leaseID, workerID, name)
+}
 func (s Scheduler) ResolveScheduleCell(ctx context.Context, tenant, name, repo string) (jobdb.ResolvedCell, error) {
 	return pgjobdb.ResolveScheduleCell(ctx, s.DB, tenant, name, repo)
 }

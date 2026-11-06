@@ -17,7 +17,11 @@ import (
 // Cell operations take the tenant goal/admission lock before any row lock.
 // Existing transactions must use the same order. Jobs reference explicitly
 // registered cells; publication never changes the registry.
-func cellTx(ctx context.Context, db DB, tenant string, fn func(*sql.Tx, *cellstate.State) error) (err error) {
+func cellTx(ctx context.Context, db DB, tenant string, fn func(*sql.Tx, *cellstate.State) error) error {
+	return withCellTx(ctx, db, tenant, true, fn)
+}
+
+func withCellTx(ctx context.Context, db DB, tenant string, mutate bool, fn func(*sql.Tx, *cellstate.State) error) (err error) {
 	if err := validateScheduleDB(ctx, db); err != nil {
 		return err
 	}
@@ -64,8 +68,10 @@ func cellTx(ctx context.Context, db DB, tenant string, fn func(*sql.Tx, *cellsta
 	if err = fn(tx, state); err != nil {
 		return err
 	}
-	if err = saveCells(ctx, tx, tenant, &before, state); err != nil {
-		return err
+	if mutate {
+		if err = saveCells(ctx, tx, tenant, &before, state); err != nil {
+			return err
+		}
 	}
 	if owned {
 		return tx.Commit()
@@ -310,6 +316,22 @@ func ResolveCellWithLeaseByID(ctx context.Context, db DB, key jobdb.JobKey, leas
 	})
 	return
 }
+
+// LookupCellWithLeaseByID reads the current tenant registry using live lease
+// authority, independently of submission permissions. It never writes registry state.
+func LookupCellWithLeaseByID(ctx context.Context, db DB, key jobdb.JobKey, leaseID, workerID, name string) (out jobdb.ResolvedCell, err error) {
+	ctx = cellstate.WithLease(ctx, cellstate.LeaseProof{JobKey: key, LeaseID: leaseID, WorkerID: workerID})
+	err = withCellTx(ctx, db, key.TenantId, false, func(tx *sql.Tx, s *cellstate.State) error {
+		if _, e := cellParent(ctx, tx, s, key.TenantId); e != nil {
+			return e
+		}
+		var e error
+		out, e = s.Lookup(name)
+		return e
+	})
+	return
+}
+
 func ResolveScheduleCell(ctx context.Context, db DB, tenant, name, repo string) (out jobdb.ResolvedCell, err error) {
 	if err = jobdb.AuthorizeCell(ctx, tenant, "", "jobs.submit"); err != nil {
 		return out, err

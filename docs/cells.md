@@ -1,7 +1,7 @@
 # Tenant cells
 
 pgjobdb implements the JobDB cell contract using storage format **9** and JobDB
-commit `8797908eaf7c`. Jobs require an explicitly registered cell name and retain
+as pinned in `go.mod`. Jobs require an explicitly registered cell name and retain
 tenant-wide job IDs. Cells have server-generated immutable IDs, tenant-unique
 mutable names and canonical repository locators, descriptions, arbitrary JSON
 metadata, revisions, and ACTIVE/RETIRED state. Previous names remain aliases.
@@ -28,6 +28,15 @@ delegated `jobs.submit` grant with an explicit cell-name list permits only those
 names; omitted lists add no restriction to the ancestor scope. Explicit principal
 cell restrictions still apply. There is no separate cross-cell permission.
 No lease inherits cell creation or tenant-wide submission from a cell name.
+
+`ExecutionLease.LookupCell` independently reads one active cell's current name,
+immutable ID, and canonical repository in the live lease's tenant. It supports
+aliases, empty delegations, and targets outside submission scope. The native
+`LookupCellWithLeaseByID` function and runtime scheduler adapter validate the
+exact live lease in the same transaction as the registry read, without registry
+writes. Submission and restart authorization remain unchanged. JobDB, pgjobdb,
+and c2j upgrade together; custom lease/scheduler implementations must add the new
+lookup methods. Shared conformance tests cover direct and remote lookup.
 
 Normal execution leases can explicitly call `CreateCell` within their tenant.
 Delegated leases need `DelegationPermissions.CreateCells` (`cells.create` on the
