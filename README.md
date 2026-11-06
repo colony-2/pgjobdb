@@ -105,8 +105,28 @@ configurable with `pgjobdb.set_crash_concern_threshold`. The counter advances on
 reacquisition, not on reads or renewal. A held lease is `ACTIVE`; once it expires,
 the threshold determines whether the job is `CRASH_CONCERN`. With the default,
 an uninterrupted failure cycle stops after the sixth lease expires. Successful
-rescheduling resets the streak. An operator can explicitly restore eligibility
-with `pgjobdb.clear_crash_concern(tenant_id, job_id, worker_id, reason)`.
+rescheduling resets the streak. An operator can restore normal scheduling
+eligibility through `WorkflowRuntime.ClearCrashConcern`, or:
+
+```sh
+jobdb jobs clear-crash-concern -t TENANT JOB_ID --reason 'worker issue fixed'
+```
+
+The REST endpoint is `POST /v1/tenants/{tenantId}/jobs/{jobId}/clear-crash-concern`
+with a JSON body such as `{"reason":"worker issue fixed","workerId":"operator"}`;
+`{}` is also valid. Success returns `204`, missing jobs return `404`, and live,
+completed, cancelled, or hidden jobs return `409`. Delegated lease credentials
+cannot call this operator endpoint. `reset-crash-concern` is a CLI alias.
+
+Native Go callers can use `pgjobdb.ClearCrashConcern(ctx, db, req)` with a
+`jobdb.ClearCrashConcernRequest`. It accepts a database or borrowed transaction,
+locks the job, checks eligibility, and calls the existing traced
+`pgjobdb.clear_crash_concern` SQL operation atomically. Only the consecutive
+expiration count is reset; history, routing, dependencies, availability,
+deadlines, and lifetime expiration statistics remain intact. The old lease stays
+invalid. Normal acquisition reclaims it with a new lease and advances the count
+from zero to one. Repeating the clear while inactive succeeds; a concurrent live
+lease causes `jobdb.ErrConflict`. No schema migration is required for this API.
 
 The acquisition fix itself changes functions rather than the database format.
 The current release also includes job goals and requires the format-8 cutover
