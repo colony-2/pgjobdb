@@ -1,0 +1,103 @@
+id: pgjobdb-native-verify
+# No input_schema: accept the caller's complete inputs and nullable/value-artifact settings.
+inputs:
+  api_version: ${{ inputs.api_version }}
+  request: ${{ inputs.request }}
+  target_directory: ${{ inputs.target_directory }}
+  documents: ${{ inputs.documents }}
+  settings: ${{ inputs.?settings.orValue(null) }}
+  candidate: ${{ inputs.candidate }}
+  base: ${{ inputs.base }}
+sequence:
+- id: service_free
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/e4074f13905f5117d20ad71358596b41694863aa#go_1_26
+    - nix:github:NixOS/nixpkgs/e7439b6b14ad3cc35d05608ebca9bce01a25f5f8#python3
+    - nix:github:NixOS/nixpkgs/e7439b6b14ad3cc35d05608ebca9bce01a25f5f8#git
+  inputs:
+    env:
+      ROOT: ${{ context.environment.op.worktree_path }}
+      OUTBOX: ${{ context.environment.op.outbox }}
+    run: python3 "$ROOT/.c2/recipes/hooks/build/verify.py" service_free
+- id: installer
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/e4074f13905f5117d20ad71358596b41694863aa#go_1_26
+    - nix:github:NixOS/nixpkgs/e7439b6b14ad3cc35d05608ebca9bce01a25f5f8#python3
+    - nix:github:NixOS/nixpkgs/e7439b6b14ad3cc35d05608ebca9bce01a25f5f8#git
+  inputs:
+    env:
+      ROOT: ${{ context.environment.op.worktree_path }}
+      OUTBOX: ${{ context.environment.op.outbox }}
+    run: python3 "$ROOT/.c2/recipes/hooks/build/verify.py" installer
+- id: conformance
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/e4074f13905f5117d20ad71358596b41694863aa#go_1_26
+    - nix:github:NixOS/nixpkgs/e7439b6b14ad3cc35d05608ebca9bce01a25f5f8#python3
+    - nix:github:NixOS/nixpkgs/e7439b6b14ad3cc35d05608ebca9bce01a25f5f8#git
+  inputs:
+    env:
+      ROOT: ${{ context.environment.op.worktree_path }}
+      OUTBOX: ${{ context.environment.op.outbox }}
+    run: python3 "$ROOT/.c2/recipes/hooks/build/verify.py" conformance
+- id: runtime
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/e4074f13905f5117d20ad71358596b41694863aa#go_1_26
+    - nix:github:NixOS/nixpkgs/e7439b6b14ad3cc35d05608ebca9bce01a25f5f8#python3
+    - nix:github:NixOS/nixpkgs/e7439b6b14ad3cc35d05608ebca9bce01a25f5f8#git
+  inputs:
+    env:
+      ROOT: ${{ context.environment.op.worktree_path }}
+      OUTBOX: ${{ context.environment.op.outbox }}
+    run: python3 "$ROOT/.c2/recipes/hooks/build/verify.py" runtime
+- id: report
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/e4074f13905f5117d20ad71358596b41694863aa#go_1_26
+    - nix:github:NixOS/nixpkgs/e7439b6b14ad3cc35d05608ebca9bce01a25f5f8#python3
+    - nix:github:NixOS/nixpkgs/e7439b6b14ad3cc35d05608ebca9bce01a25f5f8#git
+  artifacts:
+    service_free.json: ${{ sequence.service_free.artifacts['service_free.json'] }}
+    service_free.log: ${{ sequence.service_free.artifacts['service_free.log'] }}
+    installer.json: ${{ sequence.installer.artifacts['installer.json'] }}
+    installer.log: ${{ sequence.installer.artifacts['installer.log'] }}
+    conformance.json: ${{ sequence.conformance.artifacts['conformance.json'] }}
+    conformance.log: ${{ sequence.conformance.artifacts['conformance.log'] }}
+    runtime.json: ${{ sequence.runtime.artifacts['runtime.json'] }}
+    runtime.log: ${{ sequence.runtime.artifacts['runtime.log'] }}
+  inputs:
+    env:
+      ROOT: ${{ context.environment.op.worktree_path }}
+      INBOX: ${{ context.environment.op.inbox }}
+      OUTBOX: ${{ context.environment.op.outbox }}
+      CANDIDATE: ${{ inputs.candidate }}
+      BASE: ${{ inputs.base }}
+    run: python3 "$ROOT/.c2/recipes/hooks/build/verify.py" aggregate
+outputs:
+  api_version: c2.build-hook/v1
+  status: ${{ sequence.report.outputs.stdout }}
+  summary: Native service-free, installer, PostgreSQL conformance and runtime checks completed; inspect verification.md and behavior logs.
+  artifact_refs:
+    service_free.json: ${{ sequence.service_free.artifacts['service_free.json'] }}
+    service_free.log: ${{ sequence.service_free.artifacts['service_free.log'] }}
+    installer.json: ${{ sequence.installer.artifacts['installer.json'] }}
+    installer.log: ${{ sequence.installer.artifacts['installer.log'] }}
+    conformance.json: ${{ sequence.conformance.artifacts['conformance.json'] }}
+    conformance.log: ${{ sequence.conformance.artifacts['conformance.log'] }}
+    runtime.json: ${{ sequence.runtime.artifacts['runtime.json'] }}
+    runtime.log: ${{ sequence.runtime.artifacts['runtime.log'] }}
+    verification.md: ${{ sequence.report.artifacts['verification.md'] }}
+    environment.json: ${{ sequence.report.artifacts['environment.json'] }}

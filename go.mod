@@ -126,7 +126,7 @@ require (
 )
 
 require (
-	github.com/colony-2/jobdb v0.0.75-0.20261106232324-f92ae253a5da
+	github.com/colony-2/jobdb v0.0.75-0.20261107050633-c1c8dea5e0b0
 	github.com/spf13/cobra v1.9.1
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	gorm.io/gorm v1.30.0
