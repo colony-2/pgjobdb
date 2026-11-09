@@ -193,14 +193,21 @@ func KeepAliveLease(ctx context.Context, db DB, identity LeaseIdentity,
 	if err != nil {
 		return nil, err
 	}
-	var expiresAt time.Time
-	if err := db.QueryRowContext(ctx, `SELECT pgjobdb.renew_native_lease(
-		$1, $2, $3, $4, $5)`, string(identity.TenantID),
-		string(identity.JobID), identity.LeaseID, string(identity.WorkerID),
-		seconds).Scan(&expiresAt); err != nil {
-		return nil, err
+	// Return the snapshot in the same statement/transaction as renewal. A separate
+	// ValidateLease call could race cancellation after the renewal committed,
+	// returning an error even though the mutation and canonical event persisted.
+	// The lateral argument depends on the materialized renewal result, so the
+	// validating function runs after the mutation while its row lock is held.
+	row := db.QueryRowContext(ctx, `WITH renewed AS MATERIALIZED (
+      SELECT pgjobdb.renew_native_lease($1,$2,$3,$4,$5) AS expiry
+    ) SELECT v.* FROM renewed r CROSS JOIN LATERAL pgjobdb.validate_native_lease(
+      $1,$2,CASE WHEN r.expiry IS NOT NULL THEN $3::text END,$4) v`,
+		string(identity.TenantID), string(identity.JobID), identity.LeaseID, string(identity.WorkerID), seconds)
+	lease, err := scanJobLease(row, identity.WorkerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrLeaseLost
 	}
-	return ValidateLease(ctx, db, identity)
+	return lease, err
 }
 
 func (l *JobLease) KeepAlive(ctx context.Context, db DB, additional time.Duration) error {

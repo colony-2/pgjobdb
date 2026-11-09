@@ -43,7 +43,7 @@ func (i Installer) Verify(ctx context.Context) error {
 	}
 	schema := i.schemaName()
 
-	for _, tbl := range []string{"cells", "cell_names", "cell_catalog", "installation", "jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts", "job_client_state", "goals", "goal_candidates", "job_preparations", "dependency_waits", "dependency_targets"} {
+	for _, tbl := range []string{"lease_events", "cells", "cell_names", "cell_catalog", "installation", "jobs", "jobs_archive", "jobs_trace", "schedules", "job_facts", "job_client_state", "goals", "goal_candidates", "job_preparations", "dependency_waits", "dependency_targets"} {
 		if err := i.assertTable(ctx, schema, tbl); err != nil {
 			return err
 		}
@@ -79,7 +79,7 @@ func (i Installer) Verify(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := i.assertInstallation(ctx, schema); err != nil {
+	if err := i.assertInstallation(ctx, schema, false); err != nil {
 		return err
 	}
 	return nil
@@ -107,7 +107,7 @@ func (i Installer) validateDatabase(ctx context.Context) error {
 		return fmt.Errorf("pgjobdb: inspect schema: %w", err)
 	}
 	if initialized {
-		return i.assertInstallation(ctx, schema)
+		return i.assertInstallation(ctx, schema, true)
 	}
 
 	var existingTable sql.NullString
@@ -143,7 +143,7 @@ func (i Installer) validateSchemaName() error {
 	return nil
 }
 
-func (i Installer) assertInstallation(ctx context.Context, schema string) error {
+func (i Installer) assertInstallation(ctx context.Context, schema string, allowPrevious bool) error {
 	var marker sql.NullString
 	if err := i.DB.QueryRowContext(ctx,
 		`SELECT to_regclass($1)::text`, schema+".installation").Scan(&marker); err != nil {
@@ -157,7 +157,7 @@ func (i Installer) assertInstallation(ctx context.Context, schema string) error 
 	if err := i.DB.QueryRowContext(ctx, query, schema).Scan(&version); err != nil {
 		return fmt.Errorf("pgjobdb: read installation marker: %w", err)
 	}
-	if version != 9 {
+	if version != 10 && !(allowPrevious && version == 9) {
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil

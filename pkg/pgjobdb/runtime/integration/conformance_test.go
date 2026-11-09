@@ -49,7 +49,8 @@ func TestPostgresRuntimeConformance(t *testing.T) {
 				}
 				return runtimetest.Fixture{
 					Runtime: remote, SchemaRegistry: remote,
-					Cleanup: func(ctx context.Context) error { server.Close(); return runtime.Close(ctx) },
+					LeaseEventLeaseValidity: runtime.ValidateExecutionLeaseByID,
+					Cleanup:                 func(ctx context.Context) error { server.Close(); return runtime.Close(ctx) },
 				}
 			},
 		},

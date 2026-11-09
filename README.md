@@ -11,10 +11,10 @@ require a `BlobStoreURI` for chapter artifacts. Call `Close` when finished.
 
 The first deployment requires a brand-new empty Postgres database. Startup
 creates the `pgjobdb` schema and the JobDB chapter and schema tables. Later
-starts accept an initialized format-8 `pgjobdb` installation. The cells
-upgrade requires a fresh database; format 7 and older are rejected unchanged.
+starts accept format 10 and transactionally upgrade the immediate-prior format 9.
+Formats 8 and older remain unsupported and are rejected unchanged.
 Startup also rejects old `pgwf` databases, other configured scheduler schemas, and a fresh database
-that already contains user tables. There is no migration from earlier formats or dual-read period.
+that already contains user tables. There is no migration from older formats or mixed-version writer support.
 
 The `github.com/colony-2/pgjobdb/pkg/pgjobdb` package exposes typed scheduler
 operations. Its `installer` subpackage installs and verifies the embedded
@@ -129,8 +129,10 @@ from zero to one. Repeating the clear while inactive succeeds; a concurrent live
 lease causes `jobdb.ErrConflict`. No schema migration is required for this API.
 
 The acquisition fix itself changes functions rather than the database format.
-The current release also includes job goals and requires the format-8 cutover
-described above.
+Canonical lease history uses the additive format 9→10 upgrade described above.
+
+See [canonical lease history](docs/lease-events.md) for the native API, pagination,
+retention semantics and upgrade procedure.
 
 ## Container image
 
@@ -167,7 +169,7 @@ Run the current checks with:
 GOWORK=off go test -tags=integration -p 1 ./...
 ```
 
-The JobDB dependency is pinned to a published release. Use `GOWORK=off` when
+The JobDB dependency is pinned to a published compatible commit. Use `GOWORK=off` when
 verifying that release so a local workspace cannot substitute another checkout.
 
 Publish the JobDB core and base CLI version first, then this pgjobdb module.

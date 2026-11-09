@@ -167,6 +167,23 @@ func TestTaskCompletionRecoveryWithIndependentChapterDatabase(t *testing.T) {
 				if err := runtime.CompleteTaskIfWaiting(ctx, req); !errors.Is(err, wantErr) {
 					t.Fatalf("complete: %v, want %v", err, wantErr)
 				}
+
+				events, eventErr := scheduler.ListLeaseEvents(ctx, jobdb.ListLeaseEventsRequest{TenantID: handle.JobKey.TenantId, JobIDs: []string{handle.JobKey.JobId}, EventTypes: []jobdb.LeaseEventType{jobdb.LeaseEventAcquired}})
+				if eventErr != nil {
+					t.Fatal(eventErr)
+				}
+				claims := 0
+				for _, event := range events.Events {
+					if event.AcquisitionSource == jobdb.LeaseAcquisitionTaskCompletion {
+						claims++
+						if event.Route.JobType != "recover" || event.Route.TaskType != "" {
+							t.Fatalf("claim route: %+v", event)
+						}
+					}
+				}
+				if claims != 1 {
+					t.Fatalf("committed task claim events=%d: %+v", claims, events)
+				}
 				published := phase == "after_append" || phase == "lease_lost_after_append"
 				_, err = runtime.GetChapter(ctx, jobdb.ChapterRef{JobKey: handle.JobKey, Ordinal: wait.Task.OutputOrdinal})
 				if published && err != nil || !published && !errors.Is(err, jobdb.ErrChapterNotFound) {

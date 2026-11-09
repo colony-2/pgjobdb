@@ -100,6 +100,12 @@ github.com/colony-2/jobdb v0.0.75-0.20261106232324-f92ae253a5da h1:upjx28/3mXGJ5
 github.com/colony-2/jobdb v0.0.75-0.20261106232324-f92ae253a5da/go.mod h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek=
 github.com/colony-2/jobdb v0.0.75-0.20261107050633-c1c8dea5e0b0 h1:5hHY885yVt5l+jSBYy91XwvMSiMze38l+x9DvjfYUqI=
 github.com/colony-2/jobdb v0.0.75-0.20261107050633-c1c8dea5e0b0/go.mod h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek=
+github.com/colony-2/jobdb v0.0.77-0.20261108033303-ea45f87bf010 h1:oM4sOWUQ3b8SyLwD0PZwLIA2wrfTSjZthca+mUfbw/4=
+github.com/colony-2/jobdb v0.0.77-0.20261108033303-ea45f87bf010/go.mod h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek=
+github.com/colony-2/jobdb v0.0.79 h1:MDPyZuvPmD3zvk3q/cGHiZjZcixbQ5WPuxK6XTwYcdQ=
+github.com/colony-2/jobdb v0.0.79/go.mod h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek=
+github.com/colony-2/jobdb v0.0.80-0.20261109190005-f894d5175ebf h1:FZwPFW2NGYb+n9DNYQaPSmYyA5BrA13rRFA1a0ZQOjc=
+github.com/colony-2/jobdb v0.0.80-0.20261109190005-f894d5175ebf/go.mod h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

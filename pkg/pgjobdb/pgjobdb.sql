@@ -6,7 +6,7 @@ SET LOCAL search_path = pgjobdb, public;
 
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 9 THEN
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') NOT IN (9, 10) THEN
    RAISE EXCEPTION 'unsupported pgjobdb format; create a fresh database';
   END IF;
  END IF;
@@ -14,12 +14,18 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 9),
+    format_version INTEGER NOT NULL CHECK (format_version = 10),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
+-- The only supported prior format is upgraded transactionally, without backfill.
+ALTER TABLE pgjobdb.installation DROP CONSTRAINT IF EXISTS installation_format_version_check;
+ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK (format_version = 10) NOT VALID;
+UPDATE pgjobdb.installation SET format_version = 10 WHERE format_version = 9;
+ALTER TABLE pgjobdb.installation VALIDATE CONSTRAINT installation_format_version_check;
+
 INSERT INTO pgjobdb.installation (name, format_version)
-VALUES ('pgjobdb', 9)
+VALUES ('pgjobdb', 10)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -831,6 +837,46 @@ BEGIN
 END;
 $$;
 
+-- Canonical history has no foreign key to deletable scheduler rows.
+CREATE TABLE IF NOT EXISTS pgjobdb.lease_events (
+ event_id BIGSERIAL PRIMARY KEY,
+ event_type TEXT NOT NULL CHECK(event_type IN ('lease_acquired','lease_renewed')),
+ occurred_at TIMESTAMPTZ NOT NULL,
+ tenant_id TEXT NOT NULL, job_id TEXT NOT NULL,
+ cell_id TEXT NOT NULL, cell_name TEXT NOT NULL, cell_repo TEXT NOT NULL,
+ goal_id TEXT NOT NULL, job_type TEXT NOT NULL,
+ route_job_type TEXT NOT NULL, route_task_type TEXT,
+ lease_id TEXT NOT NULL, worker_id TEXT NOT NULL, lease_expires_at TIMESTAMPTZ NOT NULL,
+ previous_lease_expires_at TIMESTAMPTZ, acquisition_source TEXT, previous_lease_id TEXT,
+ CHECK ((event_type='lease_acquired' AND acquisition_source IS NOT NULL AND acquisition_source IN ('poll','targeted','task_completion') AND previous_lease_expires_at IS NULL)
+ OR (event_type='lease_renewed' AND acquisition_source IS NULL AND previous_lease_id IS NULL AND previous_lease_expires_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS lease_events_acquisition_idx ON pgjobdb.lease_events(tenant_id,job_id,lease_id) WHERE event_type='lease_acquired';
+CREATE INDEX IF NOT EXISTS lease_events_time_idx ON pgjobdb.lease_events(tenant_id,occurred_at DESC,event_id DESC);
+CREATE INDEX IF NOT EXISTS lease_events_job_idx ON pgjobdb.lease_events(tenant_id,job_id,occurred_at DESC,event_id DESC);
+CREATE INDEX IF NOT EXISTS lease_events_cell_idx ON pgjobdb.lease_events(tenant_id,cell_id,occurred_at DESC,event_id DESC);
+CREATE INDEX IF NOT EXISTS lease_events_goal_idx ON pgjobdb.lease_events(tenant_id,goal_id,occurred_at DESC,event_id DESC);
+CREATE INDEX IF NOT EXISTS lease_events_worker_idx ON pgjobdb.lease_events(tenant_id,worker_id,occurred_at DESC,event_id DESC);
+CREATE INDEX IF NOT EXISTS lease_events_lease_idx ON pgjobdb.lease_events(tenant_id,lease_id,occurred_at DESC,event_id DESC);
+CREATE INDEX IF NOT EXISTS lease_events_type_idx ON pgjobdb.lease_events(tenant_id,event_type,occurred_at DESC,event_id DESC);
+
+CREATE OR REPLACE FUNCTION pgjobdb._record_lease_event(
+ p_job pgjobdb.jobs, p_time TIMESTAMPTZ, p_source TEXT,
+ p_previous_id TEXT, p_previous_expiry TIMESTAMPTZ
+) RETURNS VOID LANGUAGE plpgsql AS $$
+DECLARE v_count INTEGER;
+BEGIN
+ INSERT INTO pgjobdb.lease_events(event_type,occurred_at,tenant_id,job_id,cell_id,cell_name,cell_repo,goal_id,job_type,route_job_type,route_task_type,lease_id,worker_id,lease_expires_at,previous_lease_expires_at,acquisition_source,previous_lease_id)
+ SELECT CASE WHEN p_source IS NULL THEN 'lease_renewed' ELSE 'lease_acquired' END,
+ p_time,p_job.tenant_id,p_job.job_id,f.cell_id,c.name,c.repo,p_job.goal_id,f.job_type,
+ p_job.lease_route_job_type,p_job.lease_task_type,p_job.lease_id,p_job.lease_worker_id,
+ p_job.lease_expires_at,p_previous_expiry,p_source,p_previous_id
+ FROM pgjobdb.job_facts f JOIN pgjobdb.cells c ON c.tenant_id=f.tenant_id AND c.cell_id=f.cell_id
+ WHERE f.tenant_id=p_job.tenant_id AND f.job_id=p_job.job_id;
+ GET DIAGNOSTICS v_count=ROW_COUNT;
+ IF v_count<>1 THEN RAISE EXCEPTION 'lease event: expected one snapshot, got %',v_count; END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION pgjobdb._extend_lease(
     p_tenant_id TEXT,
     p_job_id TEXT,
@@ -844,6 +890,8 @@ AS $$
 DECLARE
     v_job pgjobdb.jobs%ROWTYPE;
     v_new TIMESTAMPTZ;
+    v_now TIMESTAMPTZ;
+    v_updated pgjobdb.jobs%ROWTYPE;
 BEGIN
     IF p_additional_seconds IS NULL OR p_additional_seconds <= 0 THEN
         RAISE EXCEPTION 'additional_seconds must be positive';
@@ -866,13 +914,15 @@ BEGIN
         RAISE EXCEPTION 'job %s/%s is cancelled and cannot extend the lease', p_tenant_id, p_job_id;
     END IF;
 
-    v_new := clock_timestamp() + make_interval(secs => p_additional_seconds);
+    v_now := clock_timestamp();
+    v_new := v_now + make_interval(secs => p_additional_seconds);
 
     UPDATE pgjobdb.jobs
     SET lease_expires_at = v_new
     WHERE tenant_id = v_job.tenant_id
       AND job_id = v_job.job_id
-      AND lease_id = v_job.lease_id;
+      AND lease_id = v_job.lease_id RETURNING * INTO STRICT v_updated;
+    PERFORM pgjobdb._record_lease_event(v_updated,v_now,NULL,NULL,v_job.lease_expires_at);
 
     PERFORM pgjobdb._emit_trace_event(
         p_tenant_id,
@@ -2041,6 +2091,9 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     v_now TIMESTAMPTZ := clock_timestamp();
+    v_updated pgjobdb.jobs%ROWTYPE;
+    v_previous TEXT;
+    v_result RECORD;
 BEGIN
     IF p_worker_id IS NULL OR p_worker_id = '' THEN
         RAISE EXCEPTION 'worker id is required';
@@ -2060,9 +2113,8 @@ BEGIN
     PERFORM pgjobdb._goal_lock(t) FROM (SELECT DISTINCT unnest(p_tenant_ids) AS t ORDER BY t) tenants;
     PERFORM pgjobdb._expire_goal_waits(p_tenant_ids);
     v_now:=clock_timestamp();
-    RETURN QUERY
     WITH candidate AS (
-        SELECT j.tenant_id, j.job_id,
+        SELECT j.tenant_id, j.job_id, j.lease_id AS previous_id,
             route.effective_job_type,
             route.effective_work_kind,
             route.effective_task_type, route.alternate_due
@@ -2124,20 +2176,26 @@ BEGIN
             alternate_task_type = CASE WHEN NOT c.alternate_due THEN j.alternate_task_type END,
             alternate_after_seconds = CASE WHEN NOT c.alternate_due THEN j.alternate_after_seconds END,
             alternate_at = CASE WHEN NOT c.alternate_due THEN j.alternate_at END,
-            lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
+            lease_expires_at = clock_timestamp() + make_interval(secs => p_lease_seconds),
             lease_expiration_count = j.lease_expiration_count +
                 CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
             consecutive_expirations = CASE WHEN j.lease_id IS NOT NULL
                 THEN j.consecutive_expirations + 1 ELSE 0 END
         FROM candidate c
         WHERE j.tenant_id = c.tenant_id AND j.job_id = c.job_id
-        RETURNING j.*
+        RETURNING j AS updated, c.previous_id
     )
+    SELECT l.updated, l.previous_id INTO v_result FROM leased l;
+    IF NOT FOUND THEN RETURN; END IF;
+    v_updated:=v_result.updated; v_previous:=v_result.previous_id;
+    PERFORM pgjobdb._record_lease_event(v_updated,v_updated.lease_expires_at - make_interval(secs => p_lease_seconds),
+      CASE WHEN p_target_job_id IS NULL THEN 'poll' ELSE 'targeted' END,v_previous,NULL);
+    RETURN QUERY
     SELECT l.tenant_id, l.job_id, l.lease_id, l.lease_expires_at,
         f.job_type, l.lease_route_job_type, l.lease_work_kind, l.lease_task_type,
         l.resume_job_type, l.task_input_ordinal, l.task_output_ordinal,
         l.task_input_hash, f.run_policy, c.client_payload, c.revision, f.schema_hash, l.goal_id, jsonb_build_object('cell',f.cell_name,'cellId',f.cell_id,'cellRepo',f.cell_repo)
-    FROM leased l JOIN pgjobdb.job_facts f USING (tenant_id, job_id) JOIN pgjobdb.job_client_state c USING (tenant_id,job_id);
+    FROM (SELECT (v_updated).*) l JOIN pgjobdb.job_facts f USING (tenant_id,job_id) JOIN pgjobdb.job_client_state c USING(tenant_id,job_id);
 END;
 $$;
 
@@ -2497,6 +2555,7 @@ AS $$
 DECLARE
     v_job pgjobdb.jobs%ROWTYPE;
     v_now TIMESTAMPTZ;
+    v_updated pgjobdb.jobs%ROWTYPE;
 BEGIN
     PERFORM pgjobdb._expire_goal_waits(ARRAY[p_tenant_id]);
     v_now:=clock_timestamp();
@@ -2531,7 +2590,6 @@ BEGIN
         OR v_job.task_input_hash IS DISTINCT FROM p_input_hash THEN
         RAISE EXCEPTION 'waiting task coordinates do not match' USING ERRCODE = 'JTC01';
     END IF;
-    RETURN QUERY
     UPDATE pgjobdb.jobs j SET
         lease_id = gen_random_uuid()::TEXT,
         lease_worker_id = p_worker_id,
@@ -2549,7 +2607,9 @@ BEGIN
         alternate_job_type = NULL, alternate_task_type = NULL,
         alternate_after_seconds = NULL, alternate_at = NULL
     WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id
-    RETURNING j.lease_id, j.lease_expires_at;
+    RETURNING j.* INTO STRICT v_updated;
+    PERFORM pgjobdb._record_lease_event(v_updated,v_now,'task_completion',v_job.lease_id,NULL);
+    RETURN QUERY SELECT v_updated.lease_id,v_updated.lease_expires_at;
 END;
 $$;
 

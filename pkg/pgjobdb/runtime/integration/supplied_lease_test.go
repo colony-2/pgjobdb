@@ -391,8 +391,8 @@ func runSuppliedLeaseInvalidBeforeImport(t *testing.T, newFixture func(*testing.
 	}
 }
 
-// Inject actual PostgreSQL failures at the boundary between the renewal update
-// and the independent validation query. The committed extension is observable.
+// Inject PostgreSQL failures after the renewal update, during snapshot validation.
+// Both now share one statement: failure must roll back the update and its event.
 func validationFault(t *testing.T, db *sql.DB, statement string) {
 	t.Helper()
 	var definition string
@@ -409,6 +409,8 @@ func runRenewalDatabaseErrorsAndDeadlines(t *testing.T, newFixture func(*testing
 			lease := f.lease.(jobdb.RenewableExecutionLease)
 			var originalExpiry time.Time
 			require.NoError(t, f.db.QueryRow(`SELECT lease_expires_at FROM pgjobdb.jobs WHERE job_id=$1`, f.key.JobId).Scan(&originalExpiry))
+			history, err := f.backend.ListLeaseEvents(celltest.Context(context.Background()), jobdb.ListLeaseEventsRequest{TenantID: f.key.TenantId, JobIDs: []string{f.key.JobId}})
+			require.NoError(t, err)
 			ctx := celltest.Context(context.Background())
 			var cancel context.CancelFunc
 			switch kind {
@@ -423,7 +425,7 @@ func runRenewalDatabaseErrorsAndDeadlines(t *testing.T, newFixture func(*testing
 				cancel()
 			}
 			start := time.Now()
-			_, err := f.backend.RenewExecutionLeaseByID(ctx, f.key, lease.LeaseID(), lease.LeaseWorkerID(), 5*time.Second)
+			_, err = f.backend.RenewExecutionLeaseByID(ctx, f.key, lease.LeaseID(), lease.LeaseWorkerID(), 5*time.Second)
 			require.Error(t, err)
 			require.NotErrorIs(t, err, jobdb.ErrExecutionLeaseLost)
 			require.Less(t, time.Since(start), 2*time.Second)
@@ -436,11 +438,10 @@ func runRenewalDatabaseErrorsAndDeadlines(t *testing.T, newFixture func(*testing
 			}
 			var expiry time.Time
 			require.NoError(t, f.db.QueryRow(`SELECT lease_expires_at FROM pgjobdb.jobs WHERE job_id=$1`, f.key.JobId).Scan(&expiry))
-			if kind == "cancelled-context" {
-				require.True(t, expiry.Equal(originalExpiry))
-			} else {
-				require.True(t, expiry.After(originalExpiry))
-			}
+			require.Equal(t, originalExpiry, expiry, "failed renewal must roll back expiry")
+			afterHistory, err := f.backend.ListLeaseEvents(celltest.Context(context.Background()), jobdb.ListLeaseEventsRequest{TenantID: f.key.TenantId, JobIDs: []string{f.key.JobId}})
+			require.NoError(t, err)
+			require.Equal(t, history, afterHistory, "failed renewal must roll back its event")
 			require.Zero(t, f.acquisitions.Load())
 		})
 	}
@@ -483,6 +484,8 @@ func runSuppliedLeaseDatabaseFailureStopsExecution(t *testing.T, newFixture func
 			}
 			var before time.Time
 			require.NoError(t, f.db.QueryRow(`SELECT lease_expires_at FROM pgjobdb.jobs WHERE job_id=$1`, f.key.JobId).Scan(&before))
+			history, err := f.backend.ListLeaseEvents(celltest.Context(context.Background()), jobdb.ListLeaseEventsRequest{TenantID: f.key.TenantId, JobIDs: []string{f.key.JobId}})
+			require.NoError(t, err)
 			switch kind {
 			case "before-update":
 				_, err = f.db.Exec(`CREATE FUNCTION pgjobdb.fail_renewal() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected update failure' USING ERRCODE='08006'; END $$;
@@ -512,11 +515,10 @@ func runSuppliedLeaseDatabaseFailureStopsExecution(t *testing.T, newFixture func
 			requireNoExecutionOutcome(t, chapters)
 			var after time.Time
 			require.NoError(t, f.db.QueryRow(`SELECT lease_expires_at FROM pgjobdb.jobs WHERE job_id=$1`, f.key.JobId).Scan(&after))
-			if kind == "before-update" {
-				require.True(t, before.Equal(after))
-			} else {
-				require.True(t, after.After(before))
-			}
+			require.Equal(t, before, after, "failed heartbeat must roll back expiry")
+			afterHistory, err := f.backend.ListLeaseEvents(celltest.Context(context.Background()), jobdb.ListLeaseEventsRequest{TenantID: f.key.TenantId, JobIDs: []string{f.key.JobId}})
+			require.NoError(t, err)
+			require.Equal(t, history, afterHistory, "failed heartbeat must roll back its event")
 			count := f.renewals.Load()
 			require.Positive(t, count, "the injected failure must be observed by renewal")
 			time.Sleep(100 * time.Millisecond)
