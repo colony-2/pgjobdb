@@ -50,6 +50,7 @@ func (i Installer) Verify(ctx context.Context) error {
 	}
 	for table, columns := range map[string][]string{
 		"dependency_waits": {"deadline_exact"},
+		"job_preparations": {"selected_goal_id", "receipt"},
 		"job_facts":        {"hidden_at", "goal_id", "cell_id", "cell_repo", "cell_name"},
 		"job_client_state": {"client_payload", "revision", "initial_payload_digest"},
 		"jobs":             {"goal_id", "dependency_wait_id", "route_job_type", "work_kind", "lease_worker_id", "lease_route_job_type", "lease_work_kind", "lease_task_type", "alternate_at", "wait_until_is_deadline"},
@@ -157,7 +158,7 @@ func (i Installer) assertInstallation(ctx context.Context, schema string, allowP
 	if err := i.DB.QueryRowContext(ctx, query, schema).Scan(&version); err != nil {
 		return fmt.Errorf("pgjobdb: read installation marker: %w", err)
 	}
-	if version != 10 && !(allowPrevious && version == 9) {
+	if version != 11 && !(allowPrevious && (version == 9 || version == 10)) {
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil

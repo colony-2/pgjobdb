@@ -11,10 +11,10 @@ require a `BlobStoreURI` for chapter artifacts. Call `Close` when finished.
 
 The first deployment requires a brand-new empty Postgres database. Startup
 creates the `pgjobdb` schema and the JobDB chapter and schema tables. Later
-starts accept format 10 and transactionally upgrade the immediate-prior format 9.
+starts accept format 11 and transactionally upgrade formats 9 and 10.
 Formats 8 and older remain unsupported and are rejected unchanged.
 Startup also rejects old `pgwf` databases, other configured scheduler schemas, and a fresh database
-that already contains user tables. There is no migration from older formats or mixed-version writer support.
+that already contains user tables. There is no migration from formats 8 and older or mixed-version writer support.
 
 The `github.com/colony-2/pgjobdb/pkg/pgjobdb` package exposes typed scheduler
 operations. Its `installer` subpackage installs and verifies the embedded

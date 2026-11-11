@@ -113,14 +113,14 @@ func TestLeaseEventsUpgrade(t *testing.T) {
 	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
 		_, err := db.ExecContext(ctx, format9)
 		require.NoError(t, err)
-		eventJob(t, ctx, db, "old")
+		historicalEventJob(t, ctx, db, "old")
 		lease, err := eventClaim(ctx, db, "old")
 		require.NoError(t, err)
 		require.NotNil(t, lease)
 
 		lease, err = pgjobdb.KeepAliveLease(ctx, db, lease.Identity(), time.Minute)
 		require.NoError(t, err)
-		eventJob(t, ctx, db, "old-completed")
+		historicalEventJob(t, ctx, db, "old-completed")
 		require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", "old-completed", "worker", pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}))
 		// Compare retained data, including live lease identity/expiry, archived
 		// history, primary goals and signing keys, rather than only row counts.
@@ -147,7 +147,7 @@ func TestLeaseEventsUpgrade(t *testing.T) {
 		require.NoError(t, installer.Verify(ctx))
 		var version, traceAfter int
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version))
-		require.Equal(t, 10, version)
+		require.Equal(t, 11, version)
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.jobs_trace`).Scan(&traceAfter))
 		require.Equal(t, traceBefore, traceAfter)
 		_, err = pgjobdb.KeepAliveLease(ctx, db, lease.Identity(), time.Minute)

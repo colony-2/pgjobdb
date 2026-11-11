@@ -116,7 +116,15 @@ func resolveRequiredString(flagValue, envVar, fieldName string) (string, error) 
 // must authenticate access upstream; embeddings install their own verified policy.
 func administrativeCellIngress(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := jobdb.WithCellAuthority(r.Context(), jobdb.CellAuthority{Principal: "server-administrator", TenantID: "*", Permissions: map[string]bool{"cells.create": true, "cells.get": true, "cells.list": true, "cells.update": true, "cells.retire": true, "jobs.submit": true, "jobs.list": true, "jobs.acquire": true}})
+		ctx := jobdb.WithCellAuthority(r.Context(), jobdb.CellAuthority{Principal: "server-administrator", TenantID: "*", Permissions: map[string]bool{"cells.create": true, "cells.get": true, "cells.list": true, "cells.update": true, "cells.retire": true, "jobs.submit": true, "goals.get": true, "goals.select-primary": true, "jobs.list": true, "jobs.acquire": true}})
+		ctx = jobdb.WithPrimaryGoalSelectionAuthorizer(ctx, func(ctx context.Context, goal jobdb.GoalKey, target jobdb.ResolvedCell) error {
+			for _, permission := range []string{"goals.get", "goals.select-primary"} {
+				if err := jobdb.AuthorizeCell(ctx, goal.TenantId, target.CellID, permission); err != nil {
+					return jobdb.ErrPrimaryGoalSelectionForbidden
+				}
+			}
+			return nil
+		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

@@ -191,7 +191,7 @@ func TestTenantConfiguration(t *testing.T) {
 		require.JSONEq(t, `"existing-input"`, string(start.Input.Data))
 		var version int
 		require.NoError(t, db.QueryRowContext(ctx, "SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb'").Scan(&version))
-		require.Equal(t, 10, version)
+		require.Equal(t, 11, version)
 	})
 }
 

@@ -58,6 +58,7 @@ type SubmitJobRequest struct {
 	Cell, CellRepo      string
 	Target              jobdb.ResolvedCell
 	GoalID              string
+	SelectedGoalID      string
 	ShareGoal           bool
 	Dependencies        []jobdb.Dependency
 	TenantID            TenantID

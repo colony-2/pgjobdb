@@ -90,13 +90,13 @@ func submitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 	}
 	var result SubmitJobResult
 	var returnedID string
-	err = db.QueryRowContext(ctx, `SELECT job_id, created FROM pgjobdb.submit_native_job(
-		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
-		string(req.TenantID), string(req.JobID), string(req.WorkerID),
-		string(req.JobType), string(policy), string(appMetadata),
-		nilIfBlank(req.Runtime.SchemaHash), nilIfBlank(string(req.Runtime.ParentJobID)),
-		schedule, pq.Array(waitFor), optionalTime(req.AvailableAt),
-		optionalTime(req.ExpiresAt), mode, value, nilIfBlank(req.GoalID), req.ShareGoal, string(dependencies), string(cell)).Scan(&returnedID, &result.Created)
+	query := `SELECT job_id, created FROM pgjobdb.submit_native_job($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`
+	args := []any{string(req.TenantID), string(req.JobID), string(req.WorkerID), string(req.JobType), string(policy), string(appMetadata), nilIfBlank(req.Runtime.SchemaHash), nilIfBlank(string(req.Runtime.ParentJobID)), schedule, pq.Array(waitFor), optionalTime(req.AvailableAt), optionalTime(req.ExpiresAt), mode, value, nilIfBlank(req.GoalID), req.ShareGoal, string(dependencies), string(cell)}
+	if req.SelectedGoalID != "" {
+		query = `SELECT job_id, created FROM pgjobdb.submit_native_job($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`
+		args = append(args, req.SelectedGoalID)
+	}
+	err = db.QueryRowContext(ctx, query, args...).Scan(&returnedID, &result.Created)
 	if err != nil {
 		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "JDL01" {
 			return nil, ErrJobDeleted

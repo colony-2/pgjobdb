@@ -6,7 +6,7 @@ SET LOCAL search_path = pgjobdb, public;
 
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') NOT IN (9, 10) THEN
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') NOT IN (9, 10, 11) THEN
    RAISE EXCEPTION 'unsupported pgjobdb format; create a fresh database';
   END IF;
  END IF;
@@ -14,18 +14,18 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 10),
+    format_version INTEGER NOT NULL CHECK (format_version = 11),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
--- The only supported prior format is upgraded transactionally, without backfill.
+-- Supported prior formats are upgraded transactionally; existing preparations retain their descriptors.
 ALTER TABLE pgjobdb.installation DROP CONSTRAINT IF EXISTS installation_format_version_check;
-ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK (format_version = 10) NOT VALID;
-UPDATE pgjobdb.installation SET format_version = 10 WHERE format_version = 9;
+ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK (format_version = 11) NOT VALID;
+UPDATE pgjobdb.installation SET format_version = 11 WHERE format_version IN (9, 10);
 ALTER TABLE pgjobdb.installation VALIDATE CONSTRAINT installation_format_version_check;
 
 INSERT INTO pgjobdb.installation (name, format_version)
-VALUES ('pgjobdb', 10)
+VALUES ('pgjobdb', 11)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -80,6 +80,11 @@ CREATE TABLE IF NOT EXISTS pgjobdb.job_preparations (
  FOREIGN KEY(tenant_id,cell_id) REFERENCES pgjobdb.cells(tenant_id,cell_id),
  PRIMARY KEY(tenant_id,job_id)
 );
+-- Selection is explicit and never inferred from Restart's prior/share fields.
+-- Old ordinary preparations keep NULL selection and receipt, without rewriting
+-- their semantic descriptors or ownership snapshots.
+ALTER TABLE pgjobdb.job_preparations ADD COLUMN IF NOT EXISTS selected_goal_id TEXT;
+ALTER TABLE pgjobdb.job_preparations ADD COLUMN IF NOT EXISTS receipt JSONB;
 CREATE INDEX IF NOT EXISTS preparation_cell_idx ON pgjobdb.job_preparations(tenant_id,cell_id) WHERE NOT published;
 CREATE UNIQUE INDEX IF NOT EXISTS preparation_request_idx ON pgjobdb.job_preparations(tenant_id,request_id) WHERE request_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS pgjobdb.goal_candidates (
@@ -1713,32 +1718,46 @@ BEGIN
  END LOOP;
  RETURN 'different job preparation';
 END $$;
-CREATE OR REPLACE FUNCTION pgjobdb.prepare_job(t TEXT,j TEXT,r TEXT,prior TEXT,sharing BOOLEAN,descr TEXT,deps JSONB,requested_cell TEXT,requested_repo TEXT,target_id TEXT,target_name TEXT,target_repo TEXT,parent_id TEXT) RETURNS JSONB LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION pgjobdb._validate_selected_goal(t TEXT,g TEXT,c TEXT,r TEXT) RETURNS VOID LANGUAGE plpgsql AS $$
+DECLARE goal pgjobdb.goals%ROWTYPE;
+BEGIN
+ SELECT * INTO goal FROM pgjobdb.goals WHERE tenant_id=t AND goal_id=g;
+ IF NOT FOUND THEN RAISE EXCEPTION 'goal not found' USING ERRCODE='JGN01'; END IF;
+ IF goal.cell_id<>c THEN RAISE EXCEPTION 'goal cell differs' USING ERRCODE='JCC01'; END IF;
+ IF goal.cell_repo<>r THEN RAISE EXCEPTION 'goal repository differs' USING ERRCODE='JCM01'; END IF;
+ IF goal.state<>'OPEN' THEN RAISE EXCEPTION 'goal is closed' USING ERRCODE='JGF01'; END IF;
+END $$;
+DROP FUNCTION IF EXISTS pgjobdb.prepare_job(TEXT,TEXT,TEXT,TEXT,BOOLEAN,TEXT,JSONB,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT);
+CREATE OR REPLACE FUNCTION pgjobdb.prepare_job(t TEXT,j TEXT,r TEXT,prior TEXT,sharing BOOLEAN,descr TEXT,deps JSONB,requested_cell TEXT,requested_repo TEXT,target_id TEXT,target_name TEXT,target_repo TEXT,parent_id TEXT,selected TEXT DEFAULT NULL) RETURNS JSONB LANGUAGE plpgsql AS $$
 DECLARE p pgjobdb.job_preparations%ROWTYPE; g TEXT;
 BEGIN
- IF COALESCE(btrim(t),'')='' OR COALESCE(descr,'')='' OR (sharing AND j IS NULL AND r IS NULL) THEN RAISE EXCEPTION 'invalid preparation' USING ERRCODE='JGI01'; END IF;
+ IF COALESCE(btrim(t),'')='' OR COALESCE(descr,'')='' OR (sharing AND j IS NULL AND r IS NULL) OR (selected IS NOT NULL AND (j IS NULL OR btrim(j)='' OR prior IS NOT NULL OR sharing OR r IS NOT NULL)) THEN RAISE EXCEPTION 'invalid preparation' USING ERRCODE='JGI01'; END IF;
  PERFORM pgjobdb._validate_dependencies(deps);
  PERFORM pgjobdb._goal_lock(t);
  SELECT * INTO p FROM pgjobdb.job_preparations WHERE tenant_id=t AND ((j IS NOT NULL AND job_id=j) OR (r IS NOT NULL AND request_id=r)) ORDER BY job_id LIMIT 1;
  IF FOUND THEN
-  IF p.cell_id<>target_id OR p.descriptor<>descr OR p.prior_job_id IS DISTINCT FROM prior OR p.share_goal<>sharing OR p.dependencies<>deps
+  IF p.selected_goal_id IS DISTINCT FROM selected OR p.cell_id<>target_id OR p.cell_repo<>target_repo OR p.parent_job_id<>parent_id OR p.descriptor<>descr OR p.prior_job_id IS DISTINCT FROM prior OR p.share_goal<>sharing OR p.dependencies<>deps
    OR (j IS NOT NULL AND p.job_id<>j) OR (r IS NOT NULL AND p.request_id IS NOT NULL AND p.request_id<>r)
    OR EXISTS(SELECT 1 FROM pgjobdb.job_preparations x WHERE x.tenant_id=t AND x.request_id=r AND x.job_id<>p.job_id)
   THEN RAISE EXCEPTION '%',pgjobdb._preparation_mismatch(p.descriptor,descr) USING ERRCODE='JGM01'; END IF;
   IF r IS NOT NULL AND p.request_id IS NULL THEN UPDATE pgjobdb.job_preparations SET request_id=r WHERE tenant_id=t AND job_id=p.job_id; END IF;
-  RETURN jsonb_build_object('Key',jsonb_build_object('tenantId',t,'jobId',p.job_id),'GoalID',p.goal_id,'Published',p.published,'Target',jsonb_build_object('cellId',p.cell_id,'cell',p.cell_name,'cellRepo',p.cell_repo));
+  IF selected IS NOT NULL AND NOT p.published THEN PERFORM pgjobdb._validate_selected_goal(t,selected,target_id,target_repo); END IF;
+  RETURN jsonb_build_object('Key',jsonb_build_object('tenantId',t,'jobId',p.job_id),'GoalID',p.goal_id,'Published',p.published,'Receipt',p.receipt,'Target',jsonb_build_object('cellId',p.cell_id,'cell',p.cell_name,'cellRepo',p.cell_repo));
  END IF;
  IF j IS NOT NULL AND EXISTS(SELECT 1 FROM pgjobdb.job_facts WHERE tenant_id=t AND job_id=j) THEN RAISE EXCEPTION 'destination already exists without preparation' USING ERRCODE='JGM01'; END IF;
  IF prior IS NOT NULL THEN
   SELECT goal_id INTO g FROM pgjobdb.job_facts WHERE tenant_id=t AND job_id=prior;
   IF NOT FOUND THEN RAISE EXCEPTION 'source job not found' USING ERRCODE='JJN01'; END IF;
  END IF;
- IF sharing THEN
+ IF selected IS NOT NULL THEN
+  PERFORM pgjobdb._validate_selected_goal(t,selected,target_id,target_repo);
+  g:=selected;
+ ELSIF sharing THEN
   IF g IS NULL THEN RAISE EXCEPTION 'shared restart requires a source' USING ERRCODE='JGI01'; END IF;
   IF (pgjobdb.goal_info(t,g)->>'state')<>'OPEN' THEN RAISE EXCEPTION 'goal is closed' USING ERRCODE='JGF01'; END IF;
  ELSE g:=gen_random_uuid()::TEXT; END IF;
  j:=COALESCE(j,gen_random_uuid()::TEXT);
- INSERT INTO pgjobdb.job_preparations VALUES(t,j,g,r,prior,sharing,descr,deps,FALSE,requested_cell,requested_repo,target_id,target_name,target_repo,parent_id);
+ INSERT INTO pgjobdb.job_preparations(tenant_id,job_id,goal_id,request_id,prior_job_id,share_goal,descriptor,dependencies,published,requested_cell,requested_repo,cell_id,cell_name,cell_repo,parent_job_id,selected_goal_id) VALUES(t,j,g,r,prior,sharing,descr,deps,FALSE,requested_cell,requested_repo,target_id,target_name,target_repo,parent_id,selected);
  RETURN jsonb_build_object('Key',jsonb_build_object('tenantId',t,'jobId',j),'GoalID',g,'Published',FALSE,'Target',jsonb_build_object('cellId',target_id,'cell',target_name,'cellRepo',target_repo));
 END $$;
 CREATE OR REPLACE FUNCTION pgjobdb._resolve_goal(t TEXT,g TEXT,j TEXT) RETURNS VOID LANGUAGE plpgsql AS $$
@@ -1917,6 +1936,7 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS pgjobdb.submit_native_job(TEXT,TEXT,TEXT,TEXT,JSONB,JSONB,TEXT,TEXT,JSONB,TEXT[],TIMESTAMPTZ,TIMESTAMPTZ,TEXT,JSON,TEXT,BOOLEAN,JSONB,JSONB);
 CREATE OR REPLACE FUNCTION pgjobdb.submit_native_job(
     p_tenant_id TEXT,
     p_job_id TEXT,
@@ -1932,7 +1952,7 @@ CREATE OR REPLACE FUNCTION pgjobdb.submit_native_job(
     p_expires_at TIMESTAMPTZ,
     p_client_mode TEXT,
     p_client_value JSON,
-    p_goal_id TEXT, p_share_goal BOOLEAN, p_dependencies JSONB, p_cell JSONB
+    p_goal_id TEXT, p_share_goal BOOLEAN, p_dependencies JSONB, p_cell JSONB, p_selected_goal_id TEXT DEFAULT NULL
 )
 RETURNS TABLE(job_id TEXT, created BOOLEAN)
 LANGUAGE plpgsql
@@ -1968,15 +1988,23 @@ BEGIN
     PERFORM pgjobdb._validate_dependencies(p_dependencies);
     IF cardinality(p_wait_for)>0 AND jsonb_array_length(p_dependencies)>0 THEN RAISE EXCEPTION 'mixed dependencies' USING ERRCODE='JGI01'; END IF;
     SELECT * INTO v_preparation FROM pgjobdb.job_preparations prep WHERE prep.tenant_id=p_tenant_id AND prep.job_id=p_job_id;
-    IF FOUND AND (v_preparation.goal_id IS DISTINCT FROM p_goal_id OR v_preparation.share_goal<>p_share_goal OR v_preparation.dependencies<>p_dependencies) THEN
+    IF FOUND AND (v_preparation.selected_goal_id IS DISTINCT FROM p_selected_goal_id OR v_preparation.goal_id IS DISTINCT FROM p_goal_id OR v_preparation.share_goal<>p_share_goal OR v_preparation.dependencies<>p_dependencies) THEN
         RAISE EXCEPTION 'publication differs from preparation' USING ERRCODE='JGM01';
+    END IF;
+    IF p_selected_goal_id IS NOT NULL THEN
+        IF v_preparation.job_id IS NULL OR p_selected_goal_id IS DISTINCT FROM p_goal_id OR p_share_goal THEN RAISE EXCEPTION 'selected publication requires matching preparation' USING ERRCODE='JGM01'; END IF;
+        IF NOT v_preparation.published THEN
+            PERFORM pgjobdb._validate_selected_goal(p_tenant_id,p_selected_goal_id,p_cell->>'cellId',p_cell->>'cellRepo');
+        END IF;
     END IF;
     SELECT f.goal_id INTO v_goal FROM pgjobdb.job_facts f WHERE f.tenant_id=p_tenant_id AND f.job_id=p_job_id;
     IF FOUND THEN
         IF p_goal_id IS NOT NULL AND v_goal<>p_goal_id THEN RAISE EXCEPTION 'primary goal differs' USING ERRCODE='JGM01'; END IF;
     ELSE
         v_goal:=COALESCE(p_goal_id,gen_random_uuid()::TEXT);
-        IF p_share_goal THEN
+        IF p_selected_goal_id IS NOT NULL THEN
+            NULL; -- Existing primary goal, never an extra candidate membership.
+        ELSIF p_share_goal THEN
             IF v_preparation.job_id IS NULL OR (pgjobdb.goal_info(p_tenant_id,v_goal)->>'state')<>'OPEN' THEN RAISE EXCEPTION 'shared goal is closed or unprepared' USING ERRCODE='JGF01'; END IF;
         ELSE
             IF EXISTS(SELECT 1 FROM pgjobdb.goals WHERE tenant_id=p_tenant_id AND goal_id=v_goal) THEN RAISE EXCEPTION 'goal already exists' USING ERRCODE='JGF01'; END IF;
@@ -2060,8 +2088,10 @@ BEGIN
         PERFORM pgjobdb._register_wait(p_tenant_id,p_job_id,jsonb_build_object('waitId','submission','dependencies',p_dependencies),TRUE);
         UPDATE pgjobdb.jobs j SET dependency_wait_id='submission' WHERE j.tenant_id=p_tenant_id AND j.job_id=p_job_id;
     END IF;
-    IF p_share_goal THEN PERFORM pgjobdb._check_goal_cycle(p_tenant_id,'goal',v_goal); END IF;
-    UPDATE pgjobdb.job_preparations prep SET published=TRUE WHERE prep.tenant_id=p_tenant_id AND prep.job_id=p_job_id;
+    IF p_share_goal OR p_selected_goal_id IS NOT NULL THEN PERFORM pgjobdb._check_goal_cycle(p_tenant_id,'goal',v_goal); END IF;
+    UPDATE pgjobdb.job_preparations prep SET published=TRUE,
+      receipt=CASE WHEN p_selected_goal_id IS NULL THEN prep.receipt ELSE
+        jsonb_build_object('Cell',p_cell->>'cell','CellID',p_cell->>'cellId','CellRepo',p_cell->>'cellRepo','GoalID',v_goal,'JobKey',jsonb_build_object('tenantId',p_tenant_id,'jobId',p_job_id)) END WHERE prep.tenant_id=p_tenant_id AND prep.job_id=p_job_id;
     RETURN QUERY SELECT p_job_id, TRUE;
 END;
 $$;

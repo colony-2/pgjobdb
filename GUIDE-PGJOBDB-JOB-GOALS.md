@@ -11,6 +11,47 @@ the [runtime adapter guide](GUIDE-PGJOBDB-RUNTIME-IMPLEMENTATION.md) with the ne
 storage and transaction obligations. It describes work to perform in pgjobdb;
 no pgjobdb checkout was changed by the JobDB implementation.
 
+## Submitting a fresh job into an existing goal
+
+With JobDB `v0.0.81-0.20261110034917-7f6133791ec9`, set `SubmitJob.GoalID`
+and an explicit `SubmitJob.JobID` to select an existing open primary goal.
+The destination must belong to the goal's tenant, immutable cell ID and repository.
+No source job is required. Omit `GoalID` to retain ordinary independent-goal
+submission; this is separate from Restart's `ShareGoal` behavior.
+
+The host must supply a verified `CellAuthority` granting `jobs.submit` and install
+`jobdb.WithPrimaryGoalSelectionAuthorizer`. That trusted callback checks current
+goal access and explicit `goals.select-primary` authority. Preparation, publication,
+and receipt replay each call it. A successful callback must not be based on fields
+in the request body, and it must not call back into the runtime. The standalone
+administrative ingress installs `goals.get`, `goals.select-primary`, and a callback
+that verifies those grants; restricted embeddings install their own policy.
+Execution leases and delegated routes that cannot enforce this policy reject
+selection. Remote clients negotiate the dedicated selected-submit operation and
+refuse unsupported capabilities, changed routes and redirects without falling
+back to ordinary submission.
+
+Format 11 adds explicit selection and complete accepted receipts to preparations.
+Formats 9 and 10 upgrade without rewriting ordinary descriptors or interpreting
+legacy Restart fields as selection. Scheduler publication commits job facts,
+primary identity, dependencies, runnable state and the receipt together under
+the tenant admission lock, shared with goal closure. Closure first rejects the
+unpublished request; publication first remains accepted. Identical accepted
+requests return the original complete handle under current authority, including
+after closure, archive or soft deletion. Replay does not unhide or republish work.
+Keep the destination ID when a response is lost; changing the request at that ID
+conflicts. Retained selected identities prevent reuse and survive discard.
+
+Initial chapters and artifacts persist through public storage interfaces before
+scheduler publication, independently of its transaction. Rejection or rollback
+can leave history and artifacts without a public scheduler job or accepted
+receipt. Complete retained initial history is validated on retry; an interrupted
+empty story can prevent an ordinary retry and is not repaired automatically.
+Artifact source cleanup may already have occurred, so callers must preserve or
+recreate inputs for retries. Retained history never permits publication into a
+subsequently closed goal. Artifact storage can use blobfs; it need not share the
+scheduler database.
+
 ## Public port changes
 
 Update to a JobDB revision containing

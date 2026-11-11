@@ -19,6 +19,7 @@ type JobPreparation struct {
 	RequestID                   string
 	PriorJobID                  string
 	ShareGoal                   bool
+	SelectedGoalID              string
 	Descriptor                  string
 	Dependencies                []jobdb.Dependency
 }
@@ -29,6 +30,7 @@ type PreparedJob struct {
 	Key       jobdb.JobKey
 	GoalID    string
 	Published bool
+	Receipt   *jobdb.JobHandle
 }
 
 func goalError(err error) error {
@@ -38,6 +40,8 @@ func goalError(err error) error {
 	}
 	var cause error
 	switch pg.Code {
+	case "JCC01":
+		cause = jobdb.ErrCellConflict
 	case "JCN01":
 		cause = jobdb.ErrCellNotFound
 	case "JCR01":
@@ -121,7 +125,13 @@ func prepareJob(ctx context.Context, db DB, req JobPreparation) (PreparedJob, er
 	if err != nil {
 		return PreparedJob{}, err
 	}
-	return goalQuery[PreparedJob](ctx, db, `SELECT pgjobdb.prepare_job($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, req.Key.TenantId, nilIfBlank(req.Key.JobId), nilIfBlank(req.RequestID), nilIfBlank(req.PriorJobID), req.ShareGoal, req.Descriptor, string(raw), req.Cell, req.CellRepo, req.Target.CellID, req.Target.Cell, req.Target.CellRepo, req.ParentJobID)
+	query := `SELECT pgjobdb.prepare_job($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`
+	args := []any{req.Key.TenantId, nilIfBlank(req.Key.JobId), nilIfBlank(req.RequestID), nilIfBlank(req.PriorJobID), req.ShareGoal, req.Descriptor, string(raw), req.Cell, req.CellRepo, req.Target.CellID, req.Target.Cell, req.Target.CellRepo, req.ParentJobID}
+	if req.SelectedGoalID != "" {
+		query = `SELECT pgjobdb.prepare_job($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`
+		args = append(args, req.SelectedGoalID)
+	}
+	return goalQuery[PreparedJob](ctx, db, query, args...)
 }
 
 // GetGoal returns the durable goal outcome.

@@ -112,7 +112,7 @@ func TestGenericQueueProceduresAreAbsent(t *testing.T) {
 		}
 
 		// The hard break exposes one current signature, with no older overloads.
-		for name, args := range map[string]int{"submit_native_job": 18, "prepare_job": 13, "get_native_work": 10, "list_native_jobs": 20, "reschedule_native_job": 21} {
+		for name, args := range map[string]int{"submit_native_job": 19, "prepare_job": 14, "get_native_work": 10, "list_native_jobs": 20, "reschedule_native_job": 21} {
 			var total, matched int
 			err := db.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE p.pronargs=$2) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='pgjobdb' AND p.proname=$1`, name, args).Scan(&total, &matched)
 			if err != nil || total != 1 || matched != 1 {
