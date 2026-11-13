@@ -34,7 +34,7 @@ func GetJobLease(ctx context.Context, db DB, tenant TenantID, job JobID, worker 
 
 func getWork(ctx context.Context, db DB, worker WorkerID, selector WorkSelector,
 	opts GetWorkOptions, targetTenant TenantID, targetJob JobID) (*JobLease, error) {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return nil, err
 	}
 	if worker == "" {
@@ -125,7 +125,7 @@ func leaseSeconds(duration time.Duration) (int, error) {
 	return seconds, nil
 }
 
-func scanJobLease(row scheduleScanner, worker WorkerID) (*JobLease, error) {
+func scanJobLease(row rowScanner, worker WorkerID) (*JobLease, error) {
 	var lease JobLease
 	var tenant, job, jobType, route, workKind string
 	var taskType, resumeType, inputHash, schemaHash sql.NullString
@@ -161,7 +161,7 @@ func scanJobLease(row scheduleScanner, worker WorkerID) (*JobLease, error) {
 
 // ValidateLease loads the current live native lease for an exact identity.
 func ValidateLease(ctx context.Context, db DB, identity LeaseIdentity) (*JobLease, error) {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return nil, err
 	}
 	if err := validateLeaseIdentity(identity); err != nil {
@@ -180,7 +180,7 @@ func ValidateLease(ctx context.Context, db DB, identity LeaseIdentity) (*JobLeas
 // KeepAliveLease extends a live native lease and returns its new snapshot.
 func KeepAliveLease(ctx context.Context, db DB, identity LeaseIdentity,
 	additional time.Duration) (*JobLease, error) {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return nil, err
 	}
 	if err := validateLeaseIdentity(identity); err != nil {

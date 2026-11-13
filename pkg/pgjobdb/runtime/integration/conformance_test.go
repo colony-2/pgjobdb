@@ -27,7 +27,7 @@ func TestPostgresRuntimeConformance(t *testing.T) {
 	// each fixture, without paying initdb/start/stop costs for every case.
 	newRuntime := conformanceRuntimeFactory(t)
 	routes := runtimetest.Capabilities{
-		Leases: true, Schedules: true, SchemaRegistry: true, RuntimeStorage: true,
+		Leases: true, SchemaRegistry: true, RuntimeStorage: true,
 	}
 	harnesses := []runtimetest.Harness{
 		{

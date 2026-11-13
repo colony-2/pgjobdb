@@ -29,7 +29,7 @@ type DeleteJobsResult struct{ MatchedCount, DeletedCount int64 }
 // DeleteJobs selects and mutates the whole set in one database transaction.
 func DeleteJobs(ctx context.Context, db DB, req DeleteJobsRequest) (DeleteJobsResult, error) {
 	var out DeleteJobsResult
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return out, err
 	}
 	if strings.TrimSpace(string(req.TenantID)) == "" {

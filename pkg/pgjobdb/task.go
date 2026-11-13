@@ -18,7 +18,7 @@ func ClaimTask(ctx context.Context, db *sql.DB, req ClaimTaskRequest) (TaskClaim
 	if db == nil {
 		return TaskClaim{}, fmt.Errorf("pgjobdb: database is required")
 	}
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return TaskClaim{}, err
 	}
 	if req.TenantID == "" || req.JobID == "" || req.WorkerID == "" ||

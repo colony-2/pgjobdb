@@ -204,24 +204,6 @@ func storedJobFromDetail(detail pgjobdb.JobDetail) (runtimecore.StoredJob, error
 			After: time.Duration(*detail.AlternateAfterSeconds * float64(time.Second)),
 		}
 	}
-	if detail.ScheduleID != "" {
-		if detail.ScheduleGeneration == nil || detail.ScheduledAt == nil {
-			return runtimecore.StoredJob{}, fmt.Errorf("schedule occurrence for %s is incomplete", row.JobKey)
-		}
-		occ := &jobdb.ScheduleOccurrenceMetadata{
-			ScheduleId: detail.ScheduleID, Kind: jobdb.ScheduleMetadataKind,
-			Generation: *detail.ScheduleGeneration, SpecHash: detail.ScheduleSpecHash,
-			ScheduledAt: *detail.ScheduledAt, RunId: detail.ScheduleRunID,
-			Manual: detail.ScheduleManual, BackfillId: detail.ScheduleBackfillID,
-			PreviousJobId: string(detail.SchedulePreviousJobID),
-		}
-		if len(detail.ScheduleFailureHistory) > 0 {
-			if err := json.Unmarshal(detail.ScheduleFailureHistory, &occ.FailureHistory); err != nil {
-				return runtimecore.StoredJob{}, fmt.Errorf("decode schedule failure history: %w", err)
-			}
-		}
-		row.Schedule = occ
-	}
 	if detail.CompletionStatus != nil {
 		completion := &runtimecore.CompletionSnapshot{Status: string(*detail.CompletionStatus)}
 		if detail.CompletionDetail != nil {

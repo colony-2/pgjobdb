@@ -22,7 +22,7 @@ func cellTx(ctx context.Context, db DB, tenant string, fn func(*sql.Tx, *cellsta
 }
 
 func withCellTx(ctx context.Context, db DB, tenant string, mutate bool, fn func(*sql.Tx, *cellstate.State) error) (err error) {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return err
 	}
 	if tenant == "" {
@@ -82,7 +82,7 @@ func withCellTx(ctx context.Context, db DB, tenant string, mutate bool, fn func(
 // A single statement reads the normalized registry at one MVCC snapshot.
 // JSON is used only for arbitrary metadata supplied by the caller.
 func loadCells(ctx context.Context, db DB, tenant string) (*cellstate.State, error) {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return nil, err
 	}
 	s := cellstate.New()
@@ -202,12 +202,8 @@ func ListCells(ctx context.Context, db DB, req jobdb.ListCellsRequest) (out jobd
 }
 func UpdateCell(ctx context.Context, db DB, req jobdb.UpdateCellRequest) (out jobdb.Cell, err error) {
 	err = cellTx(ctx, db, req.TenantID, func(tx *sql.Tx, s *cellstate.State) error {
-		old := s.Cells[req.CellID]
 		var e error
 		out, e = s.Update(ctx, req)
-		if e == nil && old.Repo != out.Repo {
-			_, e = tx.ExecContext(ctx, `UPDATE pgjobdb.schedules SET state='PAUSED',pause_reason='cell_repo_mismatch',next_fire_at=NULL,next_job_id=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND state='ACTIVE' AND cell_id=$2`, req.TenantID, req.CellID)
-		}
 		return e
 	})
 	return
@@ -219,8 +215,7 @@ func RetireCell(ctx context.Context, db DB, req jobdb.RetireCellRequest) (out jo
 			var busy bool
 			e := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pgjobdb.jobs j JOIN pgjobdb.job_facts f USING(tenant_id,job_id) WHERE f.tenant_id=$1 AND f.cell_id=$2)
     OR EXISTS(SELECT 1 FROM pgjobdb.goals WHERE tenant_id=$1 AND cell_id=$2 AND state='OPEN')
-    OR EXISTS(SELECT 1 FROM pgjobdb.job_preparations p WHERE tenant_id=$1 AND NOT published AND cell_id=$2)
-    OR EXISTS(SELECT 1 FROM pgjobdb.schedules WHERE tenant_id=$1 AND cell_id=$2 AND state='ACTIVE')`, req.TenantID, id).Scan(&busy)
+    OR EXISTS(SELECT 1 FROM pgjobdb.job_preparations p WHERE tenant_id=$1 AND NOT published AND cell_id=$2)`, req.TenantID, id).Scan(&busy)
 			return busy, e
 		})
 		return e
@@ -254,28 +249,6 @@ func resolvePreparation(ctx context.Context, tx *sql.Tx, s *cellstate.State, req
 	parent, err := cellParent(ctx, tx, s, tenant)
 	if err != nil {
 		return jobdb.ResolvedCell{}, err
-	}
-	if key, ok := cellstate.Schedule(ctx); ok {
-		if key.TenantId != tenant {
-			return jobdb.ResolvedCell{}, jobdb.ErrCellForbidden
-		}
-		var target jobdb.ResolvedCell
-		var state string
-		err = tx.QueryRowContext(ctx, `SELECT cell_id,cell_repo,state FROM pgjobdb.schedules WHERE tenant_id=$1 AND schedule_id=$2 FOR UPDATE`, tenant, key.ScheduleId).Scan(&target.CellID, &target.CellRepo, &state)
-		if errors.Is(err, sql.ErrNoRows) || state == "ARCHIVED" {
-			return jobdb.ResolvedCell{}, jobdb.ErrCellNotFound
-		}
-		if err != nil {
-			return jobdb.ResolvedCell{}, err
-		}
-		c, ok := s.Cells[target.CellID]
-		if !ok {
-			return target, jobdb.ErrCellNotFound
-		}
-		if c.Repo != target.CellRepo || req.CellRepo != target.CellRepo {
-			return target, jobdb.ErrCellRepoMismatch
-		}
-		parent = &c
 	}
 	var existing *jobdb.ResolvedCell
 	confirmation := false
@@ -332,20 +305,6 @@ func LookupCellWithLeaseByID(ctx context.Context, db DB, key jobdb.JobKey, lease
 	return
 }
 
-func ResolveScheduleCell(ctx context.Context, db DB, tenant, name, repo string) (out jobdb.ResolvedCell, err error) {
-	if err = jobdb.AuthorizeCell(ctx, tenant, "", "jobs.submit"); err != nil {
-		return out, err
-	}
-	err = cellTx(ctx, db, tenant, func(_ *sql.Tx, s *cellstate.State) error {
-		if _, ok := s.ByName(name); !ok {
-			return jobdb.ErrCellNotFound
-		}
-		var e error
-		out, e = s.Resolve(ctx, tenant, name, repo, nil, nil, false)
-		return e
-	})
-	return
-}
 func selectCells(ctx context.Context, db DB, tenants []TenantID, names []string, permission string) ([]string, error) {
 	ids := []string{}
 	for _, tenant := range tenants {

@@ -5,18 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 )
 
 func TestNativeSubmitJob(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		if _, err := upsertCellSchedule(ctx, db, pgjobdb.UpsertScheduleRequest{TenantID: "tenant", ScheduleID: "daily", State: pgjobdb.ScheduleStateActive, SpecHash: "schedule-hash", Trigger: json.RawMessage(`{}`), TargetJobType: "collect", TargetSnapshot: json.RawMessage(`{}`), OverlapPolicy: "ALLOW", FailurePolicy: json.RawMessage(`{}`)}); err != nil {
-			t.Fatal(err)
-		}
 
-		scheduledAt := time.Now().UTC().Truncate(time.Microsecond)
 		timeout := int64(30000)
 		req := pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
 			TenantID: "tenant", JobID: "job-1", WorkerID: "submitter", JobType: "collect",
@@ -24,11 +19,6 @@ func TestNativeSubmitJob(t *testing.T) {
 			AppMetadata: json.RawMessage(`{"source":"api"}`),
 			Runtime: pgjobdb.RuntimeMetadata{
 				SchemaHash: "schema-hash", ParentJobID: "parent-1",
-				Schedule: &pgjobdb.ScheduleOccurrence{
-					ScheduleID: "daily", Generation: 1, SpecHash: "schedule-hash",
-					ScheduledAt: scheduledAt, RunID: "run-1", Reason: "automatic",
-					FailureHistory: json.RawMessage(`{"bits":"101","windowSize":3}`),
-				},
 			},
 			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"opaque":true}`)},
 		}
@@ -36,29 +26,26 @@ func TestNativeSubmitJob(t *testing.T) {
 		if err != nil || !result.Created || result.JobID != "job-1" {
 			t.Fatalf("submit = %+v, %v", result, err)
 		}
-		var jobType, route, workKind, schemaHash, parentID, scheduleID, runID string
-		var policy, metadata, leasePayload, failureHistory string
+		var jobType, route, workKind, schemaHash, parentID string
+		var policy, metadata, leasePayload string
 		if err := db.QueryRowContext(ctx, `SELECT f.job_type, j.route_job_type,
-			j.work_kind, f.schema_hash, f.parent_job_id, f.schedule_id,
-			f.schedule_run_id, f.run_policy::text, f.app_metadata::text,
-			f.schedule_failure_history::text,
+			j.work_kind, f.schema_hash, f.parent_job_id,
+			f.run_policy::text, f.app_metadata::text,
 			(SELECT c.client_payload::text FROM pgjobdb.job_client_state c WHERE c.tenant_id=j.tenant_id AND c.job_id=j.job_id)
 			FROM pgjobdb.job_facts f JOIN pgjobdb.jobs j USING (tenant_id, job_id)
 			WHERE f.tenant_id = 'tenant' AND f.job_id = 'job-1'`).Scan(
-			&jobType, &route, &workKind, &schemaHash, &parentID, &scheduleID,
-			&runID, &policy, &metadata, &failureHistory, &leasePayload,
+			&jobType, &route, &workKind, &schemaHash, &parentID,
+			&policy, &metadata, &leasePayload,
 		); err != nil {
 			t.Fatalf("read native job: %v", err)
 		}
 		if jobType != "collect" || route != "collect" || workKind != "JOB" ||
 			schemaHash != "schema-hash" || parentID != "parent-1" ||
-			scheduleID != "daily" || runID != "run-1" ||
 			metadata != `{"source": "api"}` ||
-			failureHistory != `{"bits": "101", "windowSize": 3}` ||
 			leasePayload != `{"opaque":true}` {
-			t.Fatalf("native job fields = %q %q %q %q %q %q %q %q %q",
-				jobType, route, workKind, schemaHash, parentID, scheduleID,
-				runID, metadata, leasePayload)
+			t.Fatalf("native job fields = %q %q %q %q %q %q %q",
+				jobType, route, workKind, schemaHash, parentID,
+				metadata, leasePayload)
 		}
 		var gotPolicy struct {
 			InvocationTimeoutMillis int64 `json:"invocation_timeout_millis"`
@@ -78,7 +65,6 @@ func TestNativeSubmitJob(t *testing.T) {
 
 		req.JobID = "job-2"
 		req.AppMetadata = json.RawMessage(`{"source":"api"}`)
-		req.Runtime.Schedule = nil
 		req.WaitFor = []pgjobdb.JobID{"job-1"}
 		if result, err := submitCellJob(ctx, db, req); err != nil || !result.Created {
 			t.Fatalf("submit waiting job = %+v, %v", result, err)

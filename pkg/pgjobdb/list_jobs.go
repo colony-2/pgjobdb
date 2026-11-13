@@ -60,7 +60,7 @@ type jobPage[T any] struct {
 // Both projections share validation, filter normalization, observation time, and cursors.
 func listJobs[T any](ctx context.Context, db DB, opts ListJobsOptions, query string,
 	scan func(*sql.Rows) (T, error), identity func(T) jobCursor) (*jobPage[T], error) {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return nil, err
 	}
 	if len(opts.TenantIDs) == 0 {

@@ -38,7 +38,7 @@ func RescheduleUnheldJob(ctx context.Context, db DB, tenant TenantID, job JobID,
 
 func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 	req RescheduleRequest) error {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return err
 	}
 	if req.WaitUntilIsDeadline && (len(req.WaitFor) == 0 || req.AvailableAt == nil) {

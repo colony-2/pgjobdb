@@ -35,23 +35,9 @@ type RunPolicy struct {
 	TotalTimeoutMillis      *int64      `json:"total_timeout_millis,omitempty"`
 }
 
-type ScheduleOccurrence struct {
-	ScheduleID     string          `json:"schedule_id"`
-	Generation     int64           `json:"generation"`
-	SpecHash       string          `json:"spec_hash"`
-	ScheduledAt    time.Time       `json:"scheduled_at"`
-	RunID          string          `json:"run_id"`
-	Reason         string          `json:"reason,omitempty"`
-	Manual         bool            `json:"manual,omitempty"`
-	BackfillID     string          `json:"backfill_id,omitempty"`
-	PreviousJobID  string          `json:"previous_job_id,omitempty"`
-	FailureHistory json.RawMessage `json:"failure_history,omitempty"`
-}
-
 type RuntimeMetadata struct {
 	SchemaHash  string
 	ParentJobID JobID
-	Schedule    *ScheduleOccurrence
 }
 
 type SubmitJobRequest struct {
@@ -228,56 +214,46 @@ const (
 
 // JobDetail joins immutable job facts with current or final scheduler state.
 type JobDetail struct {
-	Cell                   string            `json:"cell"`
-	CellID                 string            `json:"cell_id"`
-	CellRepo               string            `json:"cell_repo"`
-	GoalID                 string            `json:"goal_id"`
-	OtherGoalIDs           []string          `json:"other_goal_ids"`
-	TenantID               TenantID          `json:"tenant_id"`
-	JobID                  JobID             `json:"job_id"`
-	Store                  JobStore          `json:"store"`
-	Status                 JobStatus         `json:"status"`
-	JobType                JobType           `json:"job_type"`
-	RouteJobType           JobType           `json:"route_job_type"`
-	WorkKind               WorkKind          `json:"work_kind"`
-	TaskType               TaskType          `json:"task_type"`
-	ResumeJobType          JobType           `json:"resume_job_type"`
-	TaskInputOrdinal       *int64            `json:"task_input_ordinal"`
-	TaskOutputOrdinal      *int64            `json:"task_output_ordinal"`
-	TaskInputHash          string            `json:"task_input_hash"`
-	AlternateJobType       JobType           `json:"alternate_job_type"`
-	AlternateTaskType      TaskType          `json:"alternate_task_type"`
-	AlternateAfterSeconds  *float64          `json:"alternate_after_seconds"`
-	AlternateAt            *time.Time        `json:"alternate_at"`
-	WaitFor                []JobID           `json:"wait_for"`
-	AvailableAt            time.Time         `json:"available_at"`
-	LeaseExpiresAt         *time.Time        `json:"lease_expires_at"`
-	LeaseWorkerID          WorkerID          `json:"lease_worker_id"`
-	CancelRequested        bool              `json:"cancel_requested"`
-	ClientPayload          json.RawMessage   `json:"-"`
-	ClientPayloadRevision  int64             `json:"-"`
-	InitialPayloadDigest   string            `json:"-"`
-	RunPolicy              RunPolicy         `json:"run_policy"`
-	AppMetadata            json.RawMessage   `json:"app_metadata"`
-	SchemaHash             string            `json:"schema_hash"`
-	ParentJobID            JobID             `json:"parent_job_id"`
-	CreatedAt              time.Time         `json:"created_at"`
-	ExpiresAt              *time.Time        `json:"expires_at"`
-	ArchivedAt             *time.Time        `json:"archived_at"`
-	CompletionStatus       *CompletionStatus `json:"completion_status"`
-	CompletionDetail       *string           `json:"completion_detail"`
-	CompletionErrorKind    *string           `json:"completion_error_kind"`
-	CompletionRetryable    *bool             `json:"completion_retryable"`
-	ScheduleID             string            `json:"schedule_id"`
-	ScheduleGeneration     *int64            `json:"schedule_generation"`
-	ScheduleSpecHash       string            `json:"schedule_spec_hash"`
-	ScheduledAt            *time.Time        `json:"scheduled_at"`
-	ScheduleRunID          string            `json:"schedule_run_id"`
-	ScheduleReason         string            `json:"schedule_reason"`
-	ScheduleManual         bool              `json:"schedule_manual"`
-	ScheduleBackfillID     string            `json:"schedule_backfill_id"`
-	SchedulePreviousJobID  JobID             `json:"schedule_previous_job_id"`
-	ScheduleFailureHistory json.RawMessage   `json:"schedule_failure_history"`
+	Cell                  string            `json:"cell"`
+	CellID                string            `json:"cell_id"`
+	CellRepo              string            `json:"cell_repo"`
+	GoalID                string            `json:"goal_id"`
+	OtherGoalIDs          []string          `json:"other_goal_ids"`
+	TenantID              TenantID          `json:"tenant_id"`
+	JobID                 JobID             `json:"job_id"`
+	Store                 JobStore          `json:"store"`
+	Status                JobStatus         `json:"status"`
+	JobType               JobType           `json:"job_type"`
+	RouteJobType          JobType           `json:"route_job_type"`
+	WorkKind              WorkKind          `json:"work_kind"`
+	TaskType              TaskType          `json:"task_type"`
+	ResumeJobType         JobType           `json:"resume_job_type"`
+	TaskInputOrdinal      *int64            `json:"task_input_ordinal"`
+	TaskOutputOrdinal     *int64            `json:"task_output_ordinal"`
+	TaskInputHash         string            `json:"task_input_hash"`
+	AlternateJobType      JobType           `json:"alternate_job_type"`
+	AlternateTaskType     TaskType          `json:"alternate_task_type"`
+	AlternateAfterSeconds *float64          `json:"alternate_after_seconds"`
+	AlternateAt           *time.Time        `json:"alternate_at"`
+	WaitFor               []JobID           `json:"wait_for"`
+	AvailableAt           time.Time         `json:"available_at"`
+	LeaseExpiresAt        *time.Time        `json:"lease_expires_at"`
+	LeaseWorkerID         WorkerID          `json:"lease_worker_id"`
+	CancelRequested       bool              `json:"cancel_requested"`
+	ClientPayload         json.RawMessage   `json:"-"`
+	ClientPayloadRevision int64             `json:"-"`
+	InitialPayloadDigest  string            `json:"-"`
+	RunPolicy             RunPolicy         `json:"run_policy"`
+	AppMetadata           json.RawMessage   `json:"app_metadata"`
+	SchemaHash            string            `json:"schema_hash"`
+	ParentJobID           JobID             `json:"parent_job_id"`
+	CreatedAt             time.Time         `json:"created_at"`
+	ExpiresAt             *time.Time        `json:"expires_at"`
+	ArchivedAt            *time.Time        `json:"archived_at"`
+	CompletionStatus      *CompletionStatus `json:"completion_status"`
+	CompletionDetail      *string           `json:"completion_detail"`
+	CompletionErrorKind   *string           `json:"completion_error_kind"`
+	CompletionRetryable   *bool             `json:"completion_retryable"`
 }
 
 type JobStatusInfo struct {
@@ -328,86 +304,6 @@ type ListJobsOptions struct {
 
 type ListJobsResult struct {
 	Jobs          []JobDetail
-	NextPageToken string
-}
-
-type ListScheduleRunsOptions struct {
-	TenantID        TenantID
-	ScheduleID      string
-	ScheduledAfter  *time.Time
-	ScheduledBefore *time.Time
-	Statuses        []JobStatus
-	PageSize        int
-	PageToken       string
-}
-
-type ListScheduleRunsResult struct {
-	Runs          []JobDetail
-	NextPageToken string
-}
-
-type ScheduleState string
-
-const (
-	ScheduleStateActive   ScheduleState = "ACTIVE"
-	ScheduleStatePaused   ScheduleState = "PAUSED"
-	ScheduleStateArchived ScheduleState = "ARCHIVED"
-)
-
-// Schedule is the durable definition and control state of a JobDB schedule.
-// TargetSnapshot is opaque to pgjobdb; JobDB core owns its encoding.
-type Schedule struct {
-	PauseReason    string
-	TenantID       TenantID
-	ScheduleID     string
-	State          ScheduleState
-	Generation     int64
-	SpecHash       string
-	Trigger        json.RawMessage
-	TargetJobType  JobType
-	TargetSnapshot json.RawMessage
-	OverlapPolicy  string
-	FailurePolicy  json.RawMessage
-	NextFireAt     *time.Time
-	NextJobID      *JobID
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-}
-
-type UpsertScheduleRequest struct {
-	TenantID           TenantID
-	ScheduleID         string
-	State              ScheduleState
-	SpecHash           string
-	Trigger            json.RawMessage
-	TargetJobType      JobType
-	TargetSnapshot     json.RawMessage
-	OverlapPolicy      string
-	FailurePolicy      json.RawMessage
-	NextFireAt         *time.Time
-	NextJobID          *JobID
-	ExpectedGeneration *int64
-}
-
-type ScheduleMutationRequest struct {
-	TenantID           TenantID
-	ScheduleID         string
-	NextFireAt         *time.Time
-	NextJobID          *JobID
-	ExpectedGeneration *int64
-}
-
-type ListSchedulesOptions struct {
-	TenantID       TenantID
-	ScheduleIDs    []string
-	States         []ScheduleState
-	TargetJobTypes []JobType
-	PageSize       int
-	PageToken      string
-}
-
-type ListSchedulesResult struct {
-	Schedules     []Schedule
 	NextPageToken string
 }
 

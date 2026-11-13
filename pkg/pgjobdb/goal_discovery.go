@@ -15,7 +15,7 @@ func ListGoals(ctx context.Context, db DB, req jobdb.ListGoalsRequest) (jobdb.Li
 	if err := req.Validate(); err != nil {
 		return out, err
 	}
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return out, err
 	}
 	size := jobdb.DiscoveryPageSize(req.PageSize)
@@ -120,7 +120,7 @@ func ListDependencyWaits(ctx context.Context, db DB, req jobdb.ListDependencyWai
 	if err := req.Validate(); err != nil {
 		return out, err
 	}
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return out, err
 	}
 	size := jobdb.DiscoveryPageSize(req.PageSize)

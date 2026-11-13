@@ -14,7 +14,7 @@ func ClearCrashConcern(ctx context.Context, db DB, req jobdb.ClearCrashConcernRe
 	if err := req.Validate(); err != nil {
 		return err
 	}
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return err
 	}
 	worker := req.WorkerID

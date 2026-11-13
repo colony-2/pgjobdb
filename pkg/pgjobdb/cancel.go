@@ -13,7 +13,7 @@ type CancelJobRequest struct {
 }
 
 func CancelJob(ctx context.Context, db DB, req CancelJobRequest) error {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return err
 	}
 	if req.TenantID == "" || req.JobID == "" || req.WorkerID == "" {

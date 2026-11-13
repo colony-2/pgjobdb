@@ -20,7 +20,7 @@ func (l *JobLease) Complete(ctx context.Context, db DB, completion Completion) e
 }
 
 func CompleteJob(ctx context.Context, db DB, identity LeaseIdentity, completion Completion) error {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return err
 	}
 	if identity.TenantID == "" || identity.JobID == "" ||
@@ -54,7 +54,7 @@ func CompleteUnheldJob(ctx context.Context, db DB, tenant TenantID, job JobID,
 	if completion.ClientPayloadUpdate != nil {
 		return fmt.Errorf("pgjobdb: payload updates require a held completion lease")
 	}
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return err
 	}
 	if tenant == "" || job == "" || worker == "" {

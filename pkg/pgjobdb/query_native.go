@@ -11,7 +11,7 @@ import (
 var ErrJobNotFound = errors.New("pgjobdb: job not found")
 
 func GetJob(ctx context.Context, db DB, tenant TenantID, job JobID) (*JobDetail, error) {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return nil, err
 	}
 	if tenant == "" || job == "" {
@@ -39,7 +39,7 @@ func GetJob(ctx context.Context, db DB, tenant TenantID, job JobID) (*JobDetail,
 }
 
 func GetJobStatus(ctx context.Context, db DB, tenant TenantID, job JobID) (*JobStatusInfo, error) {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return nil, err
 	}
 	if tenant == "" || job == "" {

@@ -184,37 +184,6 @@ func TestCellTransactions(t *testing.T) {
 			}
 			require.Equal(t, 1, success)
 		})
-		t.Run("repository edit serializes with schedule admission", func(t *testing.T) {
-			c, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "schedule-race", Name: "work", Repo: "example.test/work"})
-			require.NoError(t, err)
-			target, _ := json.Marshal(c.Resolved())
-			start := make(chan struct{})
-			var wg sync.WaitGroup
-			wg.Add(2)
-			var editErr, scheduleErr error
-			go func() {
-				defer wg.Done()
-				<-start
-				repo := "example.test/updated"
-				_, editErr = pgjobdb.UpdateCell(ctx, db, jobdb.UpdateCellRequest{CellKey: jobdb.CellKey{TenantID: c.TenantID, CellID: c.ID}, IfMatch: `"` + c.Revision + `"`, Repo: &repo})
-			}()
-			go func() {
-				defer wg.Done()
-				<-start
-				_, scheduleErr = pgjobdb.UpsertSchedule(ctx, db, pgjobdb.UpsertScheduleRequest{TenantID: "schedule-race", ScheduleID: "daily", State: pgjobdb.ScheduleStateActive, SpecHash: "hash", Trigger: json.RawMessage(`{}`), TargetJobType: "recipe", TargetSnapshot: target, OverlapPolicy: "ALLOW", FailurePolicy: json.RawMessage(`{}`)})
-			}()
-			close(start)
-			wg.Wait()
-			require.NoError(t, editErr)
-			if scheduleErr != nil {
-				require.ErrorIs(t, scheduleErr, jobdb.ErrCellRepoMismatch)
-			} else {
-				s, err := pgjobdb.GetSchedule(ctx, db, "schedule-race", "daily")
-				require.NoError(t, err)
-				require.Equal(t, pgjobdb.ScheduleStatePaused, s.State)
-				require.Equal(t, "cell_repo_mismatch", s.PauseReason)
-			}
-		})
 		t.Run("preparation remains bound through rename", func(t *testing.T) {
 			c, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "pending-name", Name: "work", Repo: "example.test/work"})
 			require.NoError(t, err)

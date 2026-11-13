@@ -36,23 +36,6 @@ func (s Scheduler) CreateJob(ctx context.Context, req runtimecore.CreateJobReque
 	for _, id := range req.WaitForJobIDs {
 		input.WaitFor = append(input.WaitFor, pgjobdb.JobID(id))
 	}
-	if req.Schedule != nil {
-		history, err := json.Marshal(req.Schedule.FailureHistory)
-		if err != nil {
-			return runtimecore.StoredJob{}, fmt.Errorf("encode schedule failure history: %w", err)
-		}
-		reason := "automatic"
-		if req.Schedule.Manual {
-			reason = "manual"
-		}
-		input.Runtime.Schedule = &pgjobdb.ScheduleOccurrence{
-			ScheduleID: req.Schedule.ScheduleId, Generation: req.Schedule.Generation,
-			SpecHash: req.Schedule.SpecHash, ScheduledAt: req.Schedule.ScheduledAt,
-			RunID: req.Schedule.RunId, Reason: reason, Manual: req.Schedule.Manual,
-			BackfillID: req.Schedule.BackfillId, PreviousJobID: req.Schedule.PreviousJobId,
-			FailureHistory: history,
-		}
-	}
 	if _, err := pgjobdb.SubmitJob(ctx, s.DB, input); err != nil {
 		if errors.Is(err, pgjobdb.ErrJobDeleted) {
 			return runtimecore.StoredJob{}, jobdb.ErrExecutionLeaseLost

@@ -77,9 +77,6 @@ func validateSelectedPreparation(ctx context.Context, req JobPreparation) error 
 	if _, ok := cellstate.Lease(ctx); ok {
 		return jobdb.ErrPrimaryGoalSelectionUnsupported
 	}
-	if _, ok := cellstate.Schedule(ctx); ok {
-		return jobdb.ErrPrimaryGoalSelectionUnsupported
-	}
 	if req.ShareGoal || req.PriorJobID != "" || req.RequestID != "" {
 		return jobdb.NewExistingJobMismatchError("selection is a fresh submit operation")
 	}

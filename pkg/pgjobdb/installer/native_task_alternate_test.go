@@ -3,7 +3,6 @@ package installer_test
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -14,9 +13,7 @@ import (
 func alternateWaitingTask(t *testing.T, ctx context.Context, db *sql.DB, id string, after time.Duration) pgjobdb.ClaimTaskRequest {
 	t.Helper()
 	tenant := pgjobdb.TenantID(id)
-	_, err := upsertCellSchedule(ctx, db, pgjobdb.UpsertScheduleRequest{TenantID: tenant, ScheduleID: "daily", State: pgjobdb.ScheduleStateActive, SpecHash: "hash", Trigger: json.RawMessage(`{}`), TargetJobType: "collect", TargetSnapshot: json.RawMessage(`{}`), OverlapPolicy: "ALLOW", FailurePolicy: json.RawMessage(`{}`)})
-	require.NoError(t, err)
-	_, err = submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: tenant, JobID: "job", WorkerID: "submitter", JobType: "collect", Runtime: pgjobdb.RuntimeMetadata{Schedule: &pgjobdb.ScheduleOccurrence{ScheduleID: "daily", Generation: 1, SpecHash: "hash", ScheduledAt: time.Now().UTC(), RunID: id}}})
+	_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: tenant, JobID: "job", WorkerID: "submitter", JobType: "collect"})
 	require.NoError(t, err)
 	task := pgjobdb.TaskWork{TaskType: "external", ResumeJobType: "collect", InputOrdinal: 1, OutputOrdinal: 2, InputHash: "hash"}
 	require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, tenant, "job", "submitter", pgjobdb.RescheduleRequest{RouteJobType: "collect", WorkKind: pgjobdb.WorkKindTask, Task: &task, Alternate: &pgjobdb.AlternateRoute{JobType: "collect", TaskType: "fallback", After: after}}))
@@ -28,10 +25,7 @@ func assertAlternatePendingListings(t *testing.T, ctx context.Context, db *sql.D
 	page, err := pgjobdb.ListJobs(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{req.TenantID}, TaskSelectors: []pgjobdb.TaskSelector{{JobType: "collect", TaskType: "external"}}})
 	require.NoError(t, err)
 	require.Len(t, page.Jobs, 1)
-	runs, err := pgjobdb.ListScheduleRuns(ctx, db, pgjobdb.ListScheduleRunsOptions{TenantID: req.TenantID, ScheduleID: "daily"})
-	require.NoError(t, err)
-	require.Len(t, runs.Runs, 1)
-	for _, row := range []pgjobdb.JobDetail{page.Jobs[0], runs.Runs[0]} {
+	for _, row := range []pgjobdb.JobDetail{page.Jobs[0]} {
 		require.Equal(t, pgjobdb.TaskType("external"), row.TaskType)
 		require.Equal(t, pgjobdb.TaskType("fallback"), row.AlternateTaskType)
 		require.NotNil(t, row.AlternateAt)

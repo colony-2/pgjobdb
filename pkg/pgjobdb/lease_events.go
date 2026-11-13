@@ -20,7 +20,7 @@ func ListLeaseEvents(ctx context.Context, db DB, req jobdb.ListLeaseEventsReques
 	if err != nil {
 		return empty, err
 	}
-	if err = validateScheduleDB(ctx, db); err != nil {
+	if err = validateDB(ctx, db); err != nil {
 		return empty, err
 	}
 	if err = jobdb.AuthorizeCell(ctx, req.TenantID, "", "jobs.list"); err != nil {

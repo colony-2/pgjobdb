@@ -12,7 +12,7 @@ import (
 // SubmitJob stores immutable JobDB facts and the initial scheduler route in
 // one database transaction. A matching active job ID is idempotent.
 func submitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResult, error) {
-	if err := validateScheduleDB(ctx, db); err != nil {
+	if err := validateDB(ctx, db); err != nil {
 		return nil, err
 	}
 	if req.TenantID == "" || req.JobID == "" || req.WorkerID == "" || !validTypeName(req.JobType) {
@@ -45,27 +45,6 @@ func submitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 	if err != nil {
 		return nil, err
 	}
-	var schedule any
-	if occurrence := req.Runtime.Schedule; occurrence != nil {
-		if occurrence.ScheduleID == "" || occurrence.Generation < 1 ||
-			occurrence.SpecHash == "" || occurrence.ScheduledAt.IsZero() || occurrence.RunID == "" {
-			return nil, fmt.Errorf("pgjobdb: incomplete schedule occurrence")
-		}
-		if len(occurrence.FailureHistory) > 0 {
-			var history map[string]json.RawMessage
-			if err := json.Unmarshal(occurrence.FailureHistory, &history); err != nil {
-				return nil, fmt.Errorf("pgjobdb: failure history must be a JSON object: %w", err)
-			}
-			if history == nil {
-				return nil, fmt.Errorf("pgjobdb: failure history must be a JSON object")
-			}
-		}
-		encoded, err := json.Marshal(occurrence)
-		if err != nil {
-			return nil, fmt.Errorf("pgjobdb: encode schedule occurrence: %w", err)
-		}
-		schedule = string(encoded)
-	}
 	waitFor := make([]string, 0, len(req.WaitFor))
 	for _, id := range req.WaitFor {
 		if id == "" || id == req.JobID {
@@ -90,10 +69,10 @@ func submitJob(ctx context.Context, db DB, req SubmitJobRequest) (*SubmitJobResu
 	}
 	var result SubmitJobResult
 	var returnedID string
-	query := `SELECT job_id, created FROM pgjobdb.submit_native_job($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`
-	args := []any{string(req.TenantID), string(req.JobID), string(req.WorkerID), string(req.JobType), string(policy), string(appMetadata), nilIfBlank(req.Runtime.SchemaHash), nilIfBlank(string(req.Runtime.ParentJobID)), schedule, pq.Array(waitFor), optionalTime(req.AvailableAt), optionalTime(req.ExpiresAt), mode, value, nilIfBlank(req.GoalID), req.ShareGoal, string(dependencies), string(cell)}
+	query := `SELECT job_id, created FROM pgjobdb.submit_native_job($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`
+	args := []any{string(req.TenantID), string(req.JobID), string(req.WorkerID), string(req.JobType), string(policy), string(appMetadata), nilIfBlank(req.Runtime.SchemaHash), nilIfBlank(string(req.Runtime.ParentJobID)), pq.Array(waitFor), optionalTime(req.AvailableAt), optionalTime(req.ExpiresAt), mode, value, nilIfBlank(req.GoalID), req.ShareGoal, string(dependencies), string(cell)}
 	if req.SelectedGoalID != "" {
-		query = `SELECT job_id, created FROM pgjobdb.submit_native_job($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`
+		query = `SELECT job_id, created FROM pgjobdb.submit_native_job($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`
 		args = append(args, req.SelectedGoalID)
 	}
 	err = db.QueryRowContext(ctx, query, args...).Scan(&returnedID, &result.Created)

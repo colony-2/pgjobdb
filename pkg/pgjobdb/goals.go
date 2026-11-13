@@ -70,7 +70,7 @@ func goalError(err error) error {
 	return fmt.Errorf("%w: %s", cause, pg.Message)
 }
 func goalQuery[T any](ctx context.Context, db DB, query string, args ...any) (out T, err error) {
-	if err = validateScheduleDB(ctx, db); err != nil {
+	if err = validateDB(ctx, db); err != nil {
 		return
 	}
 	var raw []byte

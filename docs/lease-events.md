@@ -36,14 +36,11 @@ the first page to discover newer activity. An empty result means no visible reta
 history, not proof that the job never ran. Cursors use persisted tenant catalog keys
 and are invalidated by changes to filters or effective permission scope.
 
-Format 10 adds typed `pgjobdb.lease_events` storage and indexes. The installer
-transactionally upgrades format 9 without deleting old data or backfilling events.
-A pre-upgrade lease may have renewal events without a retained acquisition.
-Format 8 and older keep the existing explicit rejection policy. Reinstallation
-and reopening preserve retained history and cursor keys.
+Format 12 includes typed `pgjobdb.lease_events` storage and indexes. The installer
+requires a fresh database and rejects earlier formats. Reinstallation and
+reopening of format-12 databases preserve retained history and cursor keys.
 
-Operators must stop old writers, upgrade storage, deploy all compatible writers,
-and restart them before recording collection activation. Installing the schema
+Operators must deploy compatible writers before recording collection activation. Installing the schema
 alone does not establish collection completeness. No rollout is performed by
 source installation tests. No automatic retention expiry or purge is provided;
 capacity planning must include renewal volume and indexes.

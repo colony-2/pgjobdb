@@ -16,7 +16,7 @@ import (
 //go:embed testdata/format10.sql
 var format10 string
 
-func TestPrimaryGoalPreparationMigration(t *testing.T) {
+func TestPriorPrimaryGoalPreparationsRejectedUnchanged(t *testing.T) {
 	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
 		_, err := db.ExecContext(ctx, format10)
 		require.NoError(t, err)
@@ -36,20 +36,14 @@ func TestPrimaryGoalPreparationMigration(t *testing.T) {
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(p) ORDER BY job_id)::text FROM pgjobdb.job_preparations p`).Scan(&before))
 		inst := pginstaller.Installer{DB: db}
 		require.Error(t, inst.Verify(ctx))
-		require.NoError(t, inst.Apply(ctx))
-		require.NoError(t, inst.Verify(ctx))
+		require.ErrorContains(t, inst.Apply(ctx), "unsupported schema format 10")
 		var after string
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(p)-'selected_goal_id'-'receipt' ORDER BY job_id)::text FROM pgjobdb.job_preparations p`).Scan(&after))
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(p) ORDER BY job_id)::text FROM pgjobdb.job_preparations p`).Scan(&after))
 		require.JSONEq(t, before, after)
-		var inferred int
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.job_preparations WHERE selected_goal_id IS NOT NULL OR receipt IS NOT NULL`).Scan(&inferred))
-		require.Zero(t, inferred)
-		for _, req := range requests {
-			got, err := pgjobdb.PrepareJob(ctx, db, req)
-			require.NoError(t, err)
-			require.Equal(t, req.Key, got.Key)
-		}
-		require.NoError(t, inst.Apply(ctx))
+		var version int
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version))
+		require.Equal(t, 10, version)
+
 	})
 }
 

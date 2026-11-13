@@ -6,7 +6,7 @@ SET LOCAL search_path = pgjobdb, public;
 
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') NOT IN (9, 10, 11) THEN
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') IS DISTINCT FROM 12 THEN
    RAISE EXCEPTION 'unsupported pgjobdb format; create a fresh database';
   END IF;
  END IF;
@@ -14,18 +14,12 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 11),
+    format_version INTEGER NOT NULL CHECK (format_version = 12),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
--- Supported prior formats are upgraded transactionally; existing preparations retain their descriptors.
-ALTER TABLE pgjobdb.installation DROP CONSTRAINT IF EXISTS installation_format_version_check;
-ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK (format_version = 11) NOT VALID;
-UPDATE pgjobdb.installation SET format_version = 11 WHERE format_version IN (9, 10);
-ALTER TABLE pgjobdb.installation VALIDATE CONSTRAINT installation_format_version_check;
-
 INSERT INTO pgjobdb.installation (name, format_version)
-VALUES ('pgjobdb', 11)
+VALUES ('pgjobdb', 12)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -185,7 +179,6 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs (
 -- Rescheduled dependency waits may wake on completion OR a deadline. Keep
 -- ordinary submission availability and delay-only reschedules as not-before times.
 
-
 CREATE TABLE IF NOT EXISTS pgjobdb.jobs_archive (
     goal_id TEXT NOT NULL,
     archived_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
@@ -293,7 +286,6 @@ ON pgjobdb.jobs_archive USING GIN (metadata);
 
 CREATE INDEX IF NOT EXISTS idx_trace_tenant_job_event
 ON pgjobdb.jobs_trace(tenant_id, job_id, event_at DESC);
-
 
 CREATE OR REPLACE FUNCTION pgjobdb.crash_concern_threshold()
 RETURNS INTEGER
@@ -1173,34 +1165,7 @@ BEGIN
 END;
 $$;
 
--- Immutable JobDB facts and schedule state.
-CREATE TABLE IF NOT EXISTS pgjobdb.schedules (
-    tenant_id TEXT NOT NULL,
-    schedule_id TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('ACTIVE', 'PAUSED', 'ARCHIVED')),
-    generation BIGINT NOT NULL CHECK (generation > 0),
-    spec_hash TEXT NOT NULL CHECK (spec_hash <> ''),
-    trigger JSONB NOT NULL CHECK (jsonb_typeof(trigger) = 'object'),
-    target_job_type TEXT NOT NULL CHECK (target_job_type <> ''),
-    target_snapshot JSONB NOT NULL CHECK (jsonb_typeof(target_snapshot) = 'object'),
-    overlap_policy TEXT NOT NULL CHECK (overlap_policy <> ''),
-    failure_policy JSONB NOT NULL CHECK (jsonb_typeof(failure_policy) = 'object'),
-    next_fire_at TIMESTAMPTZ,
-    next_job_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    pause_reason TEXT NOT NULL DEFAULT '',
-    cell_id TEXT NOT NULL,
-    cell_name TEXT NOT NULL,
-    cell_repo TEXT NOT NULL,
-    FOREIGN KEY(tenant_id,cell_id) REFERENCES pgjobdb.cells(tenant_id,cell_id),
-    PRIMARY KEY (tenant_id, schedule_id)
-);
-
-CREATE INDEX IF NOT EXISTS schedules_cell_idx ON pgjobdb.schedules(tenant_id,cell_id) WHERE state='ACTIVE';
-CREATE INDEX IF NOT EXISTS schedules_due_idx
-    ON pgjobdb.schedules (next_fire_at, tenant_id, schedule_id)
-    WHERE state = 'ACTIVE' AND next_fire_at IS NOT NULL;
+-- Immutable JobDB facts.
 
 CREATE TABLE IF NOT EXISTS pgjobdb.job_facts (
     cell_id TEXT NOT NULL, cell_name TEXT NOT NULL, cell_repo TEXT NOT NULL,
@@ -1217,37 +1182,11 @@ CREATE TABLE IF NOT EXISTS pgjobdb.job_facts (
         CHECK (jsonb_typeof(app_metadata) = 'object'),
     schema_hash TEXT,
     parent_job_id TEXT,
-    schedule_id TEXT,
-    schedule_generation BIGINT,
-    schedule_spec_hash TEXT,
-    scheduled_at TIMESTAMPTZ,
-    schedule_run_id TEXT,
-    schedule_reason TEXT,
-    schedule_manual BOOLEAN NOT NULL DEFAULT FALSE,
-    schedule_backfill_id TEXT,
-    schedule_previous_job_id TEXT,
-    schedule_failure_history JSONB,
     created_by_worker_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     expires_at TIMESTAMPTZ NOT NULL DEFAULT 'infinity',
     PRIMARY KEY (tenant_id, job_id),
-    FOREIGN KEY (tenant_id, goal_id) REFERENCES pgjobdb.goals(tenant_id, goal_id),
-    FOREIGN KEY (tenant_id, schedule_id)
-        REFERENCES pgjobdb.schedules (tenant_id, schedule_id),
-    CONSTRAINT job_facts_schedule_complete CHECK (
-        (schedule_id IS NULL AND schedule_generation IS NULL
-            AND schedule_spec_hash IS NULL AND scheduled_at IS NULL
-            AND schedule_run_id IS NULL)
-        OR
-        (schedule_id IS NOT NULL AND schedule_generation IS NOT NULL
-            AND schedule_generation > 0 AND schedule_spec_hash IS NOT NULL
-            AND schedule_spec_hash <> '' AND scheduled_at IS NOT NULL
-            AND schedule_run_id IS NOT NULL AND schedule_run_id <> '')
-    ),
-    CONSTRAINT job_facts_failure_history_object CHECK (
-        schedule_failure_history IS NULL
-        OR jsonb_typeof(schedule_failure_history) = 'object'
-    )
+    FOREIGN KEY (tenant_id, goal_id) REFERENCES pgjobdb.goals(tenant_id, goal_id)
 );
 
 CREATE INDEX IF NOT EXISTS job_facts_cell_idx ON pgjobdb.job_facts(tenant_id,cell_id);
@@ -1261,11 +1200,6 @@ END $$;
 
 -- Visibility belongs to the retained identity, across active and archived state.
 
-
-
-CREATE UNIQUE INDEX IF NOT EXISTS job_facts_schedule_run_idx
-    ON pgjobdb.job_facts (tenant_id, schedule_id, schedule_generation, schedule_run_id)
-    WHERE schedule_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS job_facts_parent_idx
     ON pgjobdb.job_facts (tenant_id, parent_job_id)
     WHERE parent_job_id IS NOT NULL;
@@ -1274,231 +1208,9 @@ CREATE INDEX IF NOT EXISTS job_facts_metadata_idx
 CREATE INDEX IF NOT EXISTS job_facts_created_idx
     ON pgjobdb.job_facts (created_at DESC, tenant_id DESC, job_id DESC);
 
-
-
-
-
 CREATE INDEX IF NOT EXISTS jobs_native_route_idx
     ON pgjobdb.jobs (route_job_type, work_kind, task_type, available_at)
     WHERE route_job_type IS NOT NULL;
-
-
-
-
-
-CREATE OR REPLACE FUNCTION pgjobdb._check_schedule_cell(t TEXT,target_id TEXT,target_repo TEXT) RETURNS VOID LANGUAGE plpgsql AS $$
-DECLARE c pgjobdb.cells%ROWTYPE;
-BEGIN
- PERFORM pgjobdb._goal_lock(t);
- SELECT * INTO c FROM pgjobdb.cells WHERE tenant_id=t AND cell_id=target_id;
- IF NOT FOUND THEN RAISE EXCEPTION 'cell not found' USING ERRCODE='JCN01'; END IF;
- IF c.state<>'ACTIVE' THEN RAISE EXCEPTION 'cell retired' USING ERRCODE='JCR01'; END IF;
- IF c.repo IS DISTINCT FROM target_repo THEN RAISE EXCEPTION 'cell repo mismatch' USING ERRCODE='JCM01'; END IF;
-END $$;
-
-CREATE OR REPLACE FUNCTION pgjobdb.upsert_schedule(
-    p_tenant_id TEXT,
-    p_schedule_id TEXT,
-    p_state TEXT,
-    p_spec_hash TEXT,
-    p_trigger JSONB,
-    p_target_job_type TEXT,
-    p_target_snapshot JSONB,
-    p_overlap_policy TEXT,
-    p_failure_policy JSONB,
-    p_next_fire_at TIMESTAMPTZ,
-    p_next_job_id TEXT,
-    p_cell_id TEXT,
-    p_cell_name TEXT,
-    p_cell_repo TEXT,
-    p_expected_generation BIGINT DEFAULT NULL
-)
-RETURNS pgjobdb.schedules
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_existing pgjobdb.schedules%ROWTYPE;
-    v_result pgjobdb.schedules%ROWTYPE;
-BEGIN
-    PERFORM pgjobdb._check_schedule_cell(p_tenant_id,p_cell_id,p_cell_repo);
-    IF p_state NOT IN ('ACTIVE', 'PAUSED') THEN
-        RAISE EXCEPTION 'schedule upsert requires ACTIVE or PAUSED state';
-    END IF;
-    IF p_state = 'PAUSED' AND (p_next_fire_at IS NOT NULL OR p_next_job_id IS NOT NULL) THEN
-        RAISE EXCEPTION 'paused schedule cannot have next fire state';
-    END IF;
-    IF (p_next_fire_at IS NULL) <> (p_next_job_id IS NULL) THEN
-        RAISE EXCEPTION 'next fire and next job id must be provided together';
-    END IF;
-
-    SELECT * INTO v_existing FROM pgjobdb.schedules
-    WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id FOR UPDATE;
-    IF FOUND THEN
-        IF v_existing.state = 'ARCHIVED' THEN
-            RAISE EXCEPTION 'archived schedule cannot be updated';
-        END IF;
-        IF p_expected_generation IS NOT NULL
-            AND v_existing.generation <> p_expected_generation THEN
-            RAISE EXCEPTION 'schedule generation mismatch';
-        END IF;
-        UPDATE pgjobdb.schedules SET
-            state = p_state, pause_reason='',
-            generation = v_existing.generation + 1,
-            spec_hash = p_spec_hash,
-            trigger = p_trigger,
-            target_job_type = p_target_job_type,
-            target_snapshot = p_target_snapshot - ARRAY['cell','cellId','cellRepo'],
-            cell_id=p_cell_id,cell_name=p_cell_name,cell_repo=p_cell_repo,
-            overlap_policy = p_overlap_policy,
-            failure_policy = p_failure_policy,
-            next_fire_at = p_next_fire_at,
-            next_job_id = p_next_job_id,
-            updated_at = clock_timestamp()
-        WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id
-        RETURNING * INTO v_result;
-    ELSE
-        IF p_expected_generation IS NOT NULL THEN
-            RAISE EXCEPTION 'schedule generation mismatch';
-        END IF;
-        INSERT INTO pgjobdb.schedules (
-            tenant_id, schedule_id, state, generation, spec_hash, trigger,
-            target_job_type, target_snapshot, cell_id,cell_name,cell_repo, overlap_policy, failure_policy,
-            next_fire_at, next_job_id
-        ) VALUES (
-            p_tenant_id, p_schedule_id, p_state, 1, p_spec_hash, p_trigger,
-            p_target_job_type, p_target_snapshot - ARRAY['cell','cellId','cellRepo'],p_cell_id,p_cell_name,p_cell_repo,p_overlap_policy,
-            p_failure_policy, p_next_fire_at, p_next_job_id
-        ) RETURNING * INTO v_result;
-    END IF;
-    RETURN v_result;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION pgjobdb.mutate_schedule(
-    p_tenant_id TEXT,
-    p_schedule_id TEXT,
-    p_state TEXT,
-    p_next_fire_at TIMESTAMPTZ DEFAULT NULL,
-    p_next_job_id TEXT DEFAULT NULL,
-    p_expected_generation BIGINT DEFAULT NULL
-)
-RETURNS pgjobdb.schedules
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_existing pgjobdb.schedules%ROWTYPE;
-    v_result pgjobdb.schedules%ROWTYPE;
-BEGIN
-    PERFORM pgjobdb._goal_lock(p_tenant_id);
-    IF p_state NOT IN ('ACTIVE', 'PAUSED', 'ARCHIVED') THEN
-        RAISE EXCEPTION 'invalid schedule state';
-    END IF;
-    IF p_state <> 'ACTIVE' AND (p_next_fire_at IS NOT NULL OR p_next_job_id IS NOT NULL) THEN
-        RAISE EXCEPTION 'inactive schedule cannot have next fire state';
-    END IF;
-    IF (p_next_fire_at IS NULL) <> (p_next_job_id IS NULL) THEN
-        RAISE EXCEPTION 'next fire and next job id must be provided together';
-    END IF;
-
-    SELECT * INTO v_existing FROM pgjobdb.schedules
-    WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'schedule %/% does not exist', p_tenant_id, p_schedule_id;
-    END IF;
-    IF p_expected_generation IS NOT NULL
-        AND v_existing.generation <> p_expected_generation THEN
-        RAISE EXCEPTION 'schedule generation mismatch';
-    END IF;
-    IF v_existing.state = 'ARCHIVED' AND p_state <> 'ARCHIVED' THEN
-        RAISE EXCEPTION 'archived schedule cannot change state';
-    END IF;
-    IF p_state='ACTIVE' THEN PERFORM pgjobdb._check_schedule_cell(p_tenant_id,v_existing.cell_id,v_existing.cell_repo); END IF;
-    UPDATE pgjobdb.schedules SET
-        state = p_state,
-        generation = v_existing.generation + 1,
-        next_fire_at = p_next_fire_at,
-        next_job_id = p_next_job_id,
-        updated_at = clock_timestamp()
-    WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id
-    RETURNING * INTO v_result;
-    RETURN v_result;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION pgjobdb.pause_schedule(
-    p_tenant_id TEXT, p_schedule_id TEXT, p_expected_generation BIGINT DEFAULT NULL
-)
-RETURNS pgjobdb.schedules
-LANGUAGE sql
-AS $$
-    SELECT pgjobdb.mutate_schedule(p_tenant_id, p_schedule_id, 'PAUSED',
-        NULL, NULL, p_expected_generation);
-$$;
-
-CREATE OR REPLACE FUNCTION pgjobdb.resume_schedule(
-    p_tenant_id TEXT, p_schedule_id TEXT,
-    p_next_fire_at TIMESTAMPTZ DEFAULT NULL,
-    p_next_job_id TEXT DEFAULT NULL,
-    p_expected_generation BIGINT DEFAULT NULL
-)
-RETURNS pgjobdb.schedules
-LANGUAGE sql
-AS $$
-    SELECT pgjobdb.mutate_schedule(p_tenant_id, p_schedule_id, 'ACTIVE',
-        p_next_fire_at, p_next_job_id, p_expected_generation);
-$$;
-
-CREATE OR REPLACE FUNCTION pgjobdb.archive_schedule(
-    p_tenant_id TEXT, p_schedule_id TEXT, p_expected_generation BIGINT DEFAULT NULL
-)
-RETURNS pgjobdb.schedules
-LANGUAGE sql
-AS $$
-    SELECT pgjobdb.mutate_schedule(p_tenant_id, p_schedule_id, 'ARCHIVED',
-        NULL, NULL, p_expected_generation);
-$$;
-
-CREATE OR REPLACE FUNCTION pgjobdb.get_schedule(
-    p_tenant_id TEXT, p_schedule_id TEXT
-)
-RETURNS SETOF pgjobdb.schedules
-LANGUAGE sql STABLE
-AS $$
-    SELECT * FROM pgjobdb.schedules
-    WHERE tenant_id = p_tenant_id AND schedule_id = p_schedule_id;
-$$;
-
-
-CREATE OR REPLACE FUNCTION pgjobdb.list_schedules(
-    p_tenant_id TEXT,
-    p_states TEXT[] DEFAULT NULL,
-    p_target_job_types TEXT[] DEFAULT NULL,
-    p_before_updated_at TIMESTAMPTZ DEFAULT NULL,
-    p_before_schedule_id TEXT DEFAULT NULL,
-    p_limit INTEGER DEFAULT 100,
-    p_schedule_ids TEXT[] DEFAULT NULL
-)
-RETURNS SETOF pgjobdb.schedules
-LANGUAGE plpgsql STABLE
-AS $$
-BEGIN
-    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
-        RAISE EXCEPTION 'schedule page limit must be between 1 and 1000';
-    END IF;
-    IF (p_before_updated_at IS NULL) <> (p_before_schedule_id IS NULL) THEN
-        RAISE EXCEPTION 'schedule cursor fields must be provided together';
-    END IF;
-    RETURN QUERY SELECT s.* FROM pgjobdb.schedules s
-    WHERE s.tenant_id = p_tenant_id
-      AND (p_states IS NULL OR s.state = ANY(p_states))
-      AND (p_target_job_types IS NULL OR s.target_job_type = ANY(p_target_job_types))
-      AND (p_schedule_ids IS NULL OR s.schedule_id = ANY(p_schedule_ids))
-      AND (p_before_updated_at IS NULL
-        OR (s.updated_at, s.schedule_id) < (p_before_updated_at, p_before_schedule_id))
-    ORDER BY s.updated_at DESC, s.schedule_id DESC
-    LIMIT p_limit;
-END;
-$$;
 
 DO $$ BEGIN
  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='pgjobdb.jobs'::regclass AND conname='active_goal_fk') THEN
@@ -1946,7 +1658,6 @@ CREATE OR REPLACE FUNCTION pgjobdb.submit_native_job(
     p_app_metadata JSONB,
     p_schema_hash TEXT,
     p_parent_job_id TEXT,
-    p_schedule JSONB,
     p_wait_for TEXT[],
     p_available_at TIMESTAMPTZ,
     p_expires_at TIMESTAMPTZ,
@@ -1965,11 +1676,6 @@ DECLARE
     v_initial JSON;
     v_digest TEXT;
     v_existing pgjobdb.job_facts%ROWTYPE;
-    v_schedule_id TEXT := p_schedule->>'schedule_id';
-    v_schedule_generation BIGINT := (p_schedule->>'generation')::BIGINT;
-    v_schedule_spec_hash TEXT := p_schedule->>'spec_hash';
-    v_scheduled_at TIMESTAMPTZ := (p_schedule->>'scheduled_at')::TIMESTAMPTZ;
-    v_schedule_run_id TEXT := p_schedule->>'run_id';
     v_expires_at TIMESTAMPTZ := COALESCE(p_expires_at, 'infinity');
 BEGIN
     PERFORM pgjobdb._goal_lock(p_tenant_id);
@@ -1981,9 +1687,6 @@ BEGIN
     IF jsonb_typeof(p_run_policy) IS DISTINCT FROM 'object'
         OR jsonb_typeof(p_app_metadata) IS DISTINCT FROM 'object' THEN
         RAISE EXCEPTION 'run policy and app metadata must be JSON objects';
-    END IF;
-    IF p_schedule IS NOT NULL AND jsonb_typeof(p_schedule) IS DISTINCT FROM 'object' THEN
-        RAISE EXCEPTION 'schedule occurrence must be a JSON object';
     END IF;
     PERFORM pgjobdb._validate_dependencies(p_dependencies);
     IF cardinality(p_wait_for)>0 AND jsonb_array_length(p_dependencies)>0 THEN RAISE EXCEPTION 'mixed dependencies' USING ERRCODE='JGI01'; END IF;
@@ -2025,17 +1728,10 @@ BEGIN
 
     INSERT INTO pgjobdb.job_facts (
         cell_id, cell_name, cell_repo, goal_id, initial_dependencies, tenant_id, job_id, job_type, run_policy, app_metadata, schema_hash,
-        parent_job_id, schedule_id, schedule_generation, schedule_spec_hash,
-        scheduled_at, schedule_run_id, schedule_reason, schedule_manual,
-        schedule_backfill_id, schedule_previous_job_id,
-        schedule_failure_history, created_by_worker_id, expires_at
+        parent_job_id, created_by_worker_id, expires_at
     ) VALUES (
         p_cell->>'cellId',p_cell->>'cell',p_cell->>'cellRepo', v_goal, p_dependencies, p_tenant_id, p_job_id, p_job_type, p_run_policy, p_app_metadata,
-        p_schema_hash, p_parent_job_id, v_schedule_id, v_schedule_generation,
-        v_schedule_spec_hash, v_scheduled_at, v_schedule_run_id,
-        p_schedule->>'reason', COALESCE((p_schedule->>'manual')::BOOLEAN, FALSE),
-        p_schedule->>'backfill_id', p_schedule->>'previous_job_id',
-        p_schedule->'failure_history', p_worker_id, v_expires_at
+        p_schema_hash, p_parent_job_id, p_worker_id, v_expires_at
     ) ON CONFLICT ON CONSTRAINT job_facts_pkey DO NOTHING;
     GET DIAGNOSTICS v_inserted = ROW_COUNT;
 
@@ -2049,20 +1745,6 @@ BEGIN
             OR v_existing.app_metadata IS DISTINCT FROM p_app_metadata
             OR v_existing.schema_hash IS DISTINCT FROM p_schema_hash
             OR v_existing.parent_job_id IS DISTINCT FROM p_parent_job_id
-            OR v_existing.schedule_id IS DISTINCT FROM v_schedule_id
-            OR v_existing.schedule_generation IS DISTINCT FROM v_schedule_generation
-            OR v_existing.schedule_spec_hash IS DISTINCT FROM v_schedule_spec_hash
-            OR v_existing.scheduled_at IS DISTINCT FROM v_scheduled_at
-            OR v_existing.schedule_run_id IS DISTINCT FROM v_schedule_run_id
-            OR v_existing.schedule_reason IS DISTINCT FROM p_schedule->>'reason'
-            OR v_existing.schedule_manual IS DISTINCT FROM
-                COALESCE((p_schedule->>'manual')::BOOLEAN, FALSE)
-            OR v_existing.schedule_backfill_id IS DISTINCT FROM
-                p_schedule->>'backfill_id'
-            OR v_existing.schedule_previous_job_id IS DISTINCT FROM
-                p_schedule->>'previous_job_id'
-            OR v_existing.schedule_failure_history IS DISTINCT FROM
-                p_schedule->'failure_history'
             OR v_existing.expires_at IS DISTINCT FROM v_expires_at THEN
             RAISE EXCEPTION 'job id already exists with different immutable facts';
         END IF;
@@ -2095,7 +1777,6 @@ BEGIN
     RETURN QUERY SELECT p_job_id, TRUE;
 END;
 $$;
-
 
 CREATE OR REPLACE FUNCTION pgjobdb.get_native_work(
     p_worker_id TEXT,
@@ -2658,10 +2339,7 @@ SELECT
     NULL::TIMESTAMPTZ AS archived_at,
     NULL::TEXT AS completion_status, NULL::TEXT AS completion_detail,
     NULL::TEXT AS completion_error_kind, NULL::BOOLEAN AS completion_retryable,
-    f.schedule_id, f.schedule_generation, f.schedule_spec_hash,
-    f.scheduled_at, f.schedule_run_id, f.schedule_reason,
-    f.schedule_manual, f.schedule_backfill_id,
-    f.schedule_previous_job_id, f.schedule_failure_history, f.goal_id,
+    f.goal_id,
     ARRAY(SELECT gc.goal_id FROM pgjobdb.goal_candidates gc WHERE gc.tenant_id=f.tenant_id AND gc.job_id=f.job_id ORDER BY gc.goal_id) AS other_goal_ids
 FROM pgjobdb.job_facts f
 JOIN pgjobdb.jobs j USING (tenant_id, job_id)
@@ -2685,10 +2363,7 @@ SELECT
     NULLIF(f.expires_at, 'infinity'::TIMESTAMPTZ), a.archived_at,
     a.completion_status, a.completion_detail,
     a.completion_error_kind, a.completion_retryable,
-    f.schedule_id, f.schedule_generation, f.schedule_spec_hash,
-    f.scheduled_at, f.schedule_run_id, f.schedule_reason,
-    f.schedule_manual, f.schedule_backfill_id,
-    f.schedule_previous_job_id, f.schedule_failure_history, f.goal_id,
+    f.goal_id,
     ARRAY(SELECT gc.goal_id FROM pgjobdb.goal_candidates gc WHERE gc.tenant_id=f.tenant_id AND gc.job_id=f.job_id ORDER BY gc.goal_id) AS other_goal_ids
 FROM pgjobdb.job_facts f
 JOIN pgjobdb.jobs_archive a USING (tenant_id, job_id)
@@ -2817,47 +2492,6 @@ BEGIN
         OR (n.created_at, n.tenant_id, n.job_id)
           < (p_before_created_at, p_before_tenant_id, p_before_job_id))
     ORDER BY n.created_at DESC, n.tenant_id DESC, n.job_id DESC
-    LIMIT p_limit;
-END;
-$$;
-
--- Original native list signature retains ordinary inspection behavior.
-CREATE OR REPLACE FUNCTION pgjobdb.list_native_schedule_runs(
-    p_tenant_id TEXT,
-    p_schedule_id TEXT,
-    p_scheduled_after TIMESTAMPTZ,
-    p_scheduled_before TIMESTAMPTZ,
-    p_statuses TEXT[],
-    p_before_scheduled_at TIMESTAMPTZ,
-    p_before_job_id TEXT,
-    p_limit INTEGER
-)
-RETURNS TABLE(job_details JSONB, client_payload JSON, client_payload_revision BIGINT, initial_payload_digest TEXT)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF p_tenant_id IS NULL OR p_tenant_id = '' OR
-        p_schedule_id IS NULL OR p_schedule_id = '' THEN
-        RAISE EXCEPTION 'tenant id and schedule id are required';
-    END IF;
-    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
-        RAISE EXCEPTION 'schedule run page limit must be between 1 and 1000';
-    END IF;
-    IF (p_before_scheduled_at IS NULL) <> (p_before_job_id IS NULL) THEN
-        RAISE EXCEPTION 'schedule run cursor fields must be provided together';
-    END IF;
-    RETURN QUERY
-    SELECT to_jsonb(n),c.client_payload,c.revision,c.initial_payload_digest FROM pgjobdb.native_jobs n JOIN pgjobdb.job_client_state c USING (tenant_id,job_id)
-    WHERE n.tenant_id = p_tenant_id AND n.schedule_id = p_schedule_id
-      AND EXISTS (SELECT 1 FROM pgjobdb.job_facts f
-          WHERE f.tenant_id=n.tenant_id AND f.job_id=n.job_id AND f.hidden_at IS NULL)
-      AND n.scheduled_at IS NOT NULL
-      AND (p_scheduled_after IS NULL OR n.scheduled_at >= p_scheduled_after)
-      AND (p_scheduled_before IS NULL OR n.scheduled_at <= p_scheduled_before)
-      AND (p_statuses IS NULL OR n.status = ANY(p_statuses))
-      AND (p_before_scheduled_at IS NULL OR
-        (n.scheduled_at, n.job_id) < (p_before_scheduled_at, p_before_job_id))
-    ORDER BY n.scheduled_at DESC, n.job_id DESC
     LIMIT p_limit;
 END;
 $$;

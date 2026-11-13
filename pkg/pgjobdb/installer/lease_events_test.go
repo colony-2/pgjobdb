@@ -11,14 +11,11 @@ import (
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
-	pginstaller "github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
 	"github.com/stretchr/testify/require"
 )
 
 // Frozen immediate-prior schema from the managed checkout base; no event backfill.
 //
-//go:embed testdata/format9.sql
-var format9 string
 
 func eventJob(t *testing.T, ctx context.Context, db *sql.DB, id string) {
 	t.Helper()
@@ -106,56 +103,6 @@ func TestLeaseEventsAtomicNative(t *testing.T) {
 		events = eventList(t, ctx, db)
 		events[0].WorkerID = "mutated"
 		require.Equal(t, "worker", eventList(t, ctx, db)[0].WorkerID)
-	})
-}
-
-func TestLeaseEventsUpgrade(t *testing.T) {
-	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
-		_, err := db.ExecContext(ctx, format9)
-		require.NoError(t, err)
-		historicalEventJob(t, ctx, db, "old")
-		lease, err := eventClaim(ctx, db, "old")
-		require.NoError(t, err)
-		require.NotNil(t, lease)
-
-		lease, err = pgjobdb.KeepAliveLease(ctx, db, lease.Identity(), time.Minute)
-		require.NoError(t, err)
-		historicalEventJob(t, ctx, db, "old-completed")
-		require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", "old-completed", "worker", pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}))
-		// Compare retained data, including live lease identity/expiry, archived
-		// history, primary goals and signing keys, rather than only row counts.
-		snapshots := map[string]string{}
-		for _, table := range []string{"jobs", "jobs_archive", "job_facts", "job_client_state", "cells", "cell_names", "cell_catalog", "goals", "goal_candidates", "jobs_trace"} {
-			var snapshot string
-			require.NoError(t, db.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text FROM pgjobdb.`+table+` t`).Scan(&snapshot))
-			snapshots[table] = snapshot
-		}
-		var traceBefore int
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.jobs_trace`).Scan(&traceBefore))
-		require.Greater(t, traceBefore, 0)
-		installer := pginstaller.Installer{DB: db}
-		require.Error(t, installer.Verify(ctx))
-		require.NoError(t, installer.Apply(ctx))
-		require.NoError(t, installer.Verify(ctx))
-		for table, before := range snapshots {
-			var after string
-			require.NoError(t, db.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text FROM pgjobdb.`+table+` t`).Scan(&after))
-			require.JSONEq(t, before, after, "upgrade must preserve %s", table)
-		}
-		require.Empty(t, eventList(t, ctx, db))
-		require.NoError(t, installer.Apply(ctx))
-		require.NoError(t, installer.Verify(ctx))
-		var version, traceAfter int
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version))
-		require.Equal(t, 11, version)
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.jobs_trace`).Scan(&traceAfter))
-		require.Equal(t, traceBefore, traceAfter)
-		_, err = pgjobdb.KeepAliveLease(ctx, db, lease.Identity(), time.Minute)
-		require.NoError(t, err)
-		events := eventList(t, ctx, db)
-		require.Len(t, events, 1)
-		require.Equal(t, jobdb.LeaseEventRenewed, events[0].EventType)
-		require.Equal(t, lease.ExpiresAt, *events[0].PreviousLeaseExpiresAt)
 	})
 }
 
