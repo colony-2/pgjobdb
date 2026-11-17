@@ -845,7 +845,7 @@ CREATE TABLE IF NOT EXISTS pgjobdb.lease_events (
  route_job_type TEXT NOT NULL, route_task_type TEXT,
  lease_id TEXT NOT NULL, worker_id TEXT NOT NULL, lease_expires_at TIMESTAMPTZ NOT NULL,
  previous_lease_expires_at TIMESTAMPTZ, acquisition_source TEXT, previous_lease_id TEXT,
- CHECK ((event_type='lease_acquired' AND acquisition_source IS NOT NULL AND acquisition_source IN ('poll','targeted','task_completion') AND previous_lease_expires_at IS NULL)
+ CHECK ((event_type='lease_acquired' AND acquisition_source IS NOT NULL AND acquisition_source IN ('poll','targeted','task_completion','append') AND previous_lease_expires_at IS NULL)
  OR (event_type='lease_renewed' AND acquisition_source IS NULL AND previous_lease_id IS NULL AND previous_lease_expires_at IS NOT NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS lease_events_acquisition_idx ON pgjobdb.lease_events(tenant_id,job_id,lease_id) WHERE event_type='lease_acquired';
@@ -1188,6 +1188,10 @@ CREATE TABLE IF NOT EXISTS pgjobdb.job_facts (
     PRIMARY KEY (tenant_id, job_id),
     FOREIGN KEY (tenant_id, goal_id) REFERENCES pgjobdb.goals(tenant_id, goal_id)
 );
+
+ALTER TABLE pgjobdb.job_facts ADD COLUMN IF NOT EXISTS append_key TEXT;
+ALTER TABLE pgjobdb.job_facts ADD COLUMN IF NOT EXISTS append_gen BIGINT;
+CREATE UNIQUE INDEX IF NOT EXISTS job_facts_append_idx ON pgjobdb.job_facts(tenant_id,cell_id,job_type,append_key,append_gen) WHERE append_key IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS job_facts_cell_idx ON pgjobdb.job_facts(tenant_id,cell_id);
 CREATE INDEX IF NOT EXISTS goals_cell_idx ON pgjobdb.goals(tenant_id,cell_id) WHERE state='OPEN';
@@ -1649,6 +1653,7 @@ END;
 $$;
 
 DROP FUNCTION IF EXISTS pgjobdb.submit_native_job(TEXT,TEXT,TEXT,TEXT,JSONB,JSONB,TEXT,TEXT,JSONB,TEXT[],TIMESTAMPTZ,TIMESTAMPTZ,TEXT,JSON,TEXT,BOOLEAN,JSONB,JSONB);
+DROP FUNCTION IF EXISTS pgjobdb.submit_native_job(TEXT,TEXT,TEXT,TEXT,JSONB,JSONB,TEXT,TEXT,TEXT[],TIMESTAMPTZ,TIMESTAMPTZ,TEXT,JSON,TEXT,BOOLEAN,JSONB,JSONB,TEXT);
 CREATE OR REPLACE FUNCTION pgjobdb.submit_native_job(
     p_tenant_id TEXT,
     p_job_id TEXT,
@@ -1663,7 +1668,7 @@ CREATE OR REPLACE FUNCTION pgjobdb.submit_native_job(
     p_expires_at TIMESTAMPTZ,
     p_client_mode TEXT,
     p_client_value JSON,
-    p_goal_id TEXT, p_share_goal BOOLEAN, p_dependencies JSONB, p_cell JSONB, p_selected_goal_id TEXT DEFAULT NULL
+    p_goal_id TEXT, p_share_goal BOOLEAN, p_dependencies JSONB, p_cell JSONB, p_selected_goal_id TEXT DEFAULT NULL, p_append_key TEXT DEFAULT NULL, p_append_gen BIGINT DEFAULT NULL
 )
 RETURNS TABLE(job_id TEXT, created BOOLEAN)
 LANGUAGE plpgsql
@@ -1728,10 +1733,10 @@ BEGIN
 
     INSERT INTO pgjobdb.job_facts (
         cell_id, cell_name, cell_repo, goal_id, initial_dependencies, tenant_id, job_id, job_type, run_policy, app_metadata, schema_hash,
-        parent_job_id, created_by_worker_id, expires_at
+        parent_job_id, created_by_worker_id, expires_at, append_key, append_gen
     ) VALUES (
         p_cell->>'cellId',p_cell->>'cell',p_cell->>'cellRepo', v_goal, p_dependencies, p_tenant_id, p_job_id, p_job_type, p_run_policy, p_app_metadata,
-        p_schema_hash, p_parent_job_id, p_worker_id, v_expires_at
+        p_schema_hash, p_parent_job_id, p_worker_id, v_expires_at, p_append_key, CASE WHEN p_append_key IS NOT NULL THEN p_append_gen END
     ) ON CONFLICT ON CONSTRAINT job_facts_pkey DO NOTHING;
     GET DIAGNOSTICS v_inserted = ROW_COUNT;
 
@@ -1740,6 +1745,8 @@ BEGIN
         WHERE f.tenant_id = p_tenant_id AND f.job_id = p_job_id;
         IF v_existing.initial_dependencies IS DISTINCT FROM p_dependencies THEN RAISE EXCEPTION 'different dependencies' USING ERRCODE='JGM01'; END IF;
         IF v_existing.cell_id IS DISTINCT FROM p_cell->>'cellId' OR v_existing.cell_repo IS DISTINCT FROM p_cell->>'cellRepo'
+            OR v_existing.append_key IS DISTINCT FROM p_append_key
+            OR v_existing.append_gen IS DISTINCT FROM (CASE WHEN p_append_key IS NOT NULL THEN p_append_gen END)
             OR v_existing.job_type IS DISTINCT FROM p_job_type
             OR v_existing.run_policy IS DISTINCT FROM p_run_policy
             OR v_existing.app_metadata IS DISTINCT FROM p_app_metadata
@@ -1890,8 +1897,8 @@ BEGIN
             lease_expires_at = clock_timestamp() + make_interval(secs => p_lease_seconds),
             lease_expiration_count = j.lease_expiration_count +
                 CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
-            consecutive_expirations = CASE WHEN j.lease_id IS NOT NULL
-                THEN j.consecutive_expirations + 1 ELSE 0 END
+            consecutive_expirations = CASE WHEN left(j.lease_worker_id,13) = 'jobdb-append-' THEN j.consecutive_expirations WHEN j.lease_id IS NOT NULL
+                THEN j.consecutive_expirations + 1 ELSE j.consecutive_expirations END
         FROM candidate c
         WHERE j.tenant_id = c.tenant_id AND j.job_id = c.job_id
         RETURNING j AS updated, c.previous_id
@@ -2309,8 +2316,8 @@ BEGIN
         lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
         lease_expiration_count = j.lease_expiration_count +
             CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
-        consecutive_expirations = CASE WHEN j.lease_id IS NOT NULL
-            THEN j.consecutive_expirations + 1 ELSE 0 END,
+        consecutive_expirations = CASE WHEN left(j.lease_worker_id,13) = 'jobdb-append-' THEN j.consecutive_expirations WHEN j.lease_id IS NOT NULL
+            THEN j.consecutive_expirations + 1 ELSE j.consecutive_expirations END,
         work_kind = 'JOB',
         route_job_type = v_job.resume_job_type,
         task_type = NULL, resume_job_type = NULL,
@@ -2340,7 +2347,7 @@ SELECT
     NULL::TEXT AS completion_status, NULL::TEXT AS completion_detail,
     NULL::TEXT AS completion_error_kind, NULL::BOOLEAN AS completion_retryable,
     f.goal_id,
-    ARRAY(SELECT gc.goal_id FROM pgjobdb.goal_candidates gc WHERE gc.tenant_id=f.tenant_id AND gc.job_id=f.job_id ORDER BY gc.goal_id) AS other_goal_ids
+    ARRAY(SELECT gc.goal_id FROM pgjobdb.goal_candidates gc WHERE gc.tenant_id=f.tenant_id AND gc.job_id=f.job_id ORDER BY gc.goal_id) AS other_goal_ids, f.append_key, f.append_gen
 FROM pgjobdb.job_facts f
 JOIN pgjobdb.jobs j USING (tenant_id, job_id)
 JOIN pgjobdb.jobs_with_status s USING (tenant_id, job_id)
@@ -2364,7 +2371,7 @@ SELECT
     a.completion_status, a.completion_detail,
     a.completion_error_kind, a.completion_retryable,
     f.goal_id,
-    ARRAY(SELECT gc.goal_id FROM pgjobdb.goal_candidates gc WHERE gc.tenant_id=f.tenant_id AND gc.job_id=f.job_id ORDER BY gc.goal_id) AS other_goal_ids
+    ARRAY(SELECT gc.goal_id FROM pgjobdb.goal_candidates gc WHERE gc.tenant_id=f.tenant_id AND gc.job_id=f.job_id ORDER BY gc.goal_id) AS other_goal_ids, f.append_key, f.append_gen
 FROM pgjobdb.job_facts f
 JOIN pgjobdb.jobs_archive a USING (tenant_id, job_id)
 WHERE a.final_route_job_type IS NOT NULL;
@@ -2397,6 +2404,7 @@ AS $$
     WHERE n.tenant_id = p_tenant_id AND n.job_id = p_job_id;
 $$;
 
+DROP FUNCTION IF EXISTS pgjobdb.list_native_jobs(TEXT[],TEXT[],TEXT[],TEXT[],JSONB,JSONB,TEXT[],BOOLEAN,JSONB,TIMESTAMPTZ,TIMESTAMPTZ,TIMESTAMPTZ,TEXT,TEXT,INTEGER,JSONB,TIMESTAMPTZ,BOOLEAN,TEXT[],TEXT[]);
 CREATE OR REPLACE FUNCTION pgjobdb.list_native_jobs(
     p_tenant_ids TEXT[],
     p_statuses TEXT[],
@@ -2415,7 +2423,7 @@ CREATE OR REPLACE FUNCTION pgjobdb.list_native_jobs(
     p_limit INTEGER,
     p_available_routes JSONB,
     p_now TIMESTAMPTZ,
-    p_include_hidden BOOLEAN, p_goal_ids TEXT[], p_cell_ids TEXT[]
+    p_include_hidden BOOLEAN, p_goal_ids TEXT[], p_cell_ids TEXT[], p_append_keys TEXT[] DEFAULT NULL
 )
 RETURNS TABLE(job_details JSONB,client_payload JSON,client_payload_revision BIGINT,initial_payload_digest TEXT)
 LANGUAGE plpgsql
@@ -2445,7 +2453,7 @@ BEGIN
     SELECT CASE WHEN jsonb_array_length(p_available_routes) > 0
         THEN to_jsonb(n) || '{"status":"READY"}'::JSONB ELSE to_jsonb(n) END,
         c.client_payload,c.revision,c.initial_payload_digest FROM pgjobdb.native_jobs n JOIN pgjobdb.job_client_state c USING(tenant_id,job_id)
-    WHERE n.tenant_id = ANY(p_tenant_ids) AND n.cell_id=ANY(p_cell_ids)
+    WHERE (p_append_keys IS NULL OR cardinality(p_append_keys)=0 OR n.append_key=ANY(p_append_keys)) AND n.tenant_id = ANY(p_tenant_ids) AND n.cell_id=ANY(p_cell_ids)
       AND (p_goal_ids IS NULL OR n.goal_id=ANY(p_goal_ids) OR EXISTS(SELECT 1 FROM pgjobdb.goal_candidates gc WHERE gc.tenant_id=n.tenant_id AND gc.job_id=n.job_id AND gc.goal_id=ANY(p_goal_ids)))
       AND (p_include_hidden OR EXISTS (SELECT 1 FROM pgjobdb.job_facts f
           WHERE f.tenant_id=n.tenant_id AND f.job_id=n.job_id AND f.hidden_at IS NULL))
@@ -2578,6 +2586,40 @@ BEGIN
     END LOOP;
     RETURN QUERY SELECT v_count,v_count;
 END;
+$$;
+
+DO $$ DECLARE c RECORD; BEGIN
+ FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='pgjobdb.lease_events'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%acquisition_source%' LOOP
+ EXECUTE format('ALTER TABLE pgjobdb.lease_events DROP CONSTRAINT %I',c.conname);
+ END LOOP;
+ ALTER TABLE pgjobdb.lease_events ADD CONSTRAINT lease_events_source_valid CHECK (
+ (event_type='lease_acquired' AND acquisition_source IS NOT NULL AND acquisition_source IN ('poll','targeted','task_completion','append') AND previous_lease_expires_at IS NULL)
+ OR (event_type='lease_renewed' AND acquisition_source IS NULL AND previous_lease_id IS NULL AND previous_lease_expires_at IS NOT NULL));
+END $$;
+
+-- PostgreSQL rechecks the CAS predicate after waiting for a concurrent updater.
+CREATE OR REPLACE FUNCTION pgjobdb.claim_append(p_tenant TEXT,p_job TEXT,p_lease TEXT,p_worker TEXT,p_seconds DOUBLE PRECISION)
+RETURNS TIMESTAMPTZ LANGUAGE plpgsql AS $$
+DECLARE old_id TEXT; updated pgjobdb.jobs%ROWTYPE; t TIMESTAMPTZ:=clock_timestamp();
+BEGIN
+ SELECT lease_id INTO old_id FROM pgjobdb.jobs WHERE tenant_id=p_tenant AND job_id=p_job FOR UPDATE;
+ t:=clock_timestamp();
+ UPDATE pgjobdb.jobs j SET lease_id=p_lease,lease_worker_id=p_worker,
+ lease_expires_at=t+make_interval(secs=>p_seconds),
+ lease_route_job_type=j.route_job_type,lease_work_kind=j.work_kind,lease_task_type=j.task_type,
+ consecutive_expirations=CASE WHEN j.lease_id IS NOT NULL AND left(j.lease_worker_id,13)<>'jobdb-append-' THEN j.consecutive_expirations+1 ELSE j.consecutive_expirations END
+ WHERE j.tenant_id=p_tenant AND j.job_id=p_job AND NOT j.cancel_requested
+ AND j.consecutive_expirations<pgjobdb.crash_concern_threshold()
+ AND (j.lease_id IS NULL OR j.lease_expires_at<=t)
+ RETURNING j.* INTO updated;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ PERFORM pgjobdb._record_lease_event(updated,t,'append',old_id,NULL);
+ RETURN updated.lease_expires_at;
+END $$;
+CREATE OR REPLACE FUNCTION pgjobdb.release_append(p_tenant TEXT,p_job TEXT,p_lease TEXT)
+RETURNS VOID LANGUAGE sql AS $$
+ UPDATE pgjobdb.jobs SET lease_id=NULL,lease_worker_id=NULL,lease_expires_at='-infinity',lease_route_job_type=NULL,lease_work_kind=NULL,lease_task_type=NULL
+ WHERE tenant_id=p_tenant AND job_id=p_job AND lease_id=p_lease;
 $$;
 
 COMMIT;

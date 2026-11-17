@@ -5,6 +5,7 @@ go 1.25.5
 require (
 	github.com/fergusstrange/embedded-postgres v1.32.0
 	github.com/lib/pq v1.12.0
+	github.com/segmentio/ksuid v1.0.4
 	github.com/spf13/pflag v1.0.6
 	github.com/stretchr/testify v1.11.1
 )
@@ -90,7 +91,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
-	github.com/segmentio/ksuid v1.0.4 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -126,7 +126,7 @@ require (
 )
 
 require (
-	github.com/colony-2/jobdb v0.0.83-0.20261113185824-501cebc4359f
+	github.com/colony-2/jobdb v0.0.90-0.20261117041302-d49f5e7923a0
 	github.com/spf13/cobra v1.9.1
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	gorm.io/gorm v1.30.0

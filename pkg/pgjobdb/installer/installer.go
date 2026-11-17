@@ -51,7 +51,7 @@ func (i Installer) Verify(ctx context.Context) error {
 	for table, columns := range map[string][]string{
 		"dependency_waits": {"deadline_exact"},
 		"job_preparations": {"selected_goal_id", "receipt"},
-		"job_facts":        {"hidden_at", "goal_id", "cell_id", "cell_repo", "cell_name"},
+		"job_facts":        {"append_key", "append_gen", "hidden_at", "goal_id", "cell_id", "cell_repo", "cell_name"},
 		"job_client_state": {"client_payload", "revision", "initial_payload_digest"},
 		"jobs":             {"goal_id", "dependency_wait_id", "route_job_type", "work_kind", "lease_worker_id", "lease_route_job_type", "lease_work_kind", "lease_task_type", "alternate_at", "wait_until_is_deadline"},
 		"jobs_archive":     {"final_route_job_type", "final_work_kind", "final_alternate_at"},
@@ -69,7 +69,7 @@ func (i Installer) Verify(ctx context.Context) error {
 		"complete_native_job", "complete_native_unheld_job",
 		"validate_native_lease", "renew_native_lease", "cancel_native_job",
 		"reschedule_native_job",
-		"claim_native_task",
+		"claim_native_task", "claim_append", "release_append",
 		"get_native_job", "get_native_job_status",
 		"list_native_jobs",
 	} {

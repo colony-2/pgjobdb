@@ -25,7 +25,7 @@ type jobCursor struct {
 // ListJobs retains the native detail-list API. Workflow listing uses ListJobSummaries.
 func ListJobs(ctx context.Context, db DB, opts ListJobsOptions) (*ListJobsResult, error) {
 	page, err := listJobs(ctx, db, opts, `SELECT * FROM pgjobdb.list_native_jobs(
- $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
 		scanListedJobDetail, func(j JobDetail) jobCursor {
 			return jobCursor{CreatedAt: j.CreatedAt, TenantID: j.TenantID, JobID: j.JobID}
 		})
@@ -241,6 +241,10 @@ func listJobs[T any](ctx context.Context, db DB, opts ListJobsOptions, query str
 	if len(goalIDs) > 0 {
 		filters = append(filters, goalIDs)
 	}
+	if len(opts.AppendKeys) > 0 {
+		// Tag this optional filter so it cannot share a fingerprint with GoalIDs.
+		filters = append(filters, map[string][]string{"appendKeys": opts.AppendKeys})
+	}
 	filterJSON, err := json.Marshal(filters)
 	if err != nil {
 		return nil, fmt.Errorf("pgjobdb: encode job filters: %w", err)
@@ -270,7 +274,7 @@ func listJobs[T any](ctx context.Context, db DB, opts ListJobsOptions, query str
 		string(taskJSON), string(keyJSON), pq.Array(nilIfEmpty(parentIDs)),
 		opts.RootOnly, string(predicateJSON), optionalTime(opts.CreatedAfter),
 		optionalTime(opts.CreatedBefore), beforeCreated, beforeTenant, beforeJob,
-		opts.PageSize+1, string(routeJSON), opts.Now, opts.IncludeHidden, pq.Array(nilIfEmpty(goalIDs)), pq.Array(cellIDs))
+		opts.PageSize+1, string(routeJSON), opts.Now, opts.IncludeHidden, pq.Array(nilIfEmpty(goalIDs)), pq.Array(cellIDs), pq.Array(opts.AppendKeys))
 	if err != nil {
 		return nil, err
 	}

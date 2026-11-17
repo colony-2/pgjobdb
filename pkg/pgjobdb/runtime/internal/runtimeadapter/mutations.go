@@ -22,6 +22,7 @@ func (s Scheduler) CreateJob(ctx context.Context, req runtimecore.CreateJobReque
 		initialUpdate = &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: req.ClientPayload}
 	}
 	input := pgjobdb.SubmitJobRequest{
+		AppendKey: req.AppendKey, AppendGeneration: req.AppendGeneration,
 		Cell: req.Cell.Cell, CellRepo: req.Cell.CellRepo, Target: req.Cell,
 		GoalID: req.GoalID, SelectedGoalID: req.SelectedGoalID, ShareGoal: req.ShareGoal, Dependencies: req.Dependencies,
 		ClientPayloadUpdate: initialUpdate,

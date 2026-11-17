@@ -15,6 +15,7 @@ import (
 // membership enumeration or evaluated dependency explanations. Stored payloads,
 // policy, task coordinates, prerequisites, and completion detail are included.
 type JobListSummary struct {
+	AppendKey             string                       `json:"append_key"`
 	Cell                  string                       `json:"cell"`
 	CellID                string                       `json:"cell_id"`
 	CellRepo              string                       `json:"cell_repo"`

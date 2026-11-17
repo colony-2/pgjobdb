@@ -41,6 +41,8 @@ type RuntimeMetadata struct {
 }
 
 type SubmitJobRequest struct {
+	AppendKey           string
+	AppendGeneration    int64
 	Cell, CellRepo      string
 	Target              jobdb.ResolvedCell
 	GoalID              string
@@ -214,6 +216,8 @@ const (
 
 // JobDetail joins immutable job facts with current or final scheduler state.
 type JobDetail struct {
+	AppendKey             string            `json:"append_key"`
+	AppendGeneration      int64             `json:"append_gen"`
 	Cell                  string            `json:"cell"`
 	CellID                string            `json:"cell_id"`
 	CellRepo              string            `json:"cell_repo"`
@@ -280,6 +284,7 @@ type MetadataPredicate struct {
 }
 
 type ListJobsOptions struct {
+	AppendKeys    []string
 	CellNames     []string
 	GoalIDs       []string
 	IncludeHidden bool
