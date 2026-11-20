@@ -39,6 +39,21 @@ var runDirectServerFunc = runDirectServer
 
 func newRootCmd() *cobra.Command {
 	root := cli.NewRootCmd()
+	// Remove the inherited mutation, including its executable registration.
+	for _, goals := range root.Commands() {
+		if goals.Name() != "goals" {
+			continue
+		}
+		for _, child := range goals.Commands() {
+			if child.Name() == "add-candidate" {
+				goals.RemoveCommand(child)
+			}
+		}
+		goals.Short = "Inspect goals and record explicit failure"
+		goals.Long = ""
+		goals.Args = cobra.NoArgs
+		goals.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
+	}
 	root.AddCommand(newDirectCmd(), newServeCmd())
 	return root
 }
@@ -86,9 +101,9 @@ func runDirectServer(ctx context.Context, cfg directServerConfig) error {
 
 	var handler http.Handler
 	if len(cfg.LeaseTokenSigningKey) == 0 {
-		handler = remoteruntime.NewServer(runtime)
+		handler = remoteruntime.NewConsumerServer(runtime)
 	} else {
-		handler, err = remoteruntime.NewServerWithOptions(runtime, remoteruntime.ServerOptions{
+		handler, err = remoteruntime.NewConsumerServerWithOptions(runtime, remoteruntime.ServerOptions{
 			LeaseTokenSigningKey: cfg.LeaseTokenSigningKey,
 		})
 		if err != nil {

@@ -46,7 +46,20 @@ func TestSubmissionAvailabilitySelectedIdentity(t *testing.T) {
 				invalid := time.Date(9999, 12, 31, 23, 59, 59, 999999001, time.UTC)
 				changed.Job.AvailableAt = &invalid
 				_, err = submit(f.ctx, changed)
-				require.ErrorContains(t, err, "submission availability")
+				// The approved JobDB successor classifies scheduler errors at
+				// prepare_job and transports a safe cause instead of backend text.
+				var infrastructure *jobdb.ExecutionInfrastructureError
+				require.ErrorAs(t, err, &infrastructure)
+				require.Equal(t, jobdb.ExecutionInfrastructureRuntimeIO, infrastructure.Reason)
+				require.Equal(t, "prepare_job", infrastructure.Operation)
+				require.Equal(t, &h.JobKey, infrastructure.JobKey)
+				if route == "selected-direct" {
+					require.ErrorContains(t, err, "submission availability")
+				} else {
+					var cause *jobdb.RemoteExecutionCause
+					require.ErrorAs(t, err, &cause)
+					require.Equal(t, "runtime_io", cause.Code)
+				}
 				require.Equal(t, descriptor, f.descriptor(h.JobKey))
 				var retained string
 				require.NoError(t, f.db.QueryRowContext(f.ctx, `SELECT receipt::text FROM pgjobdb.job_preparations WHERE job_id='selected'`).Scan(&retained))
@@ -158,7 +171,7 @@ func TestSubmissionAvailabilityRuntimeUTCReads(t *testing.T) {
 			_, err = f.db.ExecContext(f.ctx, `UPDATE pgjobdb.jobs_archive SET archived_at=$2,final_available_at=$2 WHERE job_id=$1`, h.JobKey.JobId, archiveTime)
 			require.NoError(t, err)
 			f.assertReads(h.JobKey, effectiveAvailability(at))
-			for _, rt := range []jobdb.WorkflowRuntime{f.backend, f.client} {
+			for _, rt := range []jobdb.JobRunReader{f.backend, f.client} {
 				run, err := jobdb.GetJobRun(f.ctx, rt, jobdb.GetJobRunRequest{JobKey: h.JobKey})
 				require.NoError(t, err)
 				require.NotNil(t, run.Job.ArchivedAt)

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+	"github.com/colony-2/jobdb/pkg/jobdb/runtimetest"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
@@ -66,18 +67,17 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 	// either store. Include both pending waits and archived outcomes on each page.
 	for i := 0; i < 240; i++ {
 		id := pgjobdb.JobID(fmt.Sprintf("consumer-%03d", i))
-		req := pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "test", JobType: "consumer", AppMetadata: metadata, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"secretDetail":true}`)}}
+		req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: string(id), JobType: "consumer", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(nil), ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"secretDetail":true}`)}}}
 		if i%3 != 0 {
-			req.Dependencies = nativeGoalWait("", producer.GoalID).Dependencies
+			req.Job.Dependencies = []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: producer.GoalID}, Condition: jobdb.JobPrereqSuccess}}
 		}
-		_, err := submitCellJob(ctx, db, req)
+		if i%20 == 0 {
+			req.Job.GoalID = secondary.GoalID
+		}
+		_, err := backend.SubmitJob(runtimetest.PrimaryGoalContext(ctx), req)
 		require.NoError(t, err)
 		if i%3 == 0 {
 			require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", id, "test", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp, Detail: "full completion detail"}))
-		}
-		if i%20 == 0 {
-			_, err = pgjobdb.AddGoalCandidate(ctx, db, jobdb.AddGoalCandidateRequest{GoalKey: nativeGoalKey(secondary), JobID: string(id)})
-			require.NoError(t, err)
 		}
 	}
 	d := &listQueryRecorder{DB: db}
@@ -104,7 +104,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 							require.Empty(t, row.OtherGoalIDs)
 							require.Empty(t, row.WaitFor)
 							require.Equal(t, json.RawMessage(`{"secretDetail":true}`), row.ClientPayload)
-							require.Empty(t, row.ExecutionState)
+							require.EqualValues(t, 1, row.ExecutionState.RunPolicy.Retry.MaximumAttempts)
 							require.EqualValues(t, 1, row.ClientPayloadRevision)
 							if row.ArchivedAt != nil {
 								archived++

@@ -30,9 +30,9 @@ func TestPostgresPrimaryGoalSelection(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			rt := factory(t)
-			var workflow jobdb.WorkflowRuntime = rt
+			var workflow jobdb.ConsumerRuntime = rt
 			if remote {
-				server := httptest.NewServer(selectionTestHandler(remoteruntime.NewServer(rt)))
+				server := httptest.NewServer(selectionTestHandler(remoteruntime.NewConsumerServer(rt)))
 				defer server.Close()
 				client, err := remoteruntime.New(server.URL, server.Client())
 				require.NoError(t, err)

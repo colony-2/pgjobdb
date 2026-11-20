@@ -21,10 +21,10 @@ coverage, which the pgjobdb test workflow does not request.
 
 | Workflow behavior | Hook task or held reason |
 | --- | --- |
-| test.yml native arm64 `go test -v -tags=integration ./...` | `service_free`: all packages outside installer and runtime/integration, including CLI configuration tests and compilation of packages with no test files. |
+| test.yml native arm64 `go test -v -tags=integration ./...` | `service_free`: all packages outside installer and runtime/integration, including CLI configuration/help/completion/rejection tests and compilation of packages with no test files. Database command tests run in `runtime`. |
 | Same native suite: installer | `installer`: complete pkg/pgjobdb/installer suite. |
 | Same native suite: runtime conformance | `conformance`: all names containing Conformance, enumerated from the compiled integration test binary, including workflow runtime, start-or-append, fixture isolation and cell conformance. |
-| Same native suite: other runtime tests | `runtime`: remaining tests in runtime/integration and all descendant packages, including engineconformance, usageparity and workflow. No package is discarded because it also contains conformance tests. |
+| Same native suite: other runtime tests | `runtime`: remaining tests in runtime/integration and all descendant packages, including engineconformance, usageparity and workflow, plus `TestPostgresConsumerGoals…` in cmd/jobdb. No package is discarded because it also contains conformance tests. |
 | test-summary | `report`: checks all four behavior statuses and required logs/JSON; exports verification.md and environment.json. |
 | test.yml amd64/macOS matrix | Held: alternate architecture/OS. |
 | test.yml container-smoke | Held: Docker daemon/buildx, amd64 release-shaped image, Postgres/MinIO service topology and container persistence smoke. |
@@ -33,9 +33,20 @@ coverage, which the pgjobdb test workflow does not request.
 
 The Go command is translated into `go list -tags=integration ./...`, per-package
 `go test -tags=integration -c -o <scratch>`, then native test binaries with
-`-test.v -test.count=1 -test.timeout=25m`. Splitting compilation from execution
+`-test.v=test2json -test.count=1 -test.timeout=25m`. Splitting compilation from execution
 keeps private module credentials out of non-root test processes. Test-name
-selection partitions only the integration package; nested packages run completely.
+selection partitions the integration and command packages; nested packages run completely.
+Enumeration requires the focused consumer and database command tests and all existing
+nested packages. Go test2json records every selected test outcome; a failed, absent
+or skipped required top-level test fails acceptance even after a zero process exit.
+Focused consumer/database-command subtests and required PostgreSQL task-delegation
+runner/harness subtests cannot pass through skips. The task-delegation group in
+internal/jobdbtest is required during enumeration, including default and signed
+consumer servers, nonempty namespaces, and the standard remote PostgreSQL factory.
+Every selected child outcome, including shared conformance and availability checks,
+must pass; any skipped native test fails its behavior and remains recorded.
+The service-free selection first executes the bounded hook unit tests from an
+isolated source copy as the same unprivileged UID, without acquisition credentials.
 Per-command execution is bounded to 30 minutes. Unprivileged Linux subreaper
 semantics adopt daemonized PostgreSQL descendants; timeout/cancellation cleanup
 stops process groups and adopted children, then reaps them.

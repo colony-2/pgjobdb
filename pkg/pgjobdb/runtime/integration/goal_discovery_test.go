@@ -8,26 +8,25 @@ import (
 	"time"
 
 	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+	"github.com/colony-2/jobdb/pkg/jobdb/runtimetest"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGoalDiscovery(t *testing.T) {
-	goalRuntimes(t, func(t *testing.T, r jobdb.WorkflowRuntime) {
+	goalRuntimes(t, func(t *testing.T, r jobdb.ConsumerRuntime) {
 		ctx := celltest.Context(context.Background())
 		a := goalSubmit(t, r, "a")
-		b, err := celltest.Submit(r, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "b", JobType: "special", Data: jobdb.NewTaskDataOrPanic(nil), Metadata: json.RawMessage(`{"repo":"repo-b"}`)}})
+		b, err := celltest.Submit(r, runtimetest.PrimaryGoalContext(ctx), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "b", GoalID: a.GoalID, JobType: "special", Data: jobdb.NewTaskDataOrPanic(nil), Metadata: json.RawMessage(`{"repo":"repo-b"}`)}})
 		require.NoError(t, err)
 		c := goalSubmit(t, r, "c")
-		_, err = r.AddGoalCandidate(ctx, jobdb.AddGoalCandidateRequest{GoalKey: goalKey(a), JobID: b.JobKey.JobId})
-		require.NoError(t, err)
 		original, err := r.GetGoal(ctx, goalKey(a))
 		require.NoError(t, err)
 		require.NoError(t, r.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: b.JobKey}))
 		page, err := r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "tenant", Candidate: &jobdb.GoalCandidateFilter{MetadataEquals: []jobdb.MetadataPredicate{{Path: []string{"repo"}, Values: []any{"repo-b"}}}}})
 		require.NoError(t, err)
-		require.Len(t, page.Goals, 2)
+		require.Len(t, page.Goals, 1)
 		for _, g := range page.Goals {
 			if g.GoalKey == goalKey(a) {
 				require.EqualValues(t, 2, g.CandidateCount)
@@ -42,7 +41,7 @@ func TestGoalDiscovery(t *testing.T) {
 		require.EqualValues(t, 1, deleted.DeletedCount)
 		hidden, err := r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "tenant", Candidate: &jobdb.GoalCandidateFilter{JobIDs: []string{b.JobKey.JobId}}})
 		require.NoError(t, err)
-		require.Len(t, hidden.Goals, 2)
+		require.Len(t, hidden.Goals, 1)
 		for _, g := range hidden.Goals {
 			if g.GoalKey == goalKey(a) {
 				require.EqualValues(t, 2, g.CandidateCount)
@@ -71,7 +70,7 @@ func TestGoalDiscovery(t *testing.T) {
 			require.ErrorIs(t, err, jobdb.ErrInvalidDependency)
 			req.PageToken = page.NextPageToken
 		}
-		expected := []string{a.GoalID, b.GoalID, c.GoalID}
+		expected := []string{a.GoalID, c.GoalID}
 		sort.Strings(expected)
 		require.Equal(t, expected, ids)
 		require.NoError(t, r.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: a.JobKey}))
@@ -95,7 +94,7 @@ func TestGoalDiscovery(t *testing.T) {
 }
 
 func TestDependencyDiscovery(t *testing.T) {
-	goalRuntimes(t, func(t *testing.T, r jobdb.WorkflowRuntime) {
+	goalRuntimes(t, func(t *testing.T, r jobdb.ConsumerRuntime) {
 		ctx := celltest.Context(context.Background())
 		a := goalSubmit(t, r, "a")
 		b := goalSubmit(t, r, "b")
@@ -157,7 +156,7 @@ func TestDependencyDiscovery(t *testing.T) {
 }
 
 func TestDependencyDiscoverySkipsExpiredPages(t *testing.T) {
-	goalRuntimes(t, func(t *testing.T, r jobdb.WorkflowRuntime) {
+	goalRuntimes(t, func(t *testing.T, r jobdb.ConsumerRuntime) {
 		ctx := celltest.Context(context.Background())
 		a := goalSubmit(t, r, "a")
 		d := jobdb.Dependency{Target: jobdb.DependencyTarget{GoalID: a.GoalID}, Condition: jobdb.JobPrereqSuccess}

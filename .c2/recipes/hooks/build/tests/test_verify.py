@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -15,6 +16,10 @@ RUNNER = HERE.parent / 'verify.py'
 spec = importlib.util.spec_from_file_location('verify', RUNNER)
 verify = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verify)
+
+PACKAGES = [verify.COMMAND, verify.INTEGRATION, verify.PREFIX+'pkg/pgjobdb/installer',
+            verify.INTEGRATION+'/internal/jobdbtest', verify.INTEGRATION+'/internal/jobdbtest/engineconformance',
+            verify.INTEGRATION+'/internal/jobdbtest/usageparity', verify.INTEGRATION+'/workflow']
 
 class EvidenceTests(unittest.TestCase):
     def setUp(self):
@@ -50,13 +55,18 @@ class EvidenceTests(unittest.TestCase):
         source = self.root / 'source'; source.mkdir()
         (source / 'go.mod').write_text('module example.test/fixture')
         (source / 'go.sum').write_text('')
+        for directory in ('.c2', 'cmd', 'pkg'): (source/directory).mkdir()
         observed = []
         def command(argv, log, **kwargs):
-            if argv[0] == 'go' and argv[1] == 'list':
-                kwargs['stdout'].write(verify.PREFIX + 'cmd/jobdb\n')
-            elif argv[0] == 'go':
+            if argv[:2] == ['go', 'list']:
+                kwargs['stdout'].write('\n'.join(PACKAGES)+'\n')
+            elif argv[:2] == ['go', 'test']:
                 Path(argv[argv.index('-o') + 1]).touch()
-            else:
+            elif argv[:3] == ['go', 'tool', 'test2json']:
+                kwargs['stdout'].write(json.dumps({'Test':'TestLocal', 'Action':'pass'})+'\n')
+            elif '-test.list=.' in argv:
+                kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\n')
+            elif argv[0] != 'python3':
                 observed.append(kwargs['env'])
             return 0
         with patch.dict(os.environ, ROOT=str(source), LANG='C', LC_ALL='C'), patch.object(verify, 'execute', side_effect=command):
@@ -78,20 +88,25 @@ class EvidenceTests(unittest.TestCase):
         source = self.root / 'source'; source.mkdir()
         (source / 'go.mod').write_text('module example.test/fixture')
         (source / 'go.sum').write_text('')
+        for directory in ('.c2', 'cmd', 'pkg'): (source/directory).mkdir()
         def command(argv, log, **kwargs):
             if argv[0] == 'go':
                 self.assertEqual(kwargs['env']['GOWORK'], 'off')
                 self.assertEqual(kwargs['env']['GOFLAGS'], '')
-                if argv[1] == 'list': kwargs['stdout'].write(verify.PREFIX + 'cmd/jobdb\n')
-                else: Path(argv[argv.index('-o') + 1]).touch()
-            else:
-                log.write('--- SKIP: TestRequired (0.00s)\n')
+                if argv[1] == 'list': kwargs['stdout'].write('\n'.join(PACKAGES)+'\n')
+                elif argv[1] == 'test': Path(argv[argv.index('-o') + 1]).touch()
+                elif argv[1:3] == ['tool', 'test2json']:
+                    kwargs['stdout'].write(json.dumps({'Test':'TestRequired', 'Action':'skip'})+'\n')
+            elif '-test.list=.' in argv:
+                kwargs['stdout'].write('TestRequired\nTestPostgresConsumerGoalsCommands\n')
+            elif argv[0] != 'python3':
+                kwargs['stdout'].write('--- SKIP: TestRequired (0.00s)\n')
             return 0
         with patch.dict(os.environ, ROOT=str(source), GOWORK='/foreign/go.work', GOFLAGS='-overlay=/foreign/overlay.json'), patch.object(verify, 'execute', side_effect=command):
             verify.run('service_free')
         result = json.loads((self.root / 'service_free.json').read_text())
         self.assertEqual(result['status'], 'failed')
-        self.assertEqual(result['tests']['skipped_names'], ['TestRequired'])
+        self.assertEqual(result['outcomes']['skipped_names'], ['TestRequired'])
 
     def test_scratch_cleanup_failure_prevents_pass(self):
         root = self.root / 'source'; root.mkdir()
@@ -102,7 +117,7 @@ class EvidenceTests(unittest.TestCase):
             def __enter__(self): return str(scratch)
             def __exit__(self, *args): raise OSError('forced scratch cleanup failure')
         def command(argv, log, **kwargs):
-            if argv[1] == 'list': kwargs['stdout'].write(verify.PREFIX + 'cmd/jobdb\n')
+            if argv[1] == 'list': kwargs['stdout'].write('\n'.join(PACKAGES)+'\n')
             return 0
         with patch.dict(os.environ, ROOT=str(root)), patch.object(verify.tempfile, 'TemporaryDirectory', return_value=BrokenCleanup()), patch.object(verify, 'execute', side_effect=command):
             verify.run('service_free')
@@ -158,6 +173,115 @@ class EvidenceTests(unittest.TestCase):
             with patch.object(verify.subprocess, 'Popen', return_value=p), patch.object(p, 'wait', side_effect=[subprocess.TimeoutExpired('fixture', 1800), 0]):
                 with self.assertRaisesRegex(RuntimeError, 'timed out'): verify.execute(['fixture'], log)
             p.wait()
+
+
+
+class SelectionTests(unittest.TestCase):
+    def test_complete_disjoint_partitions_and_nested_packages(self):
+        names = ['TestLocal', 'TestConsumerGoalsRejectBeforeHTTP', 'TestPostgresConsumerGoalsCommands']
+        free = verify.select_tests(verify.COMMAND, names, 'service_free')
+        runtime = verify.select_tests(verify.COMMAND, names, 'runtime')
+        self.assertEqual(set(free) | set(runtime), set(names))
+        self.assertFalse(set(free) & set(runtime))
+        names = ['TestPostgresRuntimeConformance', 'TestWorkflowRuntimeConformance',
+                 'TestStartOrAppendConformance', 'TestOther'] + sorted(verify.REQUIRED_CONSUMER)
+        conf = verify.select_tests(verify.INTEGRATION, names, 'conformance')
+        runtime = verify.select_tests(verify.INTEGRATION, names, 'runtime')
+        self.assertEqual(set(conf) | set(runtime), set(names))
+        self.assertFalse(set(conf) & set(runtime))
+        selected = verify.select_packages(PACKAGES + [verify.INTEGRATION+'/future/nested'], 'runtime')
+        self.assertEqual(set(selected), set(PACKAGES)-{verify.PREFIX+'pkg/pgjobdb/installer'} | {verify.INTEGRATION+'/future/nested'})
+        self.assertIn(verify.COMMAND, verify.select_packages(PACKAGES, 'service_free'))
+
+    def test_missing_focused_tests_or_packages_fail(self):
+        with self.assertRaisesRegex(ValueError, 'command tests'):
+            verify.select_tests(verify.COMMAND, ['TestLocal'], 'runtime')
+        with self.assertRaisesRegex(ValueError, 'consumer tests'):
+            verify.select_tests(verify.INTEGRATION, ['TestConformance'], 'runtime')
+        with self.assertRaisesRegex(ValueError, 'task delegation tests'):
+            verify.select_tests(verify.TASK_DELEGATION_PACKAGE, ['TestLocal'], 'runtime')
+        with self.assertRaisesRegex(ValueError, 'missing required packages'):
+            verify.select_packages(PACKAGES[:-1], 'runtime')
+        with self.assertRaises(ValueError): verify.select_tests('fixture', [], 'runtime')
+
+    def test_required_database_skips_fail_even_after_zero_exit(self):
+        for name in ('TestPostgresConsumerGoalsCommands', 'TestConsumerHTTPRetiresAttachment', 'TestInstaller', 'TestPostgresTaskDelegation'):
+            for action in ('skip', 'fail'):
+                with self.assertRaisesRegex(ValueError, 'did not pass'):
+                    verify.validate_outcomes([{'Test':name, 'Action':action}], [name])
+        with self.assertRaisesRegex(ValueError, 'did not pass'):
+            verify.validate_outcomes([{'Test':'TestConsumerHTTPRetiresAttachment','Action':'pass'},
+                                      {'Test':'TestConsumerHTTPRetiresAttachment/database','Action':'skip'}],
+                                     ['TestConsumerHTTPRetiresAttachment'])
+        with self.assertRaisesRegex(ValueError, 'missing required test outcomes'):
+            verify.validate_outcomes([], ['TestDatabase'])
+        with self.assertRaisesRegex(ValueError, 'did not pass'):
+            verify.validate_outcomes([{'Test':'TestPostgresTaskDelegation','Action':'pass'},
+                                      {'Test':'TestPostgresTaskDelegation/signed/harness-engine','Action':'skip'}],
+                                     ['TestPostgresTaskDelegation'])
+        for name in ('TestConformance/optional', 'TestSubmissionAvailability/nested'):
+            with self.assertRaisesRegex(ValueError, 'did not pass'):
+                verify.validate_outcomes([{'Test':name.split('/')[0], 'Action':'pass'},
+                                          {'Test':name, 'Action':'skip'}],
+                                         [name.split('/')[0]])
+
+    def test_focused_failure_affects_behavior(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'go.mod').write_text('module fixture')
+            (root/'go.sum').write_text('')
+            for directory in ('.c2', 'cmd', 'pkg'): (root/directory).mkdir()
+            def command(argv, log, **kwargs):
+                if argv[0] == 'python3': return 1
+                if argv[:2] == ['go','list']: kwargs['stdout'].write('\n'.join(PACKAGES)+'\n')
+                elif argv[:2] == ['go','test']: Path(argv[argv.index('-o')+1]).touch()
+                elif '-test.list=.' in argv: kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\n')
+                elif argv[:3] == ['go','tool','test2json']: kwargs['stdout'].write(json.dumps({'Test':'TestLocal','Action':'pass'})+'\n')
+                return 0
+            with patch.dict(os.environ, ROOT=tmp, OUTBOX=tmp), patch.object(verify,'execute',side_effect=command):
+                verify.run('service_free')
+            self.assertEqual(json.loads((root/'service_free.json').read_text())['status'], 'failed')
+
+    def test_prerequisite_failure_records_failed_acceptance(self):
+        for phase in ('enumerate', 'compile', 'launch', 'database'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp); (root/'go.mod').write_text('module fixture'); (root/'go.sum').write_text('')
+                for directory in ('.c2', 'cmd', 'pkg'): (root/directory).mkdir()
+                def command(argv, log, **kwargs):
+                    if argv[0]=='python3': return 0
+                    if argv[:2]==['go','list']:
+                        if phase=='enumerate': return 1
+                        kwargs['stdout'].write('\n'.join(PACKAGES)+'\n')
+                    elif argv[:2]==['go','test']:
+                        if phase=='compile': return 1
+                        Path(argv[argv.index('-o')+1]).touch()
+                    elif '-test.list=.' in argv: kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\n')
+                    elif argv[:3]==['go','tool','test2json']: kwargs['stdout'].write(json.dumps({'Test':'TestLocal','Action':'fail'})+'\n')
+                    elif phase=='launch': raise OSError('forced launch failure')
+                    else: log.write('database startup failed\n'); return 1
+                    return 0
+                with patch.dict(os.environ,ROOT=tmp,OUTBOX=tmp), patch.object(verify,'execute',side_effect=command): verify.run('service_free')
+                self.assertEqual(json.loads((root/'service_free.json').read_text())['status'],'failed')
+
+    def test_retained_source_inventory(self):
+        root=HERE.parents[4]
+        exceptions={
+            'pkg/pgjobdb/goals.go',
+            'pkg/pgjobdb/runtime/internal/runtimeadapter/goals.go',
+            'pkg/pgjobdb/runtime/integration/native_goal_attachment_compatibility_test.go',
+            'pkg/pgjobdb/runtime/integration/native_mutation_probe_test.go',
+            'pkg/pgjobdb/runtime/integration/goals_storage_test.go',
+            'pkg/pgjobdb/runtime/integration/compact_lists_storage_test.go',
+            'pkg/pgjobdb/installer/lease_events_test.go',
+        }
+        for directory in ('cmd','pkg'):
+            for path in (root/directory).rglob('*.go'):
+                relative=path.relative_to(root).as_posix(); source=path.read_text()
+                self.assertIsNone(re.search(r'\b(?:remote|remoteruntime)\.NewServer(?:WithOptions)?\(',source),relative)
+                if relative not in exceptions:
+                    self.assertNotIn('AddGoalCandidate',source,relative)
+                if relative!='pkg/pgjobdb/runtime/runtime.go' and relative not in exceptions and not path.name.endswith('_test.go'):
+                    self.assertIsNone(re.search(r'jobdb\.(?:WorkflowRuntime|GoalRuntime)\b',source),relative)
 
 
 def generate_loader_fixtures(dest):

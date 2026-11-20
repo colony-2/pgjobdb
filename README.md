@@ -52,7 +52,15 @@ rename restrictions. The `create-root` command has been removed.
 
 ## JobDB consumer API
 
-The current dependency is JobDB `v0.0.91` (`9de45717f1f4c218b8e2d4fc0de171af4e5b43dd`).
+The current dependency is JobDB `v0.0.97-0.20261119203731-0d2b7cc7c8f1`.
+The PostgreSQL HTTP server uses the consumer API: candidate PUT is unregistered,
+and this executable no longer registers `goals add-candidate`. Choose primary goal
+membership at submission with an explicit destination job ID, or use a shared-goal
+restart. Goal reads/lists, candidates, waits and explicit failure remain available.
+Embedders should accept `ConsumerRuntime`, `ConsumerGoalRuntime` or `JobRunReader`
+as appropriate and explicitly preserve any supported optional ports in decorators.
+The concrete native runtime and SQL attachment functions remain compatible.
+Installation stays at format 12; no database conversion or cutover is included.
 Engine submission returns a `workflow.JobHandle`; use its `JobKey`
 for job operations and `GoalID` for goal dependencies. Engine restart submission
 takes `SubmitRestartJobRequest{Job: ...}` and also returns a handle. Restarts

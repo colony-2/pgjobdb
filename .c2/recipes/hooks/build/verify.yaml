@@ -89,7 +89,7 @@ sequence:
 outputs:
   api_version: c2.build-hook/v1
   status: ${{ sequence.report.outputs.stdout }}
-  summary: Native service-free, installer, PostgreSQL conformance and runtime checks completed; inspect verification.md and behavior logs.
+  summary: Native service-free, installer, PostgreSQL consumer conformance and runtime/command checks completed; inspect verification.md and per-test outcomes in behavior logs and JSON.
   artifact_refs:
     service_free.json: ${{ sequence.service_free.artifacts['service_free.json'] }}
     service_free.log: ${{ sequence.service_free.artifacts['service_free.log'] }}

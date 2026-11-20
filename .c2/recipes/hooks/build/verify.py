@@ -15,6 +15,67 @@ import time
 
 BEHAVIORS = ('service_free', 'installer', 'conformance', 'runtime')
 PREFIX = 'github.com/colony-2/pgjobdb/'
+INTEGRATION = PREFIX + 'pkg/pgjobdb/runtime/integration'
+COMMAND = PREFIX + 'cmd/jobdb'
+REQUIRED_CONSUMER = {'TestConsumerConstructorCapabilities', 'TestConsumerHTTPRetiresAttachment',
+                     'TestConsumerCapabilities', 'TestConsumerReadOnlyHistory',
+                     'TestConsumerSignedLeaseAuthority', 'TestConsumerNamespacedAuthority'}
+REQUIRED_COMMAND = {'TestPostgresConsumerGoalsCommands'}
+TASK_DELEGATION_PACKAGE = INTEGRATION + '/internal/jobdbtest'
+REQUIRED_TASK_DELEGATION = {'TestPostgresTaskDelegation'}
+
+
+def select_packages(listing, behavior):
+    if len(listing) != len(set(listing)):
+        raise ValueError('duplicate package enumeration')
+    required = {COMMAND, INTEGRATION, PREFIX + 'pkg/pgjobdb/installer',
+                INTEGRATION + '/internal/jobdbtest',
+                INTEGRATION + '/internal/jobdbtest/engineconformance',
+                INTEGRATION + '/internal/jobdbtest/usageparity', INTEGRATION + '/workflow'}
+    if not required.issubset(listing):
+        raise ValueError('missing required packages: ' + ', '.join(sorted(required - set(listing))))
+    def selected(pkg):
+        name = pkg.removeprefix(PREFIX)
+        if behavior == 'installer': return name == 'pkg/pgjobdb/installer'
+        if behavior == 'conformance': return pkg == INTEGRATION
+        if behavior == 'runtime': return pkg == COMMAND or pkg.startswith(INTEGRATION)
+        return not (name == 'pkg/pgjobdb/installer' or pkg.startswith(INTEGRATION))
+    packages = [p for p in listing if selected(p)]
+    if not packages: raise ValueError('empty behavior selection')
+    return packages
+
+
+def select_tests(package, names, behavior):
+    tests = [n for n in names if n.startswith('Test')]
+    if not tests or len(tests) != len(set(tests)):
+        raise ValueError('empty or duplicate test enumeration: ' + package)
+    if package == TASK_DELEGATION_PACKAGE and not REQUIRED_TASK_DELEGATION.issubset(tests):
+        raise ValueError('missing PostgreSQL task delegation tests')
+    if package == COMMAND:
+        if not REQUIRED_COMMAND.issubset(tests): raise ValueError('missing PostgreSQL command tests')
+        database = [n for n in tests if n.startswith('TestPostgresConsumerGoals')]
+        return database if behavior == 'runtime' else [n for n in tests if n not in database]
+    if package == INTEGRATION:
+        if not REQUIRED_CONSUMER.issubset(tests): raise ValueError('missing focused consumer tests')
+        conformance = [n for n in tests if 'Conformance' in n]
+        if not conformance: raise ValueError('empty conformance test selection')
+        return conformance if behavior == 'conformance' else [n for n in tests if n not in conformance]
+    return tests
+
+
+def validate_outcomes(events, chosen):
+    outcomes = {e['Test']: e['Action'] for e in events
+                if 'Test' in e and e.get('Action') in ('pass', 'fail', 'skip')}
+    missing = set(chosen) - set(outcomes)
+    if missing: raise ValueError('missing required test outcomes: ' + ', '.join(sorted(missing)))
+    for test in chosen:
+        if outcomes[test] != 'pass': raise ValueError('required test did not pass: ' + test + ': ' + outcomes[test])
+    for name, action in outcomes.items():
+        # Preserve upstream's stricter native acceptance: every selected child
+        # must execute, including inherited conformance and availability cases.
+        if action in ('fail', 'skip'):
+            raise ValueError('required test did not pass: ' + name + ': ' + action)
+    return outcomes
 
 def enable_subreaper():
     # PostgreSQL daemonizes into a new session. Adopt detached descendants so
@@ -115,14 +176,7 @@ def run(behavior):
                     if execute(listcmd, log, cwd=root, env=buildenv, stdout=listing_file):
                         raise RuntimeError('Go package enumeration prerequisite failed')
                 listing = (scratch / 'packages.txt').read_text().splitlines()
-                def selected(pkg):
-                    name = pkg.removeprefix(PREFIX)
-                    if behavior == 'installer': return name == 'pkg/pgjobdb/installer'
-                    if behavior == 'conformance': return name == 'pkg/pgjobdb/runtime/integration'
-                    if behavior == 'runtime': return name.startswith('pkg/pgjobdb/runtime/integration')
-                    return not (name == 'pkg/pgjobdb/installer' or name.startswith('pkg/pgjobdb/runtime/integration'))
-                packages = [p for p in listing if selected(p)]
-                if not packages: raise RuntimeError('empty behavior selection')
+                packages = select_packages(listing, behavior)
                 result['packages'] = packages
                 # Allow only runtime prerequisites, never live C2J/Pulse/JobDB identities or credentials.
                 uid = 65534 if os.geteuid() == 0 else os.geteuid()
@@ -132,11 +186,31 @@ def run(behavior):
                 # initdb derives database encoding from locale. A worker's C/POSIX
                 # locale would create SQL_ASCII databases and break Unicode JSON.
                 testenv.update(HOME=str(testhome), TMPDIR=str(testhome), XDG_CACHE_HOME=str(testhome / 'cache'),
-                               LANG='C.UTF-8', LC_ALL='C.UTF-8')
+                               LANG='C.UTF-8', LC_ALL='C.UTF-8', GOTOOLCHAIN='local', GOWORK='off', GOFLAGS='')
+                # Package bindings may be worker launchers that cannot run as
+                # the database UID. Use the resolved, already installed Go tool.
+                goroot = subprocess.check_output(['go', 'env', 'GOROOT'], cwd=root, env=buildenv,
+                                                text=True, timeout=30).strip()
+                testenv['PATH'] = str(Path(goroot) / 'bin') + os.pathsep + testenv.get('PATH', '')
                 result['test_uid'] = uid
                 result['test_locale'] = 'C.UTF-8'
                 drop = {'user': uid, 'group': gid, 'extra_groups': []} if os.geteuid() == 0 else {}
                 failed = False
+                if behavior == 'service_free':
+                    # The managed checkout's ancestors may be private to root.
+                    # Copy source, never credentials, for unprivileged hook tests.
+                    hookroot = scratch / 'hook-source'
+                    hookroot.mkdir()
+                    for directory in ('.c2', 'cmd', 'pkg'):
+                        shutil.copytree(root / directory, hookroot / directory,
+                                        ignore=shutil.ignore_patterns('__pycache__'))
+                    for name in ('go.mod', 'go.sum'):
+                        shutil.copyfile(root / name, hookroot / name)
+                    hooktests = ['python3', str(hookroot / '.c2/recipes/hooks/build/tests/test_verify.py')]
+                    result['commands'].append(hooktests)
+                    if execute(hooktests, log, cwd=testhome, env=testenv, **drop):
+                        failed = True
+                result['tests'] = {}
                 for i, package in enumerate(packages):
                     binary = scratch / ('test-' + str(i))
                     cmd = ['go', 'test', *goflags, '-c', '-o', str(binary), package]
@@ -146,25 +220,39 @@ def run(behavior):
                         failed = True; continue
                     if not binary.exists():
                         log.write('No test files: ' + package + '\n'); continue
-                    expr = '.'
-                    if package == PREFIX + 'pkg/pgjobdb/runtime/integration':
-                        # Go RE2 has no negative lookahead; enumerate names for the disjoint runtime selection.
-                        listcmd = [str(binary), '-test.list=.']
-                        result['commands'].append(listcmd)
-                        with (scratch / 'test-names.txt').open('w') as names_file:
-                            if execute(listcmd, log, env=testenv, cwd=testhome, stdout=names_file, **drop):
-                                raise RuntimeError('test enumeration prerequisite failed')
-                        names = (scratch / 'test-names.txt').read_text().splitlines()
-                        conf = [n for n in names if 'Conformance' in n]
-                        chosen = conf if behavior == 'conformance' else [n for n in names if n.startswith('Test') and n not in conf]
-                        if not chosen: raise RuntimeError('empty runtime test selection')
-                        expr = '^(' + '|'.join(chosen) + ')$'
-                    cmd = [str(binary), '-test.v', '-test.count=1', '-test.timeout=25m', '-test.run=' + expr]
+                    listcmd = [str(binary), '-test.list=.']
+                    result['commands'].append(listcmd)
+                    with (scratch / 'test-names.txt').open('w') as names_file:
+                        if execute(listcmd, log, env=testenv, cwd=testhome, stdout=names_file, **drop):
+                            raise RuntimeError('test enumeration prerequisite failed')
+                    names = (scratch / 'test-names.txt').read_text().splitlines()
+                    chosen = select_tests(package, names, behavior)
+                    if not chosen: raise RuntimeError('empty test selection: ' + package)
+                    expr = '^(' + '|'.join(chosen) + ')$'
+                    cmd = [str(binary), '-test.v=test2json', '-test.count=1', '-test.timeout=25m', '-test.run=' + expr]
                     result['commands'].append(cmd)
-                    if execute(cmd, log, cwd=testhome, env=testenv, **drop): failed = True
+                    with (scratch / 'test-output.txt').open('w') as output:
+                        code = execute(cmd, log, cwd=testhome, env=testenv, stdout=output, **drop)
+                    raw = (scratch / 'test-output.txt').read_text()
+                    log.write(raw); log.flush()
+                    # Use Go's parser, including nested/skipped outcomes, rather
+                    # than inferring acceptance from the binary's exit code.
+                    jsoncmd = ['go', 'tool', 'test2json', '-p', package]
+                    result['commands'].append(jsoncmd)
+                    with (scratch / 'test-output.txt').open() as source, (scratch / 'events.json').open('w') as eventsfile:
+                        if execute(jsoncmd, log, cwd=root, env=buildenv, stdin=source, stdout=eventsfile):
+                            raise RuntimeError('test2json prerequisite failed')
+                    events = [json.loads(line) for line in (scratch / 'events.json').read_text().splitlines()]
+                    try:
+                        result['tests'][package] = validate_outcomes(events, chosen)
+                    except ValueError as exc:
+                        log.write(str(exc) + '\n')
+                        result['tests'][package] = {'acceptance_error': str(exc)}
+                        failed = True
+                    if code: failed = True
                 log.flush()
-                outcomes = test_outcomes((out / (behavior + '.log')).read_text())
-                result['tests'] = outcomes
+                outcomes = test_outcomes((out / (behavior + '.log')).read_text().replace('\x16', ''))
+                result['outcomes'] = outcomes
                 result['status'] = 'failed' if failed or outcomes['failed'] or outcomes['skipped'] else 'passed'
         except Exception as exc:
             result['status'] = 'failed'

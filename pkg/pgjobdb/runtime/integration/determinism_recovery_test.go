@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A live history mismatch must persist a failure and release the lease, rather
-// than leave the job ACTIVE until a worker or caller times out.
-func TestPostgresLiveDeterminismFailureCompletes(t *testing.T) {
+// The pinned JobDB contract classifies live mismatches as infrastructure errors:
+// preserve durable history and allow recovery with the original declaration.
+func TestPostgresLiveDeterminismMismatchPreservesJob(t *testing.T) {
 	for _, transport := range []string{"embedded", "http"} {
 		t.Run(transport, func(t *testing.T) {
 			ctx := celltest.Context(context.Background())
@@ -50,27 +50,39 @@ func TestPostgresLiveDeterminismFailureCompletes(t *testing.T) {
 			before, err := rt.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: key})
 			require.NoError(t, err)
 
-			out := runScoped(t, rt, key, worker(2), task)
-			require.Equal(t, wf.JobRunFailed, out.Status)
-			require.ErrorContains(t, out.JobError, "workflow was not deterministic")
-			require.Equal(t, 1, taskRuns, "the mismatching task must not run again")
-			info, err := rt.GetJob(ctx, key)
-			require.NoError(t, err)
-			require.Equal(t, jobdb.JobStatusCompleted, info.Status)
-			require.Equal(t, handle.GoalID, info.GoalID)
-			_, err = info.Data.GetData()
-			require.ErrorContains(t, err, "workflow was not deterministic")
-			after, err := rt.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: key})
-			require.NoError(t, err)
-			require.Greater(t, len(after), len(before))
-			require.Equal(t, before, after[:len(before)], "failure must preserve existing history")
-			require.IsType(t, jobdb.JobAttemptOutcomeChapter{}, after[len(after)-1].Body)
-			lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: key, WorkerID: "after-failure", Routes: []jobdb.Route{{JobType: worker(2).Name()}}, LeaseDuration: time.Minute})
-			require.NoError(t, err)
-			require.Nil(t, lease, "terminal job must not be claimable")
+			assertMismatch := func(key jobdb.JobKey, goalID string, before []jobdb.Chapter) {
+				t.Helper()
+				lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: key, WorkerID: "scopes", Routes: []jobdb.Route{{JobType: worker(2).Name()}}, LeaseDuration: time.Minute})
+				require.NoError(t, err)
+				require.NotNil(t, lease)
+				runnable, err := wf.GetJobForRunWithLease(ctx, rt, lease, wf.GetJobForRunRequest{
+					JobKey: key, JobWorker: worker(2), TaskWorkers: []wf.TaskWorker{task},
+					WorkerID: "scopes", LeaseDuration: time.Minute,
+					ConsumerVersions: map[string]string{"pgjobdb-test": "1"},
+				})
+				require.NoError(t, err)
+				_, err = runnable.Run(nil)
+				require.True(t, jobdb.IsExecutionInfrastructureError(err), "expected typed infrastructure failure: %v", err)
+				require.ErrorContains(t, err, "logical descriptor changed")
+				require.Equal(t, 1, taskRuns, "the mismatching task must not run again")
+				info, err := rt.GetJob(ctx, key)
+				require.NoError(t, err)
+				require.NotEqual(t, jobdb.JobStatusCompleted, info.Status)
+				require.Equal(t, goalID, info.GoalID)
+				after, err := rt.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: key})
+				require.NoError(t, err)
+				require.Equal(t, before, after, "infrastructure failure must not append an application outcome")
+				// Explicitly release this test's still-valid lease before retrying.
+				// Production admission remains subject to the ordinary lease fence.
+				require.NotNil(t, lease)
+				require.NoError(t, lease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{NextRoute: jobdb.Route{JobType: worker(1).Name()}}))
+			}
+			assertMismatch(key, handle.GoalID, before)
+			require.Equal(t, wf.JobRunCompleted, runScoped(t, rt, key, worker(1), task).Status)
+			require.Equal(t, 1, taskRuns, "valid recovery must replay the retained prefix")
 
-			// A restart at the last task may change that task's declaration, but
-			// changing the retained prefix must still terminate as a failure.
+			// A restart may change its target task, but a changed retained prefix
+			// remains an infrastructure mismatch with no persisted failure.
 			history, err := jobdb.GetJobRun(ctx, rt, jobdb.GetJobRunRequest{JobKey: key})
 			require.NoError(t, err)
 			var taskIDs []string
@@ -84,14 +96,10 @@ func TestPostgresLiveDeterminismFailureCompletes(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, restart.GoalID)
 			require.NotEqual(t, handle.GoalID, restart.GoalID)
-			out = runScoped(t, rt, restart.JobKey, worker(2), task)
-			require.Equal(t, wf.JobRunFailed, out.Status)
-			require.ErrorContains(t, out.JobError, "workflow was not deterministic")
-			info, err = rt.GetJob(ctx, restart.JobKey)
+			before, err = rt.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: restart.JobKey})
 			require.NoError(t, err)
-			require.Equal(t, jobdb.JobStatusCompleted, info.Status)
-			_, err = info.Data.GetData()
-			require.ErrorContains(t, err, "workflow was not deterministic")
+			assertMismatch(restart.JobKey, restart.GoalID, before)
+			require.Equal(t, wf.JobRunSuspended, runScoped(t, rt, restart.JobKey, worker(1), task).Status)
 			require.Equal(t, 1, taskRuns)
 		})
 	}

@@ -217,17 +217,17 @@ func (t deletionTask) Name() string { return t.name }
 func (t deletionTask) Run(c wf.TaskContext, in jobdb.TaskData) (jobdb.TaskData, error) {
 	return t.run(c, in)
 }
-func runDeletionJob(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, w wf.ExecutionWorker, tasks ...wf.TaskWorker) (wf.JobRunOutcome, error) {
+func runDeletionJob(t *testing.T, rt jobdb.ConsumerRuntime, key jobdb.JobKey, w wf.ExecutionWorker, tasks ...wf.TaskWorker) (wf.JobRunOutcome, error) {
 	t.Helper()
 	return runScoped(t, rt, key, w, tasks...), nil
 }
-func replayDeletionJob(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, w wf.ExecutionWorker, tasks ...wf.TaskWorker) (jobdb.JobData, error) {
+func replayDeletionJob(t *testing.T, rt jobdb.ConsumerRuntime, key jobdb.JobKey, w wf.ExecutionWorker, tasks ...wf.TaskWorker) (jobdb.JobData, error) {
 	t.Helper()
 	engine, err := wf.NewEngineBuilder().WithRuntime(rt).WithWorkerTenantId(key.TenantId).PlusWorkers(w, tasks...).BuildEngine()
 	require.NoError(t, err)
 	return engine.ReplayJobRun(celltest.Context(context.Background()), wf.ReplayRunRequest{JobKey: key})
 }
-func deletionRestartTarget(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, site string) string {
+func deletionRestartTarget(t *testing.T, rt jobdb.JobRunReader, key jobdb.JobKey, site string) string {
 	t.Helper()
 	history, err := jobdb.GetJobRun(celltest.Context(context.Background()), rt, jobdb.GetJobRunRequest{JobKey: key})
 	require.NoError(t, err)

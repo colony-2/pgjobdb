@@ -27,7 +27,7 @@ func TestRemoteLeaseCellResolutionScope(t *testing.T) {
 		cells[name] = c
 	}
 	var mode atomic.Int32
-	handler := remote.NewServer(backend)
+	handler := remote.NewConsumerServer(backend)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a, _ := jobdb.CellAuthorityFromContext(admin)
 		m := mode.Load()

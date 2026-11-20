@@ -65,7 +65,7 @@ func startManualStorageJob(
 	t *testing.T,
 	ctx context.Context,
 	submit func(context.Context, jobdb.SubmitJob) (jobdb.JobKey, error),
-	runtime jobdb.WorkflowRuntime,
+	runtime jobdb.ConsumerRuntime,
 	tenantID string,
 	jobID string,
 ) (jobdb.JobKey, jobdb.ExecutionLease) {

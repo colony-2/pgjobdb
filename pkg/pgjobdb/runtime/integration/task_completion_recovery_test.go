@@ -75,7 +75,7 @@ func (c *completionFaultChapters) Append(ctx context.Context, key runtimecore.Ch
 	return c.ChapterLog.Append(ctx, key, ch)
 }
 
-func runRecoveryJob(t *testing.T, ctx context.Context, r jobdb.WorkflowRuntime, key jobdb.JobKey) workflow.JobRunOutcome {
+func runRecoveryJob(t *testing.T, ctx context.Context, r jobdb.ConsumerRuntime, key jobdb.JobKey) workflow.JobRunOutcome {
 	t.Helper()
 	runnable, err := workflow.GetJobForRun(ctx, r, workflow.GetJobForRunRequest{JobKey: key, JobWorker: recoveryJob{}, WorkerID: "primary"})
 	if err != nil {
@@ -276,7 +276,7 @@ func TestTaskCompletionHTTPRejectsRemovedPayload(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		server := remoteruntime.NewServer(runtime)
+		server := remoteruntime.NewConsumerServer(runtime)
 		for _, update := range []string{`null`, `{}`, `{"mode":"reset","expectedRevision":"0","value":{}}`} {
 			req := httptest.NewRequest(http.MethodPost, "/v1/tenants/tenant/jobs/job/chapters/1/commit-if-waiting", strings.NewReader(`{"route":{"jobType":"job","taskType":"external"},"data":{"data":2,"artifacts":[]},"clientPayloadUpdate":`+update+`}`))
 			req.Header.Set("Content-Type", "application/json")

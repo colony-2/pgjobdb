@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+	"github.com/colony-2/jobdb/pkg/jobdb/runtimetest"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	wf "github.com/colony-2/jobdb/pkg/workflow"
@@ -61,8 +62,8 @@ func TestExecutionGoalWaitRecoveryAndReplay(t *testing.T) {
 				}
 				require.Equal(t, wf.JobRunSuspended, run().Status)
 				require.NoError(t, rt.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: first}))
-				replacement := submitScoped(t, rt, producer.Name())
-				_, err = rt.AddGoalCandidate(ctx, jobdb.AddGoalCandidateRequest{GoalKey: jobdb.GoalKey{TenantId: "tenant", GoalID: info.GoalID}, JobID: replacement.JobId})
+				replacementHandle, err := rt.SubmitJob(runtimetest.PrimaryGoalContext(ctx), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", CellRepo: "example.test/test", JobID: "recovery-producer", JobType: producer.Name(), GoalID: info.GoalID, Data: jobdb.NewTaskDataOrPanic(nil)}})
+				replacement := replacementHandle.JobKey
 				require.NoError(t, err)
 				out, err := runGoalWorkflow(t, rt, replacement, producer)
 				require.NoError(t, err)
@@ -171,7 +172,7 @@ func TestExecutionRestartGoalAdmission(t *testing.T) {
 	}
 }
 
-func runGoalWorkflow(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, worker wf.ExecutionWorker, tasks ...wf.TaskWorker) (wf.JobRunOutcome, error) {
+func runGoalWorkflow(t *testing.T, rt jobdb.ConsumerRuntime, key jobdb.JobKey, worker wf.ExecutionWorker, tasks ...wf.TaskWorker) (wf.JobRunOutcome, error) {
 	t.Helper()
 	runnable, err := wf.GetJobForRun(celltest.Context(context.Background()), rt, wf.GetJobForRunRequest{JobKey: key, JobWorker: worker, TaskWorkers: tasks, WorkerID: "goals", LeaseDuration: time.Minute})
 	if err != nil {
@@ -179,7 +180,7 @@ func runGoalWorkflow(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, w
 	}
 	return runnable.Run(nil)
 }
-func replayGoalWorkflow(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, worker wf.ExecutionWorker, tasks ...wf.TaskWorker) (jobdb.JobData, error) {
+func replayGoalWorkflow(t *testing.T, rt jobdb.ConsumerRuntime, key jobdb.JobKey, worker wf.ExecutionWorker, tasks ...wf.TaskWorker) (jobdb.JobData, error) {
 	t.Helper()
 	builder := wf.NewEngineBuilder().WithRuntime(rt).WithWorkerTenantId("tenant").PlusWorkers(worker, tasks...)
 	engine, err := builder.BuildEngine()
@@ -188,7 +189,7 @@ func replayGoalWorkflow(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey
 	}
 	return engine.ReplayJobRun(celltest.Context(context.Background()), wf.ReplayRunRequest{JobKey: key})
 }
-func goalExecutionRecords(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey) []jobdb.ExecutionRecord {
+func goalExecutionRecords(t *testing.T, rt jobdb.JobRunReader, key jobdb.JobKey) []jobdb.ExecutionRecord {
 	t.Helper()
 	history, err := jobdb.GetJobRun(celltest.Context(context.Background()), rt, jobdb.GetJobRunRequest{JobKey: key})
 	require.NoError(t, err)

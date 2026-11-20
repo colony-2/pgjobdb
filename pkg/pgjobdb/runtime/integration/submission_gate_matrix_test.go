@@ -76,9 +76,9 @@ func TestSubmissionAvailabilityGateMatrix(t *testing.T) {
 					if kind == "goal-success" || kind == "mixed" {
 						p := producers[len(producers)-1]
 						var err error
-						later, err = f.backend.SubmitJob(f.ctx, availabilityRequest("later-candidate", nil))
-						require.NoError(t, err)
-						_, err = f.backend.AddGoalCandidate(f.ctx, jobdb.AddGoalCandidateRequest{GoalKey: jobdb.GoalKey{TenantId: "tenant", GoalID: p.GoalID}, JobID: later.JobKey.JobId})
+						laterRequest := availabilityRequest("later-candidate", nil)
+						laterRequest.Job.GoalID = p.GoalID
+						later, err = f.backend.SubmitJob(f.ctx, laterRequest)
 						require.NoError(t, err)
 					}
 					original := f.databaseTime().Add(3 * time.Second).Truncate(time.Microsecond).Add(123 * time.Nanosecond)
@@ -225,7 +225,7 @@ func TestSubmissionAvailabilityFailedDependencies(t *testing.T) {
 							calls++
 							return jobdb.NewTaskDataOrPanic(nil), nil
 						}}
-						var rt jobdb.WorkflowRuntime = f.backend
+						var rt jobdb.ConsumerRuntime = f.backend
 						if route == "http-put" || route == "http-parent" || route == "imported-submit-only" {
 							rt = f.client
 						}

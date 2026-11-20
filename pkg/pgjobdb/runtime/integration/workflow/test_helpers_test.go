@@ -169,7 +169,7 @@ func randPort(base uint32) uint32 {
 
 type directTestEngine struct {
 	workflow.Engine
-	runtime jobdb.WorkflowRuntime
+	runtime jobdb.ConsumerRuntime
 }
 
 func (e *directTestEngine) GetChapter(ctx context.Context, ref jobdb.ChapterRef) (jobdb.Chapter, error) {

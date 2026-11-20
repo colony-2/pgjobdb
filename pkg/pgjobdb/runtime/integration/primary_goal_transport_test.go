@@ -22,7 +22,7 @@ func TestPostgresSelectedTransportRefusesUnsafeRoutes(t *testing.T) {
 	ctx := runtimetest.PrimaryGoalContext(context.Background())
 	source, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "transport", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 	require.NoError(t, err)
-	application := selectionTestHandler(remoteruntime.NewServer(rt))
+	application := selectionTestHandler(remoteruntime.NewConsumerServer(rt))
 	for _, mode := range []string{"unknown", "unsupported", "route404", "route405", "redirect307", "redirect308", "legacy"} {
 		t.Run(mode, func(t *testing.T) {
 			var ordinary, selected atomic.Int32

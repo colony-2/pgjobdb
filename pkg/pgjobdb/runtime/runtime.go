@@ -45,6 +45,9 @@ type Runtime struct {
 	closeErr error
 }
 
+// Native backend compatibility intentionally retains concrete core attachment.
+var _ jobdb.ConsumerRuntime = (*Runtime)(nil)
+var _ jobdb.ConsumerGoalRuntime = (*Runtime)(nil)
 var _ jobdb.WorkflowRuntime = (*Runtime)(nil)
 var _ jobdb.JobSchemaRegistry = (*Runtime)(nil)
 var _ jobdb.ConfigurationAdmin = (*Runtime)(nil)

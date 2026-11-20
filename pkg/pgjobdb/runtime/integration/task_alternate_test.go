@@ -64,11 +64,11 @@ func (w alternateTask) Run(_ wf.TaskContext, in jobdb.TaskData) (jobdb.TaskData,
 	return in, nil
 }
 
-func alternateRuntime(t *testing.T, backend string, newRuntime func(testing.TB) *pgjobdbruntime.Runtime) jobdb.WorkflowRuntime {
+func alternateRuntime(t *testing.T, backend string, newRuntime func(testing.TB) *pgjobdbruntime.Runtime) jobdb.ConsumerRuntime {
 	t.Helper()
 	rt := newRuntime(t)
 	if backend == "remote-postgres" {
-		server := httptest.NewServer(celltest.Handler(remote.NewServer(rt)))
+		server := httptest.NewServer(celltest.Handler(remote.NewConsumerServer(rt)))
 		t.Cleanup(server.Close)
 		r, err := remote.New(server.URL, server.Client())
 		require.NoError(t, err)
@@ -76,7 +76,7 @@ func alternateRuntime(t *testing.T, backend string, newRuntime func(testing.TB) 
 	}
 	return rt
 }
-func runAlternate(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, w alternateJob, includeAlternate bool) wf.JobRunOutcome {
+func runAlternate(t *testing.T, rt jobdb.ConsumerRuntime, key jobdb.JobKey, w alternateJob, includeAlternate bool) wf.JobRunOutcome {
 	t.Helper()
 	tasks := []wf.TaskWorker{alternateTask{"prepare"}, alternateTask{"after"}}
 	if includeAlternate {
@@ -301,7 +301,7 @@ func runCompletedExternalTaskReplaysAfterDeadline(t *testing.T, newRuntime func(
 	}
 }
 
-func alternateDeadline(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey) time.Time {
+func alternateDeadline(t *testing.T, rt jobdb.JobRunReader, key jobdb.JobKey) time.Time {
 	t.Helper()
 	history, err := jobdb.GetJobRun(celltest.Context(context.Background()), rt, jobdb.GetJobRunRequest{JobKey: key})
 	require.NoError(t, err)
@@ -314,7 +314,7 @@ func alternateDeadline(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey)
 	return time.Time{}
 }
 
-func requireTaskDeclaration(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, taskType string) {
+func requireTaskDeclaration(t *testing.T, rt jobdb.JobRunReader, key jobdb.JobKey, taskType string) {
 	t.Helper()
 	history, err := jobdb.GetJobRun(celltest.Context(context.Background()), rt, jobdb.GetJobRunRequest{JobKey: key})
 	require.NoError(t, err)

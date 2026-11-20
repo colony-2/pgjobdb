@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 	remoteruntime "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtimetest"
 	pgjobdbruntime "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/integration/internal/jobdbtest"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/internal/testsupport"
 	"github.com/lib/pq"
 )
@@ -34,27 +36,36 @@ func TestPostgresRuntimeConformance(t *testing.T) {
 			Name: "postgres", Capabilities: routes,
 			New: func(tb testing.TB) runtimetest.Fixture {
 				runtime := newRuntime(tb)
-				return runtimetest.Fixture{Runtime: runtime, SchemaRegistry: runtime, Cleanup: runtime.Close}
-			},
-		},
-		{
-			Name: "remote-postgres", Capabilities: routes,
-			New: func(tb testing.TB) runtimetest.Fixture {
-				runtime := newRuntime(tb)
-				server := httptest.NewServer(celltest.Handler(remoteruntime.NewServer(runtime)))
-				tb.Cleanup(server.Close)
-				remote, err := remoteruntime.New(server.URL, server.Client())
-				if err != nil {
-					tb.Fatalf("start remote Postgres runtime: %v", err)
-				}
-				return runtimetest.Fixture{
-					Runtime: remote, SchemaRegistry: remote,
-					LeaseEventLeaseValidity: runtime.ValidateExecutionLeaseByID,
-					Cleanup:                 func(ctx context.Context) error { server.Close(); return runtime.Close(ctx) },
-				}
+				return runtimetest.Fixture{Runtime: jobdbtest.NewNamespacedBackend(runtime, ""), SchemaRegistry: runtime, Cleanup: runtime.Close}
 			},
 		},
 	}
+	for _, signed := range []bool{false, true} {
+		name := "remote-postgres"
+		if signed {
+			name = "signed-remote-postgres"
+		}
+		harnesses = append(harnesses, runtimetest.Harness{Name: name, Capabilities: routes, New: func(tb testing.TB) runtimetest.Fixture {
+			runtime := newRuntime(tb)
+			view := jobdbtest.NewNamespacedBackend(runtime, "")
+			var handler http.Handler = remoteruntime.NewConsumerServer(view)
+			if signed {
+				var err error
+				handler, err = remoteruntime.NewConsumerServerWithOptions(view, remoteruntime.ServerOptions{LeaseTokenSigningKey: []byte("postgres-conformance-signing-key-32-bytes"), LeaseTokenAudience: "pg-conformance"})
+				if err != nil {
+					tb.Fatal(err)
+				}
+			}
+			server := httptest.NewServer(selectionTestHandler(handler))
+			tb.Cleanup(server.Close)
+			remote, err := remoteruntime.New(server.URL, server.Client())
+			if err != nil {
+				tb.Fatal(err)
+			}
+			return runtimetest.Fixture{Runtime: remote, SchemaRegistry: remote, LeaseEventLeaseValidity: runtime.ValidateExecutionLeaseByID, Cleanup: func(ctx context.Context) error { server.Close(); return runtime.Close(ctx) }}
+		}})
+	}
+
 	runtimetest.RunWorkflowRuntimeConformance(t, harnesses...)
 	t.Run("compact_lists", func(t *testing.T) { runtimetest.RunCompactListConformance(t, harnesses...) })
 }
@@ -145,7 +156,7 @@ func TestPostgresCellConformance(t *testing.T) {
 	t.Run("direct", func(t *testing.T) { runtimetest.RunCellConformance(t, factory(t)) })
 	t.Run("remote", func(t *testing.T) {
 		rt := factory(t)
-		server := httptest.NewServer(celltest.Handler(remoteruntime.NewServer(rt)))
+		server := httptest.NewServer(celltest.Handler(remoteruntime.NewConsumerServer(rt)))
 		defer server.Close()
 		remote, err := remoteruntime.New(server.URL, server.Client())
 		if err != nil {

@@ -60,7 +60,7 @@ func (f *availabilityFixture) reopen() {
 	var err error
 	f.backend, err = pgruntime.NewSQLDB(f.ctx, f.db, f.cfg)
 	require.NoError(f.t, err)
-	handler := selectionTestHandler(remote.NewServer(f.backend))
+	handler := selectionTestHandler(remote.NewConsumerServer(f.backend))
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" || r.Method == "PUT" {
 			f.mu.Lock()
@@ -132,7 +132,7 @@ func (f *availabilityFixture) submitter(route string) func(context.Context, jobd
 		ownerReq.Job.JobType = "owner"
 		owner, err := f.backend.SubmitJob(f.ctx, ownerReq)
 		require.NoError(t, err)
-		var rt jobdb.WorkflowRuntime = f.backend
+		var rt jobdb.ConsumerRuntime = f.backend
 		if route != "native-parent" {
 			rt = f.client
 		}
@@ -247,7 +247,7 @@ func (f *availabilityFixture) assertReads(key jobdb.JobKey, want time.Time) {
 	full, err := pgjobdb.ListJobs(f.ctx, f.db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, JobKeys: []pgjobdb.JobKey{{TenantID: "tenant", JobID: pgjobdb.JobID(key.JobId)}}})
 	require.NoError(t, err)
 	require.Len(t, full.Jobs, 1)
-	for _, rt := range []jobdb.WorkflowRuntime{f.backend, f.client} {
+	for _, rt := range []jobdb.ConsumerRuntime{f.backend, f.client} {
 		detailAt := want
 		if !f.native {
 			detail, err := jobdb.GetJobRun(f.ctx, rt, jobdb.GetJobRunRequest{JobKey: key})

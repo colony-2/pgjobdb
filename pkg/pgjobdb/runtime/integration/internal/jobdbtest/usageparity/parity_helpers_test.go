@@ -69,7 +69,7 @@ func (s engineSurface) ListJobs(ctx context.Context, req jobdb.ListJobsRequest) 
 }
 
 type runtimeSurface struct {
-	runtime jobdb.WorkflowRuntime
+	runtime jobdb.ConsumerRuntime
 	engine  workflow.Engine
 }
 
@@ -107,7 +107,7 @@ func (s runtimeSurface) GetJob(ctx context.Context, jobKey jobdb.JobKey) (jobdb.
 }
 
 func (s runtimeSurface) GetJobRun(ctx context.Context, req jobdb.GetJobRunRequest) (jobdb.GetJobRunResponse, error) {
-	return s.engine.GetJobRun(ctx, req)
+	return jobdb.GetJobRun(ctx, struct{ jobdb.JobRunReader }{s.runtime}, req)
 }
 
 func (s runtimeSurface) ListJobs(ctx context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
@@ -184,7 +184,7 @@ func (s scenarioSubject) Engine() workflow.Engine {
 	return s.built.Engine
 }
 
-func (s scenarioSubject) Runtime() jobdb.WorkflowRuntime {
+func (s scenarioSubject) Runtime() jobdb.ConsumerRuntime {
 	return s.built.Runtime
 }
 
@@ -643,7 +643,9 @@ func cloneStringPtr(v *string) *string {
 	return &out
 }
 
-func mustReadRuntimeArtifactBytes(t *testing.T, ctx context.Context, runtime jobdb.WorkflowRuntime, ref jobdb.ArtifactRef) normalizedArtifact {
+func mustReadRuntimeArtifactBytes(t *testing.T, ctx context.Context, runtime interface {
+	OpenArtifact(context.Context, jobdb.ArtifactRef) (jobdb.ArtifactReader, error)
+}, ref jobdb.ArtifactRef) normalizedArtifact {
 	t.Helper()
 	reader, err := runtime.OpenArtifact(ctx, ref)
 	if err != nil {

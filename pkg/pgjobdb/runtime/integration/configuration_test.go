@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -17,15 +18,23 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb/runtimetest"
 	wf "github.com/colony-2/jobdb/pkg/workflow"
 	pgruntime "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/integration/internal/jobdbtest"
 	"github.com/stretchr/testify/require"
 )
 
-func configurationTransport(t *testing.T, rt *pgruntime.Runtime, transport string) jobdb.WorkflowRuntime {
+func configurationTransport(t *testing.T, rt *pgruntime.Runtime, transport string) jobdb.ConsumerRuntime {
 	t.Helper()
+	view := jobdbtest.NewNamespacedBackend(rt, "")
 	if transport == "embedded" {
-		return rt
+		return view
 	}
-	server := httptest.NewServer(celltest.Handler(remote.NewServer(rt)))
+	var handler http.Handler = remote.NewConsumerServer(view)
+	if transport == "http-signed" {
+		var err error
+		handler, err = remote.NewConsumerServerWithOptions(view, remote.ServerOptions{LeaseTokenSigningKey: []byte("consumer-test-key-with-32-or-more-bytes"), LeaseTokenAudience: "pgjobdb-test"})
+		require.NoError(t, err)
+	}
+	server := httptest.NewServer(selectionTestHandler(handler))
 	t.Cleanup(server.Close)
 	client, err := remote.New(server.URL, server.Client())
 	require.NoError(t, err)

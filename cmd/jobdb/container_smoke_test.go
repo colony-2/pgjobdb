@@ -45,7 +45,7 @@ func TestContainerRuntimePersistenceAndArtifactBoundary(t *testing.T) {
 	}
 }
 
-func seedContainerSmokeData(t *testing.T, ctx context.Context, runtime jobdb.WorkflowRuntime) {
+func seedContainerSmokeData(t *testing.T, ctx context.Context, runtime jobdb.ConsumerRuntime) {
 	t.Helper()
 	_, err := runtime.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: containerSmokeTenantID, Name: "test", Repo: "example.test/test"})
 	if err != nil {
@@ -111,7 +111,7 @@ func seedContainerSmokeData(t *testing.T, ctx context.Context, runtime jobdb.Wor
 	}
 }
 
-func verifyContainerSmokeData(t *testing.T, ctx context.Context, runtime jobdb.WorkflowRuntime) {
+func verifyContainerSmokeData(t *testing.T, ctx context.Context, runtime jobdb.ConsumerRuntime) {
 	t.Helper()
 	jobKey := jobdb.JobKey{TenantId: containerSmokeTenantID, JobId: containerSmokeJobID}
 	chapter, err := runtime.GetChapter(ctx, jobdb.ChapterRef{JobKey: jobKey, Ordinal: 1})

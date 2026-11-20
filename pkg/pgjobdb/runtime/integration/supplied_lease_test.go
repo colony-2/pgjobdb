@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/integration/internal/jobdbtest"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
@@ -82,7 +83,7 @@ func newSuppliedFixture(t *testing.T, dsn string) *suppliedFixture {
 	t.Cleanup(func() { require.NoError(t, backend.Close(celltest.Context(context.Background()))) })
 	f.backend = backend
 	f.db = db
-	handler := celltest.Handler(remote.NewServer(backend))
+	handler := celltest.Handler(remote.NewConsumerServer(jobdbtest.NewNamespacedBackend(backend, "")))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Receiver") == "yes" {
 			if r.URL.Path == "/v1/jobs/poll" || strings.HasSuffix(r.URL.Path, "/lease") {

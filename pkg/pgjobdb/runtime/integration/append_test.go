@@ -30,9 +30,9 @@ func TestStartOrAppendConformance(t *testing.T) {
 				rt, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
 				require.NoError(t, err)
 				defer rt.Close(ctx)
-				var client jobdb.WorkflowRuntime = rt
+				var client jobdb.ConsumerRuntime = rt
 				if http {
-					server := httptest.NewServer(celltest.Handler(remote.NewServer(rt)))
+					server := httptest.NewServer(celltest.Handler(remote.NewConsumerServer(rt)))
 					defer server.Close()
 					client, err = remote.New(server.URL, server.Client())
 					require.NoError(t, err)
@@ -115,9 +115,9 @@ func TestAppendInputAndReplay(t *testing.T) {
 				name = "remote"
 			}
 			t.Run(name, func(t *testing.T) {
-				var client jobdb.WorkflowRuntime = rt
+				var client jobdb.ConsumerRuntime = rt
 				if overHTTP {
-					server := httptest.NewServer(celltest.Handler(remote.NewServer(rt)))
+					server := httptest.NewServer(celltest.Handler(remote.NewConsumerServer(rt)))
 					defer server.Close()
 					client, err = remote.New(server.URL, server.Client())
 					require.NoError(t, err)

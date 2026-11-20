@@ -24,7 +24,7 @@ func (s scopeTask) Run(c wf.TaskContext, in jobdb.TaskData) (jobdb.TaskData, err
 	return s.run(c, in)
 }
 
-func runScoped(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, w wf.ExecutionWorker, tasks ...wf.TaskWorker) wf.JobRunOutcome {
+func runScoped(t *testing.T, rt jobdb.ConsumerRuntime, key jobdb.JobKey, w wf.ExecutionWorker, tasks ...wf.TaskWorker) wf.JobRunOutcome {
 	t.Helper()
 	runnable, err := wf.GetJobForRun(celltest.Context(context.Background()), rt, wf.GetJobForRunRequest{JobKey: key, JobWorker: w, TaskWorkers: tasks, WorkerID: "scopes", LeaseDuration: time.Minute, ConsumerVersions: map[string]string{"pgjobdb-test": "1"}})
 	require.NoError(t, err)
@@ -32,7 +32,7 @@ func runScoped(t *testing.T, rt jobdb.WorkflowRuntime, key jobdb.JobKey, w wf.Ex
 	require.NoError(t, err)
 	return out
 }
-func submitScoped(t *testing.T, rt jobdb.WorkflowRuntime, name string) jobdb.JobKey {
+func submitScoped(t *testing.T, rt jobdb.ConsumerRuntime, name string) jobdb.JobKey {
 	t.Helper()
 	h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: name, Data: jobdb.NewTaskDataOrPanic("input")}})
 	require.NoError(t, err)
