@@ -68,6 +68,31 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['status'], 'passed')
         self.assertEqual(result['test_locale'], 'C.UTF-8')
 
+    def test_named_test_outcomes(self):
+        output = "=== RUN   TestA\n--- PASS: TestA (0.01s)\n    --- SKIP: TestB/leaf (0.00s)\n--- FAIL: TestC (0.02s)\n"
+        self.assertEqual(verify.test_outcomes(output), {
+            'passed': 1, 'failed': 1, 'skipped': 1,
+            'failed_names': ['TestC'], 'skipped_names': ['TestB/leaf']})
+
+    def test_build_ignores_workspace_and_inherited_flags_and_skip_fails(self):
+        source = self.root / 'source'; source.mkdir()
+        (source / 'go.mod').write_text('module example.test/fixture')
+        (source / 'go.sum').write_text('')
+        def command(argv, log, **kwargs):
+            if argv[0] == 'go':
+                self.assertEqual(kwargs['env']['GOWORK'], 'off')
+                self.assertEqual(kwargs['env']['GOFLAGS'], '')
+                if argv[1] == 'list': kwargs['stdout'].write(verify.PREFIX + 'cmd/jobdb\n')
+                else: Path(argv[argv.index('-o') + 1]).touch()
+            else:
+                log.write('--- SKIP: TestRequired (0.00s)\n')
+            return 0
+        with patch.dict(os.environ, ROOT=str(source), GOWORK='/foreign/go.work', GOFLAGS='-overlay=/foreign/overlay.json'), patch.object(verify, 'execute', side_effect=command):
+            verify.run('service_free')
+        result = json.loads((self.root / 'service_free.json').read_text())
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['tests']['skipped_names'], ['TestRequired'])
+
     def test_scratch_cleanup_failure_prevents_pass(self):
         root = self.root / 'source'; root.mkdir()
         (root / 'go.mod').write_text('module example.test/fixture')

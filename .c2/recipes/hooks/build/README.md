@@ -10,7 +10,8 @@ Checks always select packages from the candidate root.
 Each named const operation independently declares pinned Go 1.26.1, Python and Git.
 `verify.py` creates its own temporary module file, module/build caches, binaries,
 home and temporary directory. It preserves scoped Git environment only during
-compilation. Tests receive an environment allowlist without C2J, Pulse, JobDB,
+compilation. Compilation explicitly sets `GOWORK=off` and clears inherited `GOFLAGS` so neither a workspace nor an overlay can substitute candidate dependencies. Named pass/fail/skip counts are retained; any skipped native test fails its behavior.
+Tests receive an environment allowlist without C2J, Pulse, JobDB,
 cloud or inherited test-endpoint settings. Tests run as the current non-root user,
 or UID/GID 65534 when the worker is root; supplementary groups are cleared.
 Tests use `LANG=LC_ALL=C.UTF-8` so embedded initdb creates UTF-8 databases
@@ -22,7 +23,7 @@ coverage, which the pgjobdb test workflow does not request.
 | --- | --- |
 | test.yml native arm64 `go test -v -tags=integration ./...` | `service_free`: all packages outside installer and runtime/integration, including CLI configuration tests and compilation of packages with no test files. |
 | Same native suite: installer | `installer`: complete pkg/pgjobdb/installer suite. |
-| Same native suite: runtime conformance | `conformance`: TestPostgresRuntimeConformance, TestConformanceFixturesAreIsolated and TestPostgresCellConformance, enumerated from the compiled integration test binary. |
+| Same native suite: runtime conformance | `conformance`: all names containing Conformance, enumerated from the compiled integration test binary, including workflow runtime, start-or-append, fixture isolation and cell conformance. |
 | Same native suite: other runtime tests | `runtime`: remaining tests in runtime/integration and all descendant packages, including engineconformance, usageparity and workflow. No package is discarded because it also contains conformance tests. |
 | test-summary | `report`: checks all four behavior statuses and required logs/JSON; exports verification.md and environment.json. |
 | test.yml amd64/macOS matrix | Held: alternate architecture/OS. |

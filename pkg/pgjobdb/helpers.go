@@ -43,3 +43,22 @@ func nilIfEmpty(values []string) []string {
 }
 
 type rowScanner interface{ Scan(...any) error }
+
+// utcTimeCopy also handles nullable read timestamps without retaining a session
+// offset or mutating a value shared by the caller.
+func utcTimeCopy(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	utc := value.UTC()
+	return &utc
+}
+
+func normalizeJobTimes(j *JobDetail) {
+	j.CreatedAt = j.CreatedAt.UTC()
+	j.AvailableAt = j.AvailableAt.UTC()
+	j.ExpiresAt = utcTimeCopy(j.ExpiresAt)
+	j.LeaseExpiresAt = utcTimeCopy(j.LeaseExpiresAt)
+	j.ArchivedAt = utcTimeCopy(j.ArchivedAt)
+	j.AlternateAt = utcTimeCopy(j.AlternateAt)
+}

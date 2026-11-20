@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import signal
 import subprocess
@@ -81,6 +82,14 @@ def execute(argv, log, **kwargs):
                 signal.signal(s, handler)
 
 
+def test_outcomes(output):
+    """Count named Go test outcomes; required native checks may not pass via skips."""
+    names = {kind: re.findall(r'^\s*--- ' + marker + r': (\S+)', output, re.MULTILINE)
+             for kind, marker in (('passed', 'PASS'), ('failed', 'FAIL'), ('skipped', 'SKIP'))}
+    return {**{kind: len(tests) for kind, tests in names.items()},
+            'failed_names': names['failed'], 'skipped_names': names['skipped']}
+
+
 def run(behavior):
     out = Path(os.environ['OUTBOX']); out.mkdir(parents=True, exist_ok=True)
     root = Path(os.environ.get('ROOT', '.')).resolve()
@@ -97,7 +106,8 @@ def run(behavior):
                     shutil.copyfile(root / f, scratch / f)
                 buildenv = dict(os.environ, GOPRIVATE='github.com/colony-2/*',
                                 GOCACHE=str(scratch / 'cache'), GOMODCACHE=str(scratch / 'modules'),
-                                GOTMPDIR=str(scratch), CGO_ENABLED='0', GOTOOLCHAIN='local')
+                                GOTMPDIR=str(scratch), CGO_ENABLED='0', GOTOOLCHAIN='local',
+                                GOWORK='off', GOFLAGS='')
                 goflags = ['-modfile=' + str(scratch / 'go.mod'), '-tags=integration']
                 listcmd = ['go', 'list', *goflags, './...']
                 result['commands'].append(listcmd)
@@ -152,7 +162,10 @@ def run(behavior):
                     cmd = [str(binary), '-test.v', '-test.count=1', '-test.timeout=25m', '-test.run=' + expr]
                     result['commands'].append(cmd)
                     if execute(cmd, log, cwd=testhome, env=testenv, **drop): failed = True
-                result['status'] = 'failed' if failed else 'passed'
+                log.flush()
+                outcomes = test_outcomes((out / (behavior + '.log')).read_text())
+                result['tests'] = outcomes
+                result['status'] = 'failed' if failed or outcomes['failed'] or outcomes['skipped'] else 'passed'
         except Exception as exc:
             result['status'] = 'failed'
             log.write(type(exc).__name__ + ': ' + str(exc) + '\n')

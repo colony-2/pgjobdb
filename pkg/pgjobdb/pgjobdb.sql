@@ -2381,6 +2381,7 @@ CREATE OR REPLACE FUNCTION pgjobdb.get_native_job(
 )
 RETURNS TABLE(job_details JSONB,client_payload JSON,client_payload_revision BIGINT,initial_payload_digest TEXT)
 LANGUAGE sql STABLE
+SET TimeZone = 'UTC'
 AS $$
     SELECT to_jsonb(n),c.client_payload,c.revision,c.initial_payload_digest FROM pgjobdb.native_jobs n JOIN pgjobdb.job_client_state c USING(tenant_id,job_id)
     WHERE n.tenant_id = p_tenant_id AND n.job_id = p_job_id;
@@ -2391,6 +2392,7 @@ CREATE OR REPLACE FUNCTION pgjobdb.get_native_job_status(
 )
 RETURNS SETOF JSONB
 LANGUAGE sql STABLE
+SET TimeZone = 'UTC'
 AS $$
     SELECT jsonb_build_object(
         'tenant_id', n.tenant_id, 'job_id', n.job_id,
@@ -2427,6 +2429,7 @@ CREATE OR REPLACE FUNCTION pgjobdb.list_native_jobs(
 )
 RETURNS TABLE(job_details JSONB,client_payload JSON,client_payload_revision BIGINT,initial_payload_digest TEXT)
 LANGUAGE plpgsql
+SET TimeZone = 'UTC'
 AS $$
 BEGIN
     IF p_tenant_ids IS NULL OR cardinality(p_tenant_ids) = 0 THEN

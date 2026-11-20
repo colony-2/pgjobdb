@@ -46,6 +46,7 @@ func scanListedJobDetail(rows *sql.Rows) (JobDetail, error) {
 	if err := json.Unmarshal(raw, &item); err != nil {
 		return item, fmt.Errorf("pgjobdb: decode listed job: %w", err)
 	}
+	normalizeJobTimes(&item)
 	item.ClientPayload = append(json.RawMessage(nil), payload...)
 	item.ClientPayloadRevision = revision
 	item.InitialPayloadDigest = digest

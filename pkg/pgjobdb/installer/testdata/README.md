@@ -9,3 +9,10 @@ number on a current-format installation.
 `852d9fc7a77ea105d3fa217bbfdb4dc74bb10f98`, path
 `pkg/pgjobdb/pgjobdb.sql`. It retains ordinary preparation and Restart fields
 before selected-goal submission adds explicit selection and retained receipts.
+
+`format12.sql` is the unchanged scheduler SQL from
+`a13f5e36df9da7efe5083b0b3bffeef22ec949b9`, path
+`pkg/pgjobdb/pgjobdb.sql`. `TestSubmissionFormat12Upgrade` creates valid work
+with those definitions, reproduces the historical non-UTC read failure, applies
+and reapplies the current SQL, then reads and acquires that work through a new
+connection. The schema format stays 12.

@@ -7,9 +7,13 @@ import (
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/cellstate"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/internal/submissiontime"
 )
 
 func PrepareJob(ctx context.Context, db DB, req JobPreparation) (out PreparedJob, err error) {
+	if err = submissiontime.ValidateDescriptor(req.Descriptor); err != nil {
+		return
+	}
 	if err = validateSelectedPreparation(ctx, req); err != nil {
 		return
 	}

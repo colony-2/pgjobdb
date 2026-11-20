@@ -52,7 +52,7 @@ rename restrictions. The `create-root` command has been removed.
 
 ## JobDB consumer API
 
-The current dependency is JobDB `v0.0.68-0.20261104205641-8797908eaf7c`.
+The current dependency is JobDB `v0.0.91` (`9de45717f1f4c218b8e2d4fc0de171af4e5b43dd`).
 Engine submission returns a `workflow.JobHandle`; use its `JobKey`
 for job operations and `GoalID` for goal dependencies. Engine restart submission
 takes `SubmitRestartJobRequest{Job: ...}` and also returns a handle. Restarts
@@ -162,6 +162,9 @@ The base JobDB release publishes only its SQLite and toy CLI artifacts.
 
 The repository layout follows JobDB's module: public Go packages live under
 `pkg/pgjobdb`, while the module root holds documentation and module metadata.
+
+See [submission availability](docs/submission-availability.md) for the supported
+interval, microsecond scheduling, replay identity, and application/SQL update requirements.
 
 Run the current checks with:
 

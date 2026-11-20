@@ -32,6 +32,7 @@ func GetJob(ctx context.Context, db DB, tenant TenantID, job JobID) (*JobDetail,
 	if err := json.Unmarshal(raw, &detail); err != nil {
 		return nil, fmt.Errorf("pgjobdb: decode native job: %w", err)
 	}
+	normalizeJobTimes(&detail)
 	detail.ClientPayload = append(json.RawMessage(nil), payload...)
 	detail.ClientPayloadRevision = revision
 	detail.InitialPayloadDigest = initialDigest
@@ -58,5 +59,7 @@ func GetJobStatus(ctx context.Context, db DB, tenant TenantID, job JobID) (*JobS
 	if err := json.Unmarshal(raw, &status); err != nil {
 		return nil, fmt.Errorf("pgjobdb: decode native job status: %w", err)
 	}
+	status.CreatedAt = status.CreatedAt.UTC()
+	status.ArchivedAt = utcTimeCopy(status.ArchivedAt)
 	return &status, nil
 }

@@ -10,9 +10,13 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/internal/submissiontime"
 )
 
 func (s Scheduler) CreateJob(ctx context.Context, req runtimecore.CreateJobRequest) (runtimecore.StoredJob, error) {
+	if _, err := submissiontime.Effective(req.AvailableAt); err != nil {
+		return runtimecore.StoredJob{}, err
+	}
 	policy, err := runPolicyToPgjobdb(req.RunPolicy)
 	if err != nil {
 		return runtimecore.StoredJob{}, err

@@ -71,6 +71,11 @@ func ListJobSummaries(ctx context.Context, db DB, opts ListJobsOptions) (*ListJo
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return item, fmt.Errorf("pgjobdb: decode job summary: %w", err)
 		}
+		item.CreatedAt = item.CreatedAt.UTC()
+		item.AvailableAt = item.AvailableAt.UTC()
+		item.ExpiresAt = utcTimeCopy(item.ExpiresAt)
+		item.LeaseExpiresAt = utcTimeCopy(item.LeaseExpiresAt)
+		item.ArchivedAt = utcTimeCopy(item.ArchivedAt)
 		item.ClientPayload = payload
 		if item.BlockingWaitSummary != nil && item.BlockingWaitSummary.Deadline != nil {
 			deadline := item.BlockingWaitSummary.Deadline.UTC()
