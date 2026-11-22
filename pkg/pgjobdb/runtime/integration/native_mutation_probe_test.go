@@ -14,10 +14,6 @@ type nativeMutationProbe struct {
 	mutations   atomic.Int64
 }
 
-func (r *nativeMutationProbe) AddGoalCandidate(ctx context.Context, q jobdb.AddGoalCandidateRequest) (jobdb.GoalCandidateInfo, error) {
-	r.attachments.Add(1)
-	return r.Runtime.AddGoalCandidate(ctx, q)
-}
 func (r *nativeMutationProbe) SubmitJob(ctx context.Context, q jobdb.SubmitJobRequest) (jobdb.JobHandle, error) {
 	r.mutations.Add(1)
 	return r.Runtime.SubmitJob(ctx, q)

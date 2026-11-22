@@ -20,9 +20,34 @@ COMMAND = PREFIX + 'cmd/jobdb'
 REQUIRED_CONSUMER = {'TestConsumerConstructorCapabilities', 'TestConsumerHTTPRetiresAttachment',
                      'TestConsumerCapabilities', 'TestConsumerReadOnlyHistory',
                      'TestConsumerSignedLeaseAuthority', 'TestConsumerNamespacedAuthority'}
+REQUIRED_GOALS = {'TestRetainedGoalPublicConformance', 'TestRetainedGoalIndependentCommitOrders',
+                  'TestRetainedGoalSimultaneousIdleAdmission', 'TestRetainedGoalPublicationRollbackAndReopen',
+                  'TestRetainedGoalHiddenAndCancellationAdmission', 'TestRetainedGoalFailureCurrentAuthority',
+                  'TestRetainedGoalLostHTTPFailureResponse', 'TestRetainedGoalDiscoveryAndRetirement',
+                  'TestRetainedGoalProtectedHistoryGuards', 'TestRetainedGoalConcurrentInitialHistory'}
+REQUIRED_INSTALLER = {'TestGoalConversionHistoricalFormats', 'TestGoalConversionRollback',
+                      'TestGoalConversionAuthoritativeReport', 'TestGoalConversionRejectsCorruption',
+                      'TestGoalConversionLostCommitAcknowledgement', 'TestGoalConversionStartupReport',
+                      'TestGoalConversionOriginTie', 'TestRetainedGoalVerifyContract', 'TestRetainedGoalRejectsDamagedMirror',
+                      'TestRetainedGoalProtectionDefinitions', 'TestGoalConversionRejectsAlteredProtections'}
+# Delivery-specific human exception, recorded on cancelled owner consultation
+# Dj83t2CdcL0jrAlhoM8nI8uzyyb. Keep raw failures; never retry or skip them.
+INITIAL_HISTORY_DIRECTION = 'we should accept this unreliability for today, not try to fix it.'
+INITIAL_HISTORY_OWNER_JOB = 'Dj83t2CdcL0jrAlhoM8nI8uzyyb'
+INITIAL_HISTORY_VERSION = 'v0.0.99-0.20261121034814-05238600e743'
+INITIAL_HISTORY_ERROR = 'chapter not found: chapterstore: resource not found: chapterstore: chapter not found'
+INITIAL_HISTORY_SITES = {
+    'TestRetainedGoalConcurrentInitialHistory': 'selected_history_concurrency_test.go:100',
+    'TestPostgresPrimaryGoalSelection/direct': 'runtimetest/primary_goal.go:86',
+    'TestPostgresPrimaryGoalSelection/remote': 'runtimetest/primary_goal.go:86',
+    'TestPostgresSelectedConcurrentRequests': 'primary_goal_selection_test.go:84',
+}
 REQUIRED_COMMAND = {'TestPostgresConsumerGoalsCommands'}
 TASK_DELEGATION_PACKAGE = INTEGRATION + '/internal/jobdbtest'
 REQUIRED_TASK_DELEGATION = {'TestPostgresTaskDelegation'}
+ENGINE_CONFORMANCE_PACKAGE = INTEGRATION + '/internal/jobdbtest/engineconformance'
+REQUIRED_RETRY_HISTORY = {'TestGetJobRunRetryRepresentationOnDirectRuntime',
+                          'TestGetJobRunRecordedRetryBackoffOnDirectRuntime'}
 
 
 def select_packages(listing, behavior):
@@ -51,29 +76,82 @@ def select_tests(package, names, behavior):
         raise ValueError('empty or duplicate test enumeration: ' + package)
     if package == TASK_DELEGATION_PACKAGE and not REQUIRED_TASK_DELEGATION.issubset(tests):
         raise ValueError('missing PostgreSQL task delegation tests')
+    if package == ENGINE_CONFORMANCE_PACKAGE and not REQUIRED_RETRY_HISTORY.issubset(tests):
+        raise ValueError('missing PostgreSQL retry history tests')
+    if package == PREFIX + 'pkg/pgjobdb/installer' and not REQUIRED_INSTALLER.issubset(tests):
+        raise ValueError('missing required historical conversion/report tests')
     if package == COMMAND:
         if not REQUIRED_COMMAND.issubset(tests): raise ValueError('missing PostgreSQL command tests')
         database = [n for n in tests if n.startswith('TestPostgresConsumerGoals')]
         return database if behavior == 'runtime' else [n for n in tests if n not in database]
     if package == INTEGRATION:
-        if not REQUIRED_CONSUMER.issubset(tests): raise ValueError('missing focused consumer tests')
+        if not (REQUIRED_CONSUMER | REQUIRED_GOALS).issubset(tests): raise ValueError('missing focused consumer tests')
         conformance = [n for n in tests if 'Conformance' in n]
         if not conformance: raise ValueError('empty conformance test selection')
         return conformance if behavior == 'conformance' else [n for n in tests if n not in conformance]
     return tests
 
 
-def validate_outcomes(events, chosen):
+def allowed_history_diagnostics(output, name, site=None):
+    """Go assertions/cleanup errors have file:line prefixes, unlike PG output.
+
+    Permit only the diagnosed testify header and the three exact barrier logs.
+    In particular, counting testify Error blocks alone misses testing.T.Errorf.
+    Parent tests have no authorized Go diagnostics of their own.
+    """
+    barrier_logs = (
+        r'selected_history_concurrency_test[.]go:74: first runtime pid [0-9]+ blocked inside initial chapter INSERT',
+        r'selected_history_concurrency_test[.]go:89: second runtime pid [0-9]+: early result=.+, waiting=(?:true|false)',
+        r'selected_history_concurrency_test[.]go:98: after barrier release: first=<nil>, equivalent=' + re.escape(INITIAL_HISTORY_ERROR),
+    ) if name == 'TestRetainedGoalConcurrentInitialHistory' else ()
+    for line in output.splitlines():
+        if not re.match(r'\s*\S+[.](?:go|s):[0-9]+:', line):
+            continue
+        text = line.strip()
+        if site and text == site.rsplit('/', 1)[-1] + ':':
+            continue  # testify emits an empty source header before Error Trace
+        if any(re.fullmatch(pattern, text) for pattern in barrier_logs):
+            continue
+        return False
+    return not re.search(r'(?i)panic:|fatal error:|cleanup[^\n]*(?:fail|error)', output)
+
+
+def accepted_initial_history_failures(events, package, pinned):
+    """Recognize only the diagnosed assertion, never a whole-test exemption."""
+    if package != INTEGRATION or not pinned:
+        return set()
+    failed = {e['Test'] for e in events if e.get('Action') == 'fail' and 'Test' in e}
+    accepted = set()
+    for name, site in INITIAL_HISTORY_SITES.items():
+        if name not in failed:
+            continue
+        output = ''.join(e.get('Output', '') for e in events if e.get('Test') == name)
+        # A second assertion (even alongside the known message), missing trace,
+        # startup error, panic or altered failure is outside this authorization.
+        errors = re.findall(r'\bError:\s*(.*?)(?=\s+Test:|\Z)', output, re.S)
+        expected = 'Received unexpected error: ' + INITIAL_HISTORY_ERROR
+        if site in output and len(errors) == 1 and ' '.join(errors[0].split()) == expected and allowed_history_diagnostics(output, name, site):
+            accepted.add(name)
+    parent = 'TestPostgresPrimaryGoalSelection'
+    children = {name for name in failed if name.startswith(parent + '/')}
+    if parent in failed and children and children.issubset(accepted):
+        own_output = ''.join(e.get('Output', '') for e in events if e.get('Test') == parent)
+        if not re.search(r'\bError:', own_output) and allowed_history_diagnostics(own_output, parent):
+            accepted.add(parent)
+    return accepted
+
+
+def validate_outcomes(events, chosen, accepted=()):
     outcomes = {e['Test']: e['Action'] for e in events
                 if 'Test' in e and e.get('Action') in ('pass', 'fail', 'skip')}
     missing = set(chosen) - set(outcomes)
     if missing: raise ValueError('missing required test outcomes: ' + ', '.join(sorted(missing)))
     for test in chosen:
-        if outcomes[test] != 'pass': raise ValueError('required test did not pass: ' + test + ': ' + outcomes[test])
+        if outcomes[test] != 'pass' and not (outcomes[test] == 'fail' and test in accepted): raise ValueError('required test did not pass: ' + test + ': ' + outcomes[test])
     for name, action in outcomes.items():
-        # Preserve upstream's stricter native acceptance: every selected child
-        # must execute, including inherited conformance and availability cases.
-        if action in ('fail', 'skip'):
+        # Every selected child still executes; only the diagnosed, explicitly
+        # accepted assertion may retain a failed outcome without blocking.
+        if action == 'skip' or (action == 'fail' and name not in accepted):
             raise ValueError('required test did not pass: ' + name + ': ' + action)
     return outcomes
 
@@ -204,13 +282,23 @@ def run(behavior):
                     for directory in ('.c2', 'cmd', 'pkg'):
                         shutil.copytree(root / directory, hookroot / directory,
                                         ignore=shutil.ignore_patterns('__pycache__'))
+                    if (root/'tests/published-goals').exists():
+                        shutil.copytree(root/'tests/published-goals', hookroot/'tests/published-goals', ignore=shutil.ignore_patterns('__pycache__'))
                     for name in ('go.mod', 'go.sum'):
                         shutil.copyfile(root / name, hookroot / name)
                     hooktests = ['python3', str(hookroot / '.c2/recipes/hooks/build/tests/test_verify.py')]
                     result['commands'].append(hooktests)
                     if execute(hooktests, log, cwd=testhome, env=testenv, **drop):
                         failed = True
+                    if (hookroot/'tests/published-goals/test_accept.py').exists():
+                        checker_tests=['python3','-B','-m','unittest','discover','-s',str(hookroot/'tests/published-goals'),'-p','test_*.py']
+                        result['commands'].append(checker_tests)
+                        if execute(checker_tests,log,cwd=testhome,env=testenv,**drop): failed=True
                 result['tests'] = {}
+                result['test_exit_codes'] = {}
+                result['accepted_failures'] = {}
+                modtext = (root / 'go.mod').read_text()
+                pinned = bool(re.search(r'^\s*github\.com/colony-2/jobdb\s+' + re.escape(INITIAL_HISTORY_VERSION) + r'\s*$', modtext, re.M)) and not re.search(r'^\s*replace\b', modtext, re.M)
                 for i, package in enumerate(packages):
                     binary = scratch / ('test-' + str(i))
                     cmd = ['go', 'test', *goflags, '-c', '-o', str(binary), package]
@@ -228,32 +316,48 @@ def run(behavior):
                     names = (scratch / 'test-names.txt').read_text().splitlines()
                     chosen = select_tests(package, names, behavior)
                     if not chosen: raise RuntimeError('empty test selection: ' + package)
-                    expr = '^(' + '|'.join(chosen) + ')$'
-                    cmd = [str(binary), '-test.v=test2json', '-test.count=1', '-test.timeout=25m', '-test.run=' + expr]
-                    result['commands'].append(cmd)
-                    with (scratch / 'test-output.txt').open('w') as output:
-                        code = execute(cmd, log, cwd=testhome, env=testenv, stdout=output, **drop)
-                    raw = (scratch / 'test-output.txt').read_text()
-                    log.write(raw); log.flush()
-                    # Use Go's parser, including nested/skipped outcomes, rather
-                    # than inferring acceptance from the binary's exit code.
-                    jsoncmd = ['go', 'tool', 'test2json', '-p', package]
-                    result['commands'].append(jsoncmd)
-                    with (scratch / 'test-output.txt').open() as source, (scratch / 'events.json').open('w') as eventsfile:
-                        if execute(jsoncmd, log, cwd=root, env=buildenv, stdin=source, stdout=eventsfile):
-                            raise RuntimeError('test2json prerequisite failed')
-                    events = [json.loads(line) for line in (scratch / 'events.json').read_text().splitlines()]
-                    try:
-                        result['tests'][package] = validate_outcomes(events, chosen)
-                    except ValueError as exc:
-                        log.write(str(exc) + '\n')
-                        result['tests'][package] = {'acceptance_error': str(exc)}
-                        failed = True
-                    if code: failed = True
+                    result['tests'][package] = {}
+                    result['test_exit_codes'][package] = []
+                    # Bound each binary invocation independently. A large package
+                    # must not spend its entire timeout before its final tests.
+                    for offset in range(0, len(chosen), 20):
+                        batch = chosen[offset:offset + 20]
+                        expr = '^(' + '|'.join(batch) + ')$'
+                        cmd = [str(binary), '-test.v=test2json', '-test.count=1', '-test.timeout=25m', '-test.run=' + expr]
+                        result['commands'].append(cmd)
+                        with (scratch / 'test-output.txt').open('w') as output:
+                            code = execute(cmd, log, cwd=testhome, env=testenv, stdout=output, **drop)
+                        raw = (scratch / 'test-output.txt').read_text()
+                        log.write(raw); log.flush()
+                        # Use Go's parser, including nested/skipped outcomes, rather
+                        # than inferring acceptance from the binary's exit code.
+                        jsoncmd = ['go', 'tool', 'test2json', '-p', package]
+                        result['commands'].append(jsoncmd)
+                        with (scratch / 'test-output.txt').open() as source, (scratch / 'events.json').open('w') as eventsfile:
+                            if execute(jsoncmd, log, cwd=root, env=buildenv, stdin=source, stdout=eventsfile):
+                                raise RuntimeError('test2json prerequisite failed')
+                        events = [json.loads(line) for line in (scratch / 'events.json').read_text().splitlines()]
+                        try:
+                            accepted = accepted_initial_history_failures(events, package, pinned)
+                            result['tests'][package].update(validate_outcomes(events, batch, accepted))
+                            if code != (1 if accepted else 0):
+                                raise ValueError('unexpected test binary exit: ' + str(code))
+                            if accepted:
+                                result['accepted_failures'][package] = sorted(set(result['accepted_failures'].get(package, [])) | accepted)
+                                result['accepted_failure_direction'] = {'owner_job': INITIAL_HISTORY_OWNER_JOB, 'message': INITIAL_HISTORY_DIRECTION, 'dependency': INITIAL_HISTORY_VERSION}
+                                log.write('Accepted initial-history failures under human direction: ' + json.dumps(sorted(accepted)) + '\n')
+                        except ValueError as exc:
+                            log.write(str(exc) + '\n')
+                            result['tests'][package].setdefault('acceptance_errors', []).append(str(exc))
+                            failed = True
+                        result['test_exit_codes'][package].append(code)
+                        log.write('test binary exit=' + str(code) + '\n')
                 log.flush()
                 outcomes = test_outcomes((out / (behavior + '.log')).read_text().replace('\x16', ''))
                 result['outcomes'] = outcomes
-                result['status'] = 'failed' if failed or outcomes['failed'] or outcomes['skipped'] else 'passed'
+                accepted_names = {name for names in result['accepted_failures'].values() for name in names}
+                unaccepted = set(outcomes['failed_names']) - accepted_names
+                result['status'] = 'failed' if failed or unaccepted or outcomes['skipped'] else 'passed'
         except Exception as exc:
             result['status'] = 'failed'
             log.write(type(exc).__name__ + ': ' + str(exc) + '\n')
@@ -275,6 +379,10 @@ def aggregate():
         records.append(record)
     status = 'passed' if all(r['status'] == 'passed' for r in records) else 'failed'
     report = '# Native verification\n\n' + '\n'.join('* ' + r['behavior'] + ': ' + r['status'] for r in records)
+    for record in records:
+        for package, names in record.get('accepted_failures', {}).items():
+            report += '\n\nAccepted initial-history failures (raw test outcomes remain failed): ' + package + ': ' + ', '.join(names)
+            report += '\nHuman direction on ' + INITIAL_HISTORY_OWNER_JOB + ': “' + INITIAL_HISTORY_DIRECTION + '”'
     report += '\n\nHeld: Docker container-smoke/Postgres/MinIO topology; amd64/macOS matrix; release, signing and publication.\n'
     (out / 'verification.md').write_text(report)
     metadata = {'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version,

@@ -14,15 +14,21 @@ import (
 func TestSelectedNativeEligibilityWithoutSource(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		ctx = runtimetest.PrimaryGoalContext(ctx)
-		cell, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
+		_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
 		require.NoError(t, err)
-		other, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "other", Repo: "example.test/other"})
+		_, err = pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "other", Repo: "example.test/other"})
 		require.NoError(t, err)
 		retired, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "retired", Repo: "example.test/retired"})
 		require.NoError(t, err)
 		_, err = pgjobdb.RetireCell(ctx, db, jobdb.RetireCellRequest{CellKey: jobdb.CellKey{TenantID: "tenant", CellID: retired.ID}, IfMatch: `"` + retired.Revision + `"`})
 		require.NoError(t, err)
-		_, err = db.ExecContext(ctx, `INSERT INTO pgjobdb.goals(tenant_id,goal_id,cell_id,cell_repo) VALUES ('tenant','open',$1,'example.test/test'),('tenant','foreign',$2,'example.test/other'),('tenant','drift',$1,'example.test/old'),('tenant','closed',$1,'example.test/test')`, cell.ID, other.ID)
+		for _, fixture := range []struct{ id, cell, repo string }{{"open", "test", "example.test/test"}, {"foreign", "other", "example.test/other"}, {"drift", "test", "example.test/test"}, {"closed", "test", "example.test/test"}} {
+			_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID("origin-" + fixture.id), GoalID: fixture.id, Cell: fixture.cell, CellRepo: fixture.repo, WorkerID: "test", JobType: "work"})
+			require.NoError(t, err)
+			retireNativeMember(t, ctx, db, "origin-"+fixture.id)
+		}
+		// Registry repository drift leaves the captured origin owner unchanged.
+		_, err = db.ExecContext(ctx, `ALTER TABLE pgjobdb.job_facts DISABLE TRIGGER immutable_retained_goal; UPDATE pgjobdb.job_facts SET cell_repo='example.test/old' WHERE goal_id='drift'; ALTER TABLE pgjobdb.job_facts ENABLE TRIGGER immutable_retained_goal`)
 		require.NoError(t, err)
 		_, err = pgjobdb.FailGoal(ctx, db, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "tenant", GoalID: "closed"}, Message: "closed"})
 		require.NoError(t, err)
@@ -45,10 +51,9 @@ func TestSelectedNativeEligibilityWithoutSource(t *testing.T) {
 		_, publication := selectedNative(t, ctx, db, "no-source", "open", nil)
 		_, err = pgjobdb.SubmitJob(ctx, db, publication)
 		require.NoError(t, err)
-		var jobs, goals, candidates int
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM pgjobdb.job_facts),(SELECT count(*) FROM pgjobdb.goals),(SELECT count(*) FROM pgjobdb.goal_candidates)`).Scan(&jobs, &goals, &candidates))
-		require.Equal(t, 1, jobs)
+		var jobs, goals int
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM pgjobdb.job_facts),(SELECT count(*) FROM pgjobdb.retained_goal_projection)`).Scan(&jobs, &goals))
+		require.Equal(t, 6, jobs)
 		require.Equal(t, 4, goals)
-		require.Zero(t, candidates)
 	})
 }

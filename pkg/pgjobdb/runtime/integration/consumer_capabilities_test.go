@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -35,10 +36,10 @@ func TestConsumerCapabilities(t *testing.T) {
 				require.NoError(t, err)
 				consumer = jobdbtest.NewNamespacedClient(client, "identity-")
 			}
-			_, ok := consumer.(jobdb.GoalCandidateMutator)
+			_, ok := reflect.TypeOf(consumer).MethodByName("AddGoalCandidate")
 			require.False(t, ok)
 			_, ok = consumer.(jobdb.WorkflowRuntime)
-			require.False(t, ok)
+			require.True(t, ok)
 			ctx := runtimetest.PrimaryGoalContext(context.Background())
 			// Administrative authority belongs to the test caller, never the decorator.
 			noAuthority := context.Background()
@@ -68,7 +69,9 @@ func TestConsumerCapabilities(t *testing.T) {
 				return h
 			}
 			a := submit("source", "")
-			selected := submit("selected", a.GoalID)
+			origin := submit("selection-origin", "")
+			goalComplete(t, consumer, origin, false)
+			selected := submit("selected", origin.GoalID)
 			require.NotEmpty(t, a.CellID)
 			require.Equal(t, a.CellID, selected.CellID)
 			require.Equal(t, a.CellRepo, selected.CellRepo)
@@ -82,7 +85,7 @@ func TestConsumerCapabilities(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, listed.Jobs, 1)
 			require.Equal(t, selected.JobKey, listed.Jobs[0].JobKey)
-			require.Equal(t, a.GoalID, listed.Jobs[0].GoalID)
+			require.Equal(t, origin.GoalID, listed.Jobs[0].GoalID)
 			lease, err := consumer.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: a.JobKey, WorkerID: "worker", Routes: []jobdb.Route{{JobType: "work"}}, LeaseDuration: time.Minute})
 			require.NoError(t, err)
 			require.NotNil(t, lease)
@@ -202,6 +205,7 @@ func TestConsumerNamespacedAuthority(t *testing.T) {
 			admin := runtimetest.PrimaryGoalContext(context.Background())
 			source, err := celltest.Submit(rt, admin, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "identity-tenant", Cell: "test", CellRepo: "example.test/test", JobID: "source", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 			require.NoError(t, err)
+			goalComplete(t, rt, source, false)
 			for _, policy := range []struct {
 				name, tenant       string
 				permissions, cells map[string]bool

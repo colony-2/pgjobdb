@@ -141,8 +141,8 @@ func TestLeaseEventRenewableAndKeepAlive(t *testing.T) {
 
 func recordLeaseEventPlan(t *testing.T, db *sql.DB, d *listQueryRecorder, name string) {
 	t.Helper()
-	require.Contains(t, d.query, "SELECT DISTINCT tenant_id,job_id")
-	require.Contains(t, d.query, "g.tenant_id=e.tenant_id AND g.job_id=e.job_id")
+	require.Contains(t, d.query, "e.goal_id=ANY(")
+	require.NotContains(t, d.query, "goal_candidates")
 	require.NotContains(t, d.query, "OFFSET")
 	rows, err := db.Query("EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) "+d.query, d.args...)
 	require.NoError(t, err)

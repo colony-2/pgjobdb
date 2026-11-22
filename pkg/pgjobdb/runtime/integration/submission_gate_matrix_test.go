@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,7 +18,11 @@ func (f *availabilityFixture) databaseTime() time.Time {
 	return now.UTC()
 }
 func (f *availabilityFixture) waitUntil(at time.Time) {
-	require.Eventually(f.t, func() bool { return !f.databaseTime().Before(at) }, 8*time.Second, 10*time.Millisecond)
+	remaining := at.Sub(f.databaseTime())
+	if remaining < 0 {
+		remaining = 0
+	}
+	require.Eventually(f.t, func() bool { return !f.databaseTime().Before(at) }, remaining+8*time.Second, 10*time.Millisecond)
 }
 func (f *availabilityFixture) deny(key jobdb.JobKey) {
 	t := f.t
@@ -46,11 +51,16 @@ func (f *availabilityFixture) complete(key jobdb.JobKey, success bool) {
 
 func TestSubmissionAvailabilityGateMatrix(t *testing.T) {
 	newDSN := conformanceDSNFactory(t)
+	// Each case installs and reopens a real database. Bound fixture startup so
+	// CPU and I/O contention cannot consume its observation window.
+	fixtures := make(chan struct{}, 3)
 	for _, route := range availabilityRoutes {
 		for _, kind := range []string{"completion", "exact-success", "goal-success", "mixed"} {
 			for _, timeFirst := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/time-first=%v", route, kind, timeFirst), func(t *testing.T) {
 					t.Parallel()
+					fixtures <- struct{}{}
+					defer func() { <-fixtures }()
 					f := newAvailabilityFixture(t, newDSN(t))
 					submit := f.submitter(route)
 					kinds := []string{kind}
@@ -75,13 +85,20 @@ func TestSubmissionAvailabilityGateMatrix(t *testing.T) {
 					var later jobdb.JobHandle
 					if kind == "goal-success" || kind == "mixed" {
 						p := producers[len(producers)-1]
-						var err error
-						laterRequest := availabilityRequest("later-candidate", nil)
-						laterRequest.Job.GoalID = p.GoalID
-						later, err = f.backend.SubmitJob(f.ctx, laterRequest)
+						// A failed attempt leaves the goal open for a recovery producer.
+						f.complete(p.JobKey, false)
+						recoveryRequest := availabilityRequest("recovery-producer", nil)
+						recoveryRequest.Job.GoalID = p.GoalID
+						recovery, err := f.backend.SubmitJob(f.ctx, recoveryRequest)
+						require.NoError(t, err)
+						producers[len(producers)-1] = recovery
+						later, err = f.backend.SubmitJob(f.ctx, availabilityRequest("independent-later", nil))
 						require.NoError(t, err)
 					}
-					original := f.databaseTime().Add(3 * time.Second).Truncate(time.Microsecond).Add(123 * time.Nanosecond)
+					// Leave room for real installer verification on reopen while the
+					// parallel matrix starts other databases. The assertions still
+					// require observing both gates before this exact persisted time.
+					original := f.databaseTime().Add(10 * time.Second).Truncate(time.Microsecond).Add(123 * time.Nanosecond)
 					req := availabilityRequest("consumer", &original)
 					req.Job.Dependencies = deps
 					// Both consumers share a marker for bounded polling in this fixture.
@@ -90,7 +107,19 @@ func TestSubmissionAvailabilityGateMatrix(t *testing.T) {
 					require.NoError(t, err)
 					pollRequest := req
 					pollRequest.Job.JobID = "consumer-poll"
-					pollHandle, err := submit(f.ctx, pollRequest)
+					pollSubmit := submit
+					if strings.HasPrefix(route, "selected-") {
+						// The independently live polling consumer needs its own idle goal.
+						origin, err := f.backend.SubmitJob(f.ctx, availabilityRequest("poll-origin", nil))
+						require.NoError(t, err)
+						f.complete(origin.JobKey, false)
+						pollRequest.Job.GoalID = origin.GoalID
+						pollSubmit = f.backend.SubmitJob
+						if route == "selected-http" {
+							pollSubmit = f.client.SubmitJob
+						}
+					}
+					pollHandle, err := pollSubmit(f.ctx, pollRequest)
 					require.NoError(t, err)
 					effective := effectiveAvailability(original)
 					f.assertReads(h.JobKey, effective)
@@ -115,6 +144,9 @@ func TestSubmissionAvailabilityGateMatrix(t *testing.T) {
 					}
 					f.reopen()
 					f.assertReads(h.JobKey, effective)
+					if !timeFirst {
+						require.True(t, f.databaseTime().Before(effective), "missed persisted future observation")
+					}
 					f.deny(h.JobKey)
 					if descriptor != "" {
 						require.Equal(t, descriptor, f.descriptor(h.JobKey))
@@ -129,7 +161,7 @@ func TestSubmissionAvailabilityGateMatrix(t *testing.T) {
 					} else {
 						f.waitUntil(effective)
 					}
-					// Winning goal bindings must survive another reopen and later candidates.
+					// Winning recovery bindings survive reopen and independent completion.
 					if kind == "goal-success" || kind == "mixed" {
 						p := producers[len(producers)-1]
 						goal, err := f.backend.GetGoal(f.ctx, jobdb.GoalKey{TenantId: "tenant", GoalID: p.GoalID})
@@ -171,11 +203,14 @@ func TestSubmissionAvailabilityGateMatrix(t *testing.T) {
 
 func TestSubmissionAvailabilityFailedDependencies(t *testing.T) {
 	newDSN := conformanceDSNFactory(t)
+	fixtures := make(chan struct{}, 3)
 	for _, route := range availabilityRoutes {
 		for _, kind := range []string{"completion", "exact-success", "goal-success"} {
 			for _, timeFirst := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/time-first=%v", route, kind, timeFirst), func(t *testing.T) {
 					t.Parallel()
+					fixtures <- struct{}{}
+					defer func() { <-fixtures }()
 					f := newAvailabilityFixture(t, newDSN(t))
 					f.nativeHistory = route == "native"
 					submit := f.submitter(route)
@@ -188,7 +223,7 @@ func TestSubmissionAvailabilityFailedDependencies(t *testing.T) {
 					if kind == "goal-success" {
 						d.Target = jobdb.DependencyTarget{GoalID: p.GoalID}
 					}
-					at := f.databaseTime().Add(2 * time.Second).Truncate(time.Microsecond).Add(123 * time.Nanosecond)
+					at := f.databaseTime().Add(10 * time.Second).Truncate(time.Microsecond).Add(123 * time.Nanosecond)
 					req := availabilityRequest("consumer", &at)
 					req.Job.Dependencies = []jobdb.Dependency{d}
 					req.Job.Metadata = []byte(`{"consumer":"consumer"}`)
@@ -205,6 +240,9 @@ func TestSubmissionAvailabilityFailedDependencies(t *testing.T) {
 						require.NoError(t, err)
 					}
 					f.reopen()
+					if !timeFirst {
+						require.True(t, f.databaseTime().Before(effectiveAvailability(at)), "missed failed-dependency future observation")
+					}
 					if kind == "completion" {
 						if !timeFirst {
 							f.deny(h.JobKey)

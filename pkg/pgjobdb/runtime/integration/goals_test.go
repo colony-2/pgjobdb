@@ -101,9 +101,9 @@ func TestGoalFailureSnapshotAndCancellation(t *testing.T) {
 	goalRuntimes(t, func(t *testing.T, r jobdb.ConsumerRuntime) {
 		ctx := celltest.Context(context.Background())
 		a := goalSubmit(t, r, "a")
+		require.NoError(t, r.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: a.JobKey, Reason: "first approach abandoned"}))
 		b := goalSubmitSelected(t, r, "b", a.GoalID)
 		consumer := goalSubmit(t, r, "consumer", jobdb.Dependency{Target: jobdb.DependencyTarget{GoalID: a.GoalID}, Condition: jobdb.JobPrereqSuccess})
-		require.NoError(t, r.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: a.JobKey, Reason: "first approach abandoned"}))
 		req := jobdb.FailGoalRequest{GoalKey: goalKey(a), Message: "No acceptable solution"}
 		failed, err := r.FailGoal(ctx, req)
 		require.NoError(t, err)
@@ -136,6 +136,7 @@ func TestGoalPrimarySuccessAndDurableWait(t *testing.T) {
 		bi, err := r.GetJob(ctx, b.JobKey)
 		require.NoError(t, err)
 		require.Empty(t, bi.OtherGoalIDs)
+		goalComplete(t, r, a, false)
 		winner := goalSubmitSelected(t, r, "winner", a.GoalID)
 		goalComplete(t, r, winner, true)
 		wait, err := r.GetDependencyWait(ctx, jobdb.DependencyWaitKey{JobKey: b.JobKey, WaitID: "join-1"})
@@ -154,26 +155,32 @@ func TestConcurrentGoalResolution(t *testing.T) {
 	goalRuntimes(t, func(t *testing.T, r jobdb.ConsumerRuntime) {
 		ctx := celltest.Context(context.Background())
 		a := goalSubmit(t, r, "a")
+		goalComplete(t, r, a, false)
 		b := goalSubmitSelected(t, r, "b", a.GoalID)
-		leases := []jobdb.ExecutionLease{goalLease(t, r, a), goalLease(t, r, b)}
+		lease := goalLease(t, r, b)
 		var wg sync.WaitGroup
-		errs := make(chan error, 2)
-		for _, lease := range leases {
-			wg.Add(1)
-			go func(lease jobdb.ExecutionLease) {
-				defer wg.Done()
-				chapter := jobdb.Chapter{Ordinal: 1, TaskType: "work", CreatedAt: time.Now().UTC(), Body: jobdb.JobAttemptOutcomeChapter{Outcome: jobdb.ApplicationOutputOutcome{Output: jobdb.ApplicationOutputBytes{Data: []byte(`true`)}}}}
-				errs <- lease.Complete(ctx, jobdb.CompleteExecutionRequest{Status: "success", Chapter: &chapter})
-			}(lease)
-		}
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, err := r.FailGoal(ctx, jobdb.FailGoalRequest{GoalKey: goalKey(a), Message: "concurrent closure"})
+			if err != nil {
+				require.ErrorIs(t, err, jobdb.ErrGoalConflict)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			chapter := jobdb.Chapter{Ordinal: 1, TaskType: "work", CreatedAt: time.Now().UTC(), Body: jobdb.JobAttemptOutcomeChapter{Outcome: jobdb.ApplicationOutputOutcome{Output: jobdb.ApplicationOutputBytes{Data: []byte(`true`)}}}}
+			require.NoError(t, lease.Complete(ctx, jobdb.CompleteExecutionRequest{Status: "success", Chapter: &chapter}))
+		}()
 		wg.Wait()
-		close(errs)
-		for err := range errs {
-			require.NoError(t, err)
-		}
 		info, err := r.GetGoal(ctx, goalKey(a))
 		require.NoError(t, err)
-		require.Contains(t, []string{"a", "b"}, info.SuccessfulJobID)
+		if info.State == jobdb.GoalSucceeded {
+			require.Equal(t, "b", info.SuccessfulJobID)
+		} else {
+			require.Equal(t, jobdb.GoalFailed, info.State)
+			require.Equal(t, "concurrent closure", info.Failure.Message)
+		}
 		require.EqualValues(t, 2, info.Revision)
 	})
 }
@@ -233,10 +240,13 @@ func TestPostgresGoalSharedRestartIdentity(t *testing.T) {
 		if signed, ok := renewed.(interface{ LeaseToken() string }); ok {
 			token = signed.LeaseToken()
 		}
-		// A restart needs a recorded boundary. Keep the scheduler lease live
-		// while recording its outcome, as in the history-before-completion window.
-		require.NoError(t, r.PutChapter(ctx, jobdb.PutChapterRequest{LeaseID: renewed.LeaseID(), LeaseToken: token, Ref: jobdb.ChapterRef{JobKey: source.JobKey, Ordinal: 1}, Chapter: jobdb.Chapter{Ordinal: 1, TaskType: "work", CreatedAt: time.Now().UTC(), Body: jobdb.JobAttemptOutcomeChapter{Outcome: jobdb.AppErrorOutcome{Error: jobdb.AppErrorPayload{Message: "retry elsewhere"}}}}}))
+		// A recorded boundary alone does not free admission capacity.
+		finalChapter := jobdb.Chapter{Ordinal: 1, TaskType: "work", CreatedAt: time.Now().UTC(), Body: jobdb.JobAttemptOutcomeChapter{Outcome: jobdb.AppErrorOutcome{Error: jobdb.AppErrorPayload{Message: "retry elsewhere"}}}}
+		require.NoError(t, r.PutChapter(ctx, jobdb.PutChapterRequest{LeaseID: renewed.LeaseID(), LeaseToken: token, Ref: jobdb.ChapterRef{JobKey: source.JobKey, Ordinal: 1}, Chapter: finalChapter}))
 		req := jobdb.SubmitRestartJobRequest{RequestID: "shared-operation", Job: jobdb.SubmitRestartJob{Cell: "test", PriorJobKey: source.JobKey, ShareGoal: true}}
+		_, err = r.SubmitRestartJob(ctx, req)
+		require.ErrorIs(t, err, jobdb.ErrGoalConflict)
+		require.NoError(t, renewed.Complete(ctx, jobdb.CompleteExecutionRequest{Status: "failed_app", Chapter: &finalChapter}))
 		shared, err := r.SubmitRestartJob(ctx, req)
 		require.NoError(t, err)
 		require.Equal(t, source.GoalID, shared.GoalID)

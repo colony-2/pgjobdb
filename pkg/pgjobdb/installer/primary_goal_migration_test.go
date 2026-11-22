@@ -16,7 +16,7 @@ import (
 //go:embed testdata/format10.sql
 var format10 string
 
-func TestPriorPrimaryGoalPreparationsRejectedUnchanged(t *testing.T) {
+func TestPriorPrimaryGoalPreparationsPreserved(t *testing.T) {
 	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
 		_, err := db.ExecContext(ctx, format10)
 		require.NoError(t, err)
@@ -33,16 +33,17 @@ func TestPriorPrimaryGoalPreparationsRejectedUnchanged(t *testing.T) {
 		_, err = db.ExecContext(ctx, `UPDATE pgjobdb.job_preparations SET published=TRUE WHERE job_id='ordinary'`)
 		require.NoError(t, err)
 		var before string
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(p) ORDER BY job_id)::text FROM pgjobdb.job_preparations p`).Scan(&before))
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(p)-'selected_goal_id'-'receipt' ORDER BY job_id)::text FROM pgjobdb.job_preparations p`).Scan(&before))
 		inst := pginstaller.Installer{DB: db}
 		require.Error(t, inst.Verify(ctx))
-		require.ErrorContains(t, inst.Apply(ctx), "unsupported schema format 10")
+		require.NoError(t, inst.Apply(ctx))
+		require.NoError(t, inst.Verify(ctx))
 		var after string
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(p) ORDER BY job_id)::text FROM pgjobdb.job_preparations p`).Scan(&after))
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(p)-'selected_goal_id'-'receipt' ORDER BY job_id)::text FROM pgjobdb.job_preparations p`).Scan(&after))
 		require.JSONEq(t, before, after)
 		var version int
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version))
-		require.Equal(t, 10, version)
+		require.Equal(t, 13, version)
 
 	})
 }

@@ -30,6 +30,8 @@ func TestPostgresConsumerGoalsCommands(t *testing.T) {
 		return h
 	}
 	a := submit("a", "")
+	// An unsuccessful attempt leaves the goal open for one recovery member.
+	require.NoError(t, rt.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: a.JobKey, WorkerID: "fixture-drain"}))
 	b := submit("b", a.GoalID)
 	other := submit("other", "")
 	dep := jobdb.Dependency{Target: jobdb.DependencyTarget{GoalID: a.GoalID}, Condition: jobdb.JobPrereqSuccess}
@@ -47,7 +49,11 @@ func TestPostgresConsumerGoalsCommands(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				routes = append(routes, r.Method+" "+r.URL.Path)
 				require.False(t, strings.Contains(r.URL.Path, "/candidates/"))
-				require.Contains(t, r.URL.Path, "/tenants/tenant/")
+				if r.URL.Path == "/v1/capabilities/job-goals" {
+					require.Equal(t, http.MethodGet, r.Method)
+				} else {
+					require.Contains(t, r.URL.Path, "/tenants/tenant/")
+				}
 				if r.Header.Get("Authorization") != "Bearer consumer-cli-token" {
 					http.Error(w, "denied", http.StatusForbidden)
 					return

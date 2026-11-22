@@ -78,7 +78,7 @@ func ListGoals(ctx context.Context, db DB, req jobdb.ListGoalsRequest) (jobdb.Li
 		where = append(where, "EXISTS (SELECT 1 FROM pgjobdb._goal_members(g.tenant_id,g.goal_id) m JOIN pgjobdb.job_facts f ON "+strings.Join(sub, " AND ")+")")
 	}
 	limit := bind(size + 1)
-	query := `WITH page AS MATERIALIZED (SELECT g.tenant_id,g.goal_id FROM pgjobdb.goals g WHERE ` + strings.Join(where, " AND ") + ` ORDER BY g.goal_id COLLATE "C" LIMIT ` + limit + `)
+	query := `WITH page AS MATERIALIZED (SELECT g.tenant_id,g.goal_id FROM pgjobdb.retained_goal_projection g WHERE ` + strings.Join(where, " AND ") + ` ORDER BY g.goal_id COLLATE "C" LIMIT ` + limit + `)
  SELECT pgjobdb.goal_info(p.tenant_id,p.goal_id) || jsonb_build_object(
  'candidateCount',n.total,'nonTerminalCandidateCount',n.nonterminal,
  'terminalCandidateCount',n.terminal,'unavailableCandidateCount',n.unavailable)

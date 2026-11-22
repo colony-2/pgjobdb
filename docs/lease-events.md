@@ -27,7 +27,7 @@ Results are newest first by stored microsecond time and numeric event sequence.
 Use the opaque `NextPageToken` with identical options to fetch older events.
 Both time bounds round upward to microsecond precision. Lower bounds are inclusive;
 upper bounds are exclusive. Cell scope is resolved and authorized on every page.
-Additional goals use current memberships; returned primary goals remain historical.
+Goal filters use immutable primary membership; returned primary goals remain historical.
 Hidden jobs follow the existing include-hidden listing policy.
 
 Traversal is live, not a multi-page snapshot or gap-free changefeed. Concurrent
@@ -36,9 +36,9 @@ the first page to discover newer activity. An empty result means no visible reta
 history, not proof that the job never ran. Cursors use persisted tenant catalog keys
 and are invalidated by changes to filters or effective permission scope.
 
-Format 12 includes typed `pgjobdb.lease_events` storage and indexes. The installer
-requires a fresh database and rejects earlier formats. Reinstallation and
-reopening of format-12 databases preserve retained history and cursor keys.
+Format 13 preserves typed `pgjobdb.lease_events` storage and indexes. The installer
+converts supported formats 9–12; conversion and reopening preserve retained history
+and cursor keys. See [retained goals and conversion](retained-goals.md).
 
 Operators must deploy compatible writers before recording collection activation. Installing the schema
 alone does not establish collection completeness. No rollout is performed by

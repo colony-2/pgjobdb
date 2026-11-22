@@ -11,6 +11,7 @@ import (
 	chapterpostgres "github.com/colony-2/jobdb/pkg/jobdb/chapterstore/postgres"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
 	schemapostgres "github.com/colony-2/jobdb/pkg/jobdb/schemastore/postgres"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/internal/runtimeadapter"
 	"github.com/stretchr/testify/require"
 )
@@ -20,6 +21,7 @@ func TestSubmissionAvailabilityStagedHistoryAndLostResponse(t *testing.T) {
 	f := newAvailabilityFixture(t, newDSN(t))
 	source, err := f.backend.SubmitJob(f.ctx, availabilityRequest("source", nil))
 	require.NoError(t, err)
+	retireNativeMember(t, f.ctx, f.db, source.JobKey.JobId)
 	chapters, err := chapterpostgres.NewSQLDB(f.ctx, f.db, chapterpostgres.Config{BlobStoreURI: f.cfg.BlobStoreURI, MaxInlineArtifactBytes: 1})
 	require.NoError(t, err)
 	defer chapters.Close(f.ctx)
@@ -63,6 +65,8 @@ func TestSubmissionAvailabilityStagedHistoryAndLostResponse(t *testing.T) {
 	require.NoError(t, err)
 	f.assertReads(h.JobKey, effectiveAvailability(at))
 	require.Contains(t, f.descriptor(h.JobKey), "2300-01-01T00:00:00.123456789Z")
+	// Drain this delayed attempt before publishing another member of its goal.
+	require.NoError(t, pgjobdb.CancelJob(f.ctx, f.db, pgjobdb.CancelJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID(h.JobKey.JobId), WorkerID: "fixture-drain"}))
 	scheduler.after = func() error { return errors.New("injected committed response loss") }
 	_, err = core().SubmitJob(f.ctx, request("lost-response"))
 	require.ErrorContains(t, err, "injected committed response loss")

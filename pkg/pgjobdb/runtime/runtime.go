@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 
@@ -24,6 +25,8 @@ import (
 // Config selects Postgres and artifact storage for the runtime.
 type Config struct {
 	PostgresDSN string
+	// ConversionReportWriter exports the staged installer report before commit.
+	ConversionReportWriter io.Writer
 	// ConfigurationLimits bounds tenant configuration; zero fields use JobDB defaults.
 	ConfigurationLimits jobdb.ConfigurationLimits
 	// BlobStoreURI is a blob bucket URL for large chapter artifacts.
@@ -83,7 +86,7 @@ func NewSQLDB(ctx context.Context, db *sql.DB, cfg Config) (*Runtime, error) {
 	if cfg.BlobStoreURI == "" {
 		return nil, fmt.Errorf("direct runtime: blob store URI is required")
 	}
-	install := installer.Installer{DB: db}
+	install := installer.Installer{DB: db, ReportWriter: cfg.ConversionReportWriter}
 	if err := install.Apply(ctx); err != nil {
 		return nil, fmt.Errorf("direct runtime: install scheduler: %w", err)
 	}

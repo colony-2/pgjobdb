@@ -37,7 +37,7 @@ func TestSubmissionFormat12Upgrade(t *testing.T) {
 		require.NoError(t, inst.Apply(ctx))
 		var version int
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version))
-		require.Equal(t, 12, version)
+		require.Equal(t, 13, version)
 		var port string
 		require.NoError(t, db.QueryRowContext(ctx, `SHOW port`).Scan(&port))
 		reopened, err := sql.Open("postgres", "host=localhost port="+port+" user=postgres password=postgres dbname=postgres sslmode=disable")

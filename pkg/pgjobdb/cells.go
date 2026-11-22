@@ -214,7 +214,7 @@ func RetireCell(ctx context.Context, db DB, req jobdb.RetireCellRequest) (out jo
 		out, e = s.Retire(ctx, req, func(id string) (bool, error) {
 			var busy bool
 			e := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pgjobdb.jobs j JOIN pgjobdb.job_facts f USING(tenant_id,job_id) WHERE f.tenant_id=$1 AND f.cell_id=$2)
-    OR EXISTS(SELECT 1 FROM pgjobdb.goals WHERE tenant_id=$1 AND cell_id=$2 AND state='OPEN')
+    OR EXISTS(SELECT 1 FROM pgjobdb.retained_goal_projection WHERE tenant_id=$1 AND cell_id=$2 AND state='OPEN')
     OR EXISTS(SELECT 1 FROM pgjobdb.job_preparations p WHERE tenant_id=$1 AND NOT published AND cell_id=$2)`, req.TenantID, id).Scan(&busy)
 			return busy, e
 		})

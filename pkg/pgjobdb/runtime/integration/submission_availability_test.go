@@ -120,6 +120,7 @@ func (f *availabilityFixture) submitter(route string) func(context.Context, jobd
 	case "selected-direct", "selected-http":
 		source, err := f.backend.SubmitJob(f.ctx, availabilityRequest("selected-source", nil))
 		require.NoError(t, err)
+		retireNativeMember(t, f.ctx, f.db, source.JobKey.JobId)
 		return func(ctx context.Context, r jobdb.SubmitJobRequest) (jobdb.JobHandle, error) {
 			r.Job.GoalID = source.GoalID
 			if route == "selected-http" {
@@ -184,7 +185,7 @@ var availabilityRoutes = []string{"native", "direct-explicit", "direct-generated
 
 func (f *availabilityFixture) noPublication(id string) {
 	f.t.Helper()
-	for _, table := range []string{"jobs", "job_facts", "goal_candidates", "dependency_waits"} {
+	for _, table := range []string{"jobs", "job_facts", "dependency_waits"} {
 		var n int
 		require.NoError(f.t, f.db.QueryRowContext(f.ctx, `SELECT count(*) FROM pgjobdb.`+table+` WHERE tenant_id='tenant' AND job_id=$1`, id).Scan(&n))
 		require.Zero(f.t, n, table)
@@ -208,12 +209,12 @@ func TestSubmissionAvailabilityPublicationRoutes(t *testing.T) {
 				req := availabilityRequest(id, &bad)
 				req.Job.Dependencies = []jobdb.Dependency{{Target: jobdb.DependencyTarget{JobID: producer.JobKey.JobId}, Condition: jobdb.JobPrereqSuccess}}
 				var before string
-				require.NoError(t, f.db.QueryRowContext(f.ctx, `SELECT jsonb_build_array((SELECT count(*) FROM pgjobdb.job_facts),(SELECT count(*) FROM pgjobdb.goals),(SELECT count(*) FROM pgjobdb.dependency_waits),(SELECT count(*) FROM pgjobdb.job_preparations WHERE published OR receipt IS NOT NULL))::text`).Scan(&before))
+				require.NoError(t, f.db.QueryRowContext(f.ctx, `SELECT jsonb_build_array((SELECT count(*) FROM pgjobdb.job_facts),(SELECT count(*) FROM pgjobdb.retained_goal_projection),(SELECT count(*) FROM pgjobdb.dependency_waits),(SELECT count(*) FROM pgjobdb.job_preparations WHERE published OR receipt IS NOT NULL))::text`).Scan(&before))
 				_, err = submit(f.ctx, req)
 				require.Error(t, err)
 				f.noPublication(id)
 				var after string
-				require.NoError(t, f.db.QueryRowContext(f.ctx, `SELECT jsonb_build_array((SELECT count(*) FROM pgjobdb.job_facts),(SELECT count(*) FROM pgjobdb.goals),(SELECT count(*) FROM pgjobdb.dependency_waits),(SELECT count(*) FROM pgjobdb.job_preparations WHERE published OR receipt IS NOT NULL))::text`).Scan(&after))
+				require.NoError(t, f.db.QueryRowContext(f.ctx, `SELECT jsonb_build_array((SELECT count(*) FROM pgjobdb.job_facts),(SELECT count(*) FROM pgjobdb.retained_goal_projection),(SELECT count(*) FROM pgjobdb.dependency_waits),(SELECT count(*) FROM pgjobdb.job_preparations WHERE published OR receipt IS NOT NULL))::text`).Scan(&after))
 				require.Equal(t, before, after)
 				good := time.Date(2300, 1, 1, 0, 0, 0, 123456789, time.UTC)
 				req.Job.AvailableAt = &good
@@ -224,6 +225,9 @@ func TestSubmissionAvailabilityPublicationRoutes(t *testing.T) {
 					var descriptor string
 					require.NoError(t, f.db.QueryRowContext(f.ctx, `SELECT descriptor FROM pgjobdb.job_preparations WHERE job_id=$1`, h.JobKey.JobId).Scan(&descriptor))
 					require.Contains(t, descriptor, "2300-01-01T00:00:00.123456789Z")
+				}
+				if strings.HasPrefix(route, "selected-") {
+					require.NoError(t, pgjobdb.CancelJob(f.ctx, f.db, pgjobdb.CancelJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID(h.JobKey.JobId), WorkerID: "fixture-drain"}))
 				}
 			}
 			if strings.HasPrefix(route, "http-") {

@@ -15,4 +15,15 @@ before selected-goal submission adds explicit selection and retained receipts.
 `pkg/pgjobdb/pgjobdb.sql`. `TestSubmissionFormat12Upgrade` creates valid work
 with those definitions, reproduces the historical non-UTC read failure, applies
 and reapplies the current SQL, then reads and acquires that work through a new
-connection. The schema format stays 12.
+connection. The current retained-goal installer advances it to format 13.
+
+
+`format11.sql` is the unchanged scheduler SQL from
+`5acfe712ea0591400e6406d465b1d75ea3809207`, path
+`pkg/pgjobdb/pgjobdb.sql`. SHA256:
+`33cc0fd5302843060e2cf5d86c0ecdfae67cb49234d4cede52082cf405a6b885`.
+It includes genuine selected-goal preparations and accepted receipts before the
+format-12 scheduler retirement. `TestGoalConversionHistoricalFormats` populates
+all four authentic formats through their original APIs and converts them to 13.
+These fixtures are frozen inputs; changing only a current schema marker is not a
+historical upgrade test.

@@ -79,6 +79,7 @@ func TestSelectedIndependentHistoryBoundaries(t *testing.T) {
 		runtime := makeRuntime()
 		source, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 		require.NoError(t, err)
+		retireNativeMember(t, ctx, db, "source")
 		request := func(id string) jobdb.SubmitJobRequest {
 			return jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: id, GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic("retained", jobdb.NewArtifactFromBytes("input.txt", []byte("independent blobfs artifact")))}}
 		}
@@ -90,6 +91,7 @@ func TestSelectedIndependentHistoryBoundaries(t *testing.T) {
 			assertNoSelectedScheduler(t, ctx, db, "history-failure")
 			_, err = runtime.SubmitJob(ctx, request("history-failure"))
 			require.NoError(t, err)
+			retireNativeMember(t, ctx, db, "history-failure")
 		})
 		t.Run("incomplete story ordinary retry", func(t *testing.T) {
 			history.failUpload = true
@@ -124,6 +126,7 @@ func TestSelectedIndependentHistoryBoundaries(t *testing.T) {
 			h, err := makeRuntime().SubmitJob(ctx, request("rejected"))
 			require.NoError(t, err)
 			require.Equal(t, source.GoalID, h.GoalID)
+			retireNativeMember(t, ctx, db, "rejected")
 		})
 		t.Run("scheduler rollback retains independent history", func(t *testing.T) {
 			_, err := db.ExecContext(ctx, `ALTER TABLE pgjobdb.job_preparations ADD CONSTRAINT injected_receipt_failure CHECK(job_id<>'rolled-back' OR NOT published) NOT VALID`)
@@ -142,6 +145,7 @@ func TestSelectedIndependentHistoryBoundaries(t *testing.T) {
 			req.Job.Dependencies = []jobdb.Dependency{{Target: jobdb.DependencyTarget{JobID: source.JobKey.JobId}, Condition: jobdb.JobPrereqSuccess}}
 			_, err = makeRuntime().SubmitJob(ctx, req)
 			require.NoError(t, err)
+			retireNativeMember(t, ctx, db, "rolled-back")
 		})
 		t.Run("lost publication response", func(t *testing.T) {
 			scheduler.after = func() error { return errors.New("injected committed response loss") }
@@ -153,6 +157,7 @@ func TestSelectedIndependentHistoryBoundaries(t *testing.T) {
 			second, err := makeRuntime().SubmitJob(ctx, request("lost-response"))
 			require.NoError(t, err)
 			require.Equal(t, first, second)
+			retireNativeMember(t, ctx, db, "lost-response")
 		})
 		t.Run("retained history cannot bypass closure", func(t *testing.T) {
 			scheduler.before = func(context.Context, runtimecore.CreateJobRequest) error { return errors.New("defer publication") }

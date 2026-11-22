@@ -66,6 +66,7 @@ func TestPostgresSelectedConcurrentRequests(t *testing.T) {
 	ctx := runtimetest.PrimaryGoalContext(context.Background())
 	source, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "parallel", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 	require.NoError(t, err)
+	goalComplete(t, rt, source, false)
 	req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "parallel", JobID: "selected", GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic("same")}}
 	type result struct {
 		h   jobdb.JobHandle
@@ -90,6 +91,7 @@ func TestPostgresSelectedConcurrentRequests(t *testing.T) {
 	changed.Job.Data = jobdb.NewTaskDataOrPanic("changed")
 	_, err = rt.SubmitJob(ctx, changed)
 	require.ErrorIs(t, err, jobdb.ErrConflict)
+	goalComplete(t, rt, accepted, false)
 	competing := req
 	competing.Job.JobID = "competing"
 	alternative := competing

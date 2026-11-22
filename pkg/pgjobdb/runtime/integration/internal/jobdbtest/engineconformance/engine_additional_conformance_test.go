@@ -431,14 +431,15 @@ func TestGetJobRunRetryRepresentationOnDirectRuntime(t *testing.T) {
 			continue
 		}
 		t.Run(harness.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
-			defer cancel()
-
 			t.Run("job-retry", func(t *testing.T) {
 				job := &retryJob{}
 				ws := jobdbtest.MustWorkSet(t, job)
 				built := harness.New(t, ws)
 				defer built.Shutdown(t)
+
+				// Give each execution its own budget after database startup.
+				ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
+				defer cancel()
 
 				jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: built.WorkerTenantID,
@@ -469,6 +470,10 @@ func TestGetJobRunRetryRepresentationOnDirectRuntime(t *testing.T) {
 				ws := jobdbtest.MustWorkSet(t, job, task)
 				built := harness.New(t, ws)
 				defer built.Shutdown(t)
+
+				// Give each execution its own budget after database startup.
+				ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 20*time.Second)
+				defer cancel()
 
 				jobKeyHandle, err := built.Engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
 					TenantId: built.WorkerTenantID,

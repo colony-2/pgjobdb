@@ -68,7 +68,7 @@ func TestSubmissionAvailabilityNative(t *testing.T) {
 
 func assertNoAvailabilityPublication(t *testing.T, ctx context.Context, db *sql.DB, id string) {
 	t.Helper()
-	for _, table := range []string{"jobs", "job_facts", "goal_candidates", "dependency_waits"} {
+	for _, table := range []string{"jobs", "job_facts", "dependency_waits"} {
 		var count int
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.`+table+` WHERE tenant_id='tenant' AND job_id=$1`, id).Scan(&count))
 		require.Zero(t, count, table)

@@ -19,9 +19,6 @@ func (s Scheduler) PrepareJob(ctx context.Context, req runtimecore.JobPreparatio
 func (s Scheduler) GetGoal(ctx context.Context, key jobdb.GoalKey) (jobdb.GoalInfo, error) {
 	return pgjobdb.GetGoal(ctx, s.DB, key)
 }
-func (s Scheduler) AddGoalCandidate(ctx context.Context, req jobdb.AddGoalCandidateRequest) (jobdb.GoalCandidateInfo, error) {
-	return pgjobdb.AddGoalCandidate(ctx, s.DB, req)
-}
 func (s Scheduler) FailGoal(ctx context.Context, req jobdb.FailGoalRequest) (jobdb.GoalInfo, error) {
 	return pgjobdb.FailGoal(ctx, s.DB, req)
 }

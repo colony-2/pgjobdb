@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
+	"github.com/colony-2/jobdb/pkg/jobdb/runtimetest"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 	"github.com/stretchr/testify/require"
 )
@@ -64,7 +65,7 @@ func TestPostgresGoalReservationAndRetention(t *testing.T) {
 		require.Equal(t, prepared.GoalID, active)
 		require.Equal(t, active, facts)
 		var count int
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.goal_candidates`).Scan(&count))
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pg_tables WHERE schemaname='pgjobdb' AND tablename IN ('goals','goal_candidates')`).Scan(&count))
 		require.Zero(t, count)
 		lease := nativeGoalLease(t, ctx, conn, "reserved")
 		before, err := pgjobdb.GetGoal(ctx, db, jobdb.GoalKey{TenantId: "tenant", GoalID: prepared.GoalID})
@@ -118,46 +119,6 @@ func raceGoalWrites(t *testing.T, ctx context.Context, db *sql.DB, a, b func(pgj
 }
 func TestPostgresGoalIndependentWriters(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		t.Run("attach_and_complete", func(t *testing.T) {
-			a := nativeGoalJob(t, ctx, db, "attach-a")
-			b := nativeGoalJob(t, ctx, db, "attach-b")
-			l := nativeGoalLease(t, ctx, db, "attach-b")
-			errs := raceGoalWrites(t, ctx, db, func(q pgjobdb.DB) error {
-				_, e := pgjobdb.AddGoalCandidate(ctx, q, jobdb.AddGoalCandidateRequest{GoalKey: nativeGoalKey(a), JobID: "attach-b"})
-				return e
-			}, func(q pgjobdb.DB) error {
-				return l.Complete(ctx, q, pgjobdb.Completion{Status: pgjobdb.CompletionSuccess})
-			})
-			for _, err := range errs {
-				require.NoError(t, err)
-			}
-			for _, j := range []*pgjobdb.JobDetail{a, b} {
-				g, err := pgjobdb.GetGoal(ctx, db, nativeGoalKey(j))
-				require.NoError(t, err)
-				require.Equal(t, "attach-b", g.SuccessfulJobID)
-			}
-		})
-		t.Run("attach_and_fail", func(t *testing.T) {
-			a := nativeGoalJob(t, ctx, db, "fail-a")
-			nativeGoalJob(t, ctx, db, "fail-b")
-			errs := raceGoalWrites(t, ctx, db, func(q pgjobdb.DB) error {
-				_, e := pgjobdb.AddGoalCandidate(ctx, q, jobdb.AddGoalCandidateRequest{GoalKey: nativeGoalKey(a), JobID: "fail-b"})
-				return e
-			}, func(q pgjobdb.DB) error {
-				_, e := pgjobdb.FailGoal(ctx, q, jobdb.FailGoalRequest{GoalKey: nativeGoalKey(a), Message: "stop"})
-				return e
-			})
-			for _, err := range errs {
-				if err != nil {
-					require.ErrorIs(t, err, jobdb.ErrGoalConflict)
-				}
-			}
-			g, err := pgjobdb.GetGoal(ctx, db, nativeGoalKey(a))
-			require.NoError(t, err)
-			var n int
-			require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.goal_candidates WHERE goal_id=$1`, a.GoalID).Scan(&n))
-			require.Len(t, g.Failure.NonTerminalJobIDs, n+1)
-		})
 		t.Run("register_and_resolve", func(t *testing.T) {
 			p := nativeGoalJob(t, ctx, db, "resolve-producer")
 			nativeGoalJob(t, ctx, db, "resolve-consumer")
@@ -197,6 +158,7 @@ func TestPostgresGoalIndependentWriters(t *testing.T) {
 		})
 		t.Run("publication_and_closure", func(t *testing.T) {
 			a := nativeGoalJob(t, ctx, db, "publish-a")
+			retireNativeMember(t, ctx, db, "publish-a")
 			p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Cell: "test", CellRepo: "example.test/test", Key: jobdb.JobKey{TenantId: "tenant"}, RequestID: "restart-op", PriorJobID: "publish-a", ShareGoal: true, Descriptor: "same"})
 			require.NoError(t, err)
 			errs := raceGoalWrites(t, ctx, db, func(q pgjobdb.DB) error {
@@ -215,7 +177,8 @@ func TestPostgresGoalIndependentWriters(t *testing.T) {
 			require.NoError(t, err)
 			var n int
 			require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.job_facts WHERE goal_id=$1`, a.GoalID).Scan(&n))
-			require.Len(t, g.Failure.NonTerminalJobIDs, n)
+			require.Equal(t, n-1, len(g.Failure.NonTerminalJobIDs)+len(g.Failure.TerminalJobIDs))
+			require.NotContains(t, g.Failure.NonTerminalJobIDs, g.FailureJobID)
 		})
 	})
 }
@@ -249,11 +212,13 @@ func TestPostgresGoalDeadlineAndPagination(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, jobdb.DependencyTimedOut, info.State)
 		group := nativeGoalJob(t, ctx, db, "group")
+		retireNativeMember(t, ctx, db, string(group.JobID))
 		for i := 0; i < 4; i++ {
 			id := fmt.Sprintf("page-%d", i)
-			nativeGoalJob(t, ctx, db, id)
-			_, err := pgjobdb.AddGoalCandidate(ctx, db, jobdb.AddGoalCandidateRequest{GoalKey: nativeGoalKey(group), JobID: id})
+			_, request := selectedNative(t, runtimetest.PrimaryGoalContext(ctx), db, id, group.GoalID, nil)
+			_, err := pgjobdb.SubmitJob(runtimetest.PrimaryGoalContext(ctx), db, request)
 			require.NoError(t, err)
+			retireNativeMember(t, ctx, db, id)
 		}
 		opts := pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, GoalIDs: []string{group.GoalID}, PageSize: 2}
 		seen := map[pgjobdb.JobID]bool{}

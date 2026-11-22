@@ -18,6 +18,7 @@ func TestGoalDiscovery(t *testing.T) {
 	goalRuntimes(t, func(t *testing.T, r jobdb.ConsumerRuntime) {
 		ctx := celltest.Context(context.Background())
 		a := goalSubmit(t, r, "a")
+		goalComplete(t, r, a, false)
 		b, err := celltest.Submit(r, runtimetest.PrimaryGoalContext(ctx), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "b", GoalID: a.GoalID, JobType: "special", Data: jobdb.NewTaskDataOrPanic(nil), Metadata: json.RawMessage(`{"repo":"repo-b"}`)}})
 		require.NoError(t, err)
 		c := goalSubmit(t, r, "c")
@@ -30,8 +31,8 @@ func TestGoalDiscovery(t *testing.T) {
 		for _, g := range page.Goals {
 			if g.GoalKey == goalKey(a) {
 				require.EqualValues(t, 2, g.CandidateCount)
-				require.EqualValues(t, 1, g.NonTerminalCandidateCount)
-				require.EqualValues(t, 1, g.TerminalCandidateCount)
+				require.EqualValues(t, 0, g.NonTerminalCandidateCount)
+				require.EqualValues(t, 2, g.TerminalCandidateCount)
 				require.Equal(t, original.Revision, g.Revision)
 				require.True(t, original.UpdatedAt.Equal(g.UpdatedAt))
 			}
@@ -45,7 +46,7 @@ func TestGoalDiscovery(t *testing.T) {
 		for _, g := range hidden.Goals {
 			if g.GoalKey == goalKey(a) {
 				require.EqualValues(t, 2, g.CandidateCount)
-				require.EqualValues(t, 1, g.TerminalCandidateCount)
+				require.EqualValues(t, 2, g.TerminalCandidateCount)
 			}
 		}
 		req := jobdb.ListGoalsRequest{TenantId: "tenant", PageSize: 1}
@@ -73,7 +74,6 @@ func TestGoalDiscovery(t *testing.T) {
 		expected := []string{a.GoalID, c.GoalID}
 		sort.Strings(expected)
 		require.Equal(t, expected, ids)
-		require.NoError(t, r.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: a.JobKey}))
 		page, err = r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "tenant", GoalIDs: []string{a.GoalID}, States: []jobdb.GoalState{jobdb.GoalOpen}})
 		require.NoError(t, err)
 		require.Len(t, page.Goals, 1)

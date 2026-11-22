@@ -139,9 +139,7 @@ func leaseEventsQuery(req jobdb.ListLeaseEventsRequest, ids []string, pos *cells
 	}
 	if req.GoalIDs != nil {
 		p := bind(pq.Array(req.GoalIDs))
-		prefix = `WITH matching_candidate_jobs AS (SELECT DISTINCT tenant_id,job_id FROM pgjobdb.goal_candidates WHERE tenant_id=$1 AND goal_id=ANY(` + p + `)) `
-		joins += ` LEFT JOIN matching_candidate_jobs g ON g.tenant_id=e.tenant_id AND g.job_id=e.job_id `
-		predicates = append(predicates, "(e.goal_id=ANY("+p+") OR g.job_id IS NOT NULL)")
+		predicates = append(predicates, "e.goal_id=ANY("+p+")")
 	}
 	if req.Routes != nil {
 		routes := []string{}

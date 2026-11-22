@@ -34,12 +34,9 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.goals(tenant_id,goal_id,cell_id,cell_repo) VALUES ('tenant','goal-1',$1,'example.test/test')`, cell.ID); err != nil {
-			t.Fatal(err)
-		}
 		const insertFact = `INSERT INTO pgjobdb.job_facts
-            (cell_id,cell_name,cell_repo,tenant_id,job_id,goal_id,job_type,run_policy,app_metadata)
-            VALUES ($1,'test','example.test/test','tenant','job-1','goal-1','collect','{}','{"source":"test"}')`
+            (goal_origin,goal_created_at,cell_id,cell_name,cell_repo,tenant_id,job_id,goal_id,job_type,run_policy,app_metadata)
+            VALUES (TRUE,now(),$1,'test','example.test/test','tenant','job-1','goal-1','collect','{}','{"source":"test"}')`
 		if _, err := db.ExecContext(ctx, insertFact, cell.ID); err != nil {
 			t.Fatal(err)
 		}

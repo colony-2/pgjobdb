@@ -11,10 +11,11 @@ require a `BlobStoreURI` for chapter artifacts. Call `Close` when finished.
 
 The first deployment requires a brand-new empty Postgres database. Startup
 creates the `pgjobdb` schema and the JobDB chapter and schema tables. Later
-starts accept format 12. Older formats are rejected unchanged.
+starts convert supported formats 9–12 transactionally to format 13.
 Recurring schedules and their storage are no longer part of the API.
 Startup also rejects old `pgwf` databases, other configured scheduler schemas, and a fresh database
-that already contains user tables. There is no migration from older formats or mixed-version writer support.
+that already contains user tables. Formats 1–8, unmarked, corrupt and incomplete installations are rejected unchanged.
+See [retained goals and conversion](docs/retained-goals.md) for reports and writer exclusion.
 
 The `github.com/colony-2/pgjobdb/pkg/pgjobdb` package exposes typed scheduler
 operations. Its `installer` subpackage installs and verifies the embedded
@@ -52,15 +53,15 @@ rename restrictions. The `create-root` command has been removed.
 
 ## JobDB consumer API
 
-The current dependency is JobDB `v0.0.97-0.20261119203731-0d2b7cc7c8f1`.
+The current dependency is JobDB `v0.0.99-0.20261121034814-05238600e743`.
 The PostgreSQL HTTP server uses the consumer API: candidate PUT is unregistered,
 and this executable no longer registers `goals add-candidate`. Choose primary goal
 membership at submission with an explicit destination job ID, or use a shared-goal
 restart. Goal reads/lists, candidates, waits and explicit failure remain available.
 Embedders should accept `ConsumerRuntime`, `ConsumerGoalRuntime` or `JobRunReader`
 as appropriate and explicitly preserve any supported optional ports in decorators.
-The concrete native runtime and SQL attachment functions remain compatible.
-Installation stays at format 12; no database conversion or cutover is included.
+Native adapters and SQL also remove goal attachment. Input and artifact attachment
+remain available. The installer converts formats 9–12 to the retained-job contract.
 Engine submission returns a `workflow.JobHandle`; use its `JobKey`
 for job operations and `GoalID` for goal dependencies. Engine restart submission
 takes `SubmitRestartJobRequest{Job: ...}` and also returns a handle. Restarts
@@ -70,7 +71,7 @@ available through both direct and HTTP runtimes.
 Ordinary runtime job lists return compact summaries using one cell-registry
 snapshot per requested tenant and one row query per page. They retain full metadata, status, stored route, primary goal ID,
 payload revision, and a small pending-wait summary. Use `GetJob` for payloads,
-execution state, prerequisite lists, additional goal memberships, completion
+execution state, prerequisite lists, completion
 text, and dependency explanations. The native scheduler exposes this path as
 `ListJobSummaries`; its existing `ListJobs` detail API remains available. See
 [compact job lists](docs/compact-job-lists.md) for schema updates, verification,
@@ -91,9 +92,11 @@ pgjobdb migration and verification coverage.
 Job goals support shared restart candidates, explicit goal failure, and durable
 job/goal dependency waits through both direct and HTTP runtimes. Each job has an
 immutable primary goal ID on its active row and retained facts. Successful
-completion resolves open goals and their waits in the scheduler transaction;
-failed candidates leave their goals open. See the [job-goals implementation
-review](REVIEW-PGJOBDB-JOB-GOALS.md) for storage, concurrency, and rollout details.
+completion resolves an open goal and its waits in the scheduler transaction;
+ordinary failed attempts leave the goal open. Recovery requires no nonterminal
+member. Explicit failure atomically publishes a protected archived record with a
+frozen membership snapshot. See [retained goals and conversion](docs/retained-goals.md)
+for storage, protected readers, historical mapping and operator reports.
 
 Job deletion hides jobs, revokes leases, and cancels unfinished work while
 retaining identity, history, and artifacts. The runtime supports embedded and

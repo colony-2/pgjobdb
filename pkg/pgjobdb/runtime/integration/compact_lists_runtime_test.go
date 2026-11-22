@@ -40,6 +40,10 @@ type countingListConn struct {
 	queries *atomic.Int64
 }
 
+func (c *countingListConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
+}
+
 func (c *countingListConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	c.queries.Add(1)
 	return c.Conn.(driver.ExecerContext).ExecContext(ctx, query, args)
@@ -62,6 +66,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, backend.Close(ctx)) })
 	producer := nativeGoalJob(t, ctx, db, "producer")
 	secondary := nativeGoalJob(t, ctx, db, "secondary")
+	retireNativeMember(t, ctx, db, "secondary")
 	metadata := json.RawMessage(`{"large":"` + strings.Repeat("m", 4096) + `"}`)
 	// Deliberately no chapter/artifact records: listing must work without reading
 	// either store. Include both pending waits and archived outcomes on each page.
@@ -71,7 +76,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 		if i%3 != 0 {
 			req.Job.Dependencies = []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: producer.GoalID}, Condition: jobdb.JobPrereqSuccess}}
 		}
-		if i%20 == 0 {
+		if i%60 == 0 {
 			req.Job.GoalID = secondary.GoalID
 		}
 		_, err := backend.SubmitJob(runtimetest.PrimaryGoalContext(ctx), req)
@@ -129,7 +134,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 			counted.queries.Store(0)
 			page, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, GoalIDs: []string{secondary.GoalID}, JobTypes: []string{"consumer"}})
 			require.NoError(t, err)
-			require.Len(t, page.Jobs, 12)
+			require.Len(t, page.Jobs, 4)
 			require.EqualValues(t, 2, counted.queries.Load())
 		})
 	}

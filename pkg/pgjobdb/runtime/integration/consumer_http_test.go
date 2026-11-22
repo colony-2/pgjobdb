@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
@@ -62,7 +63,7 @@ func TestConsumerHTTPRetiresAttachment(t *testing.T) {
 		for _, signed := range []bool{false, true} {
 			t.Run(map[bool]string{false: "default", true: "signed"}[signed], func(t *testing.T) {
 				view := jobdbtest.NewNamespacedBackend(probe, "")
-				_, mutator := view.(jobdb.GoalCandidateMutator)
+				_, mutator := reflect.TypeOf(view).MethodByName("AddGoalCandidate")
 				require.False(t, mutator)
 				var handler http.Handler = remote.NewConsumerServer(view)
 				if signed {

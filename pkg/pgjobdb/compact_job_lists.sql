@@ -25,7 +25,7 @@ WITH parameters AS NOT MATERIALIZED (SELECT
     SELECT f.tenant_id,f.job_id,f.goal_id,f.cell_id,f.cell_repo,'ACTIVE'::text AS store,
         CASE WHEN p_statuses IS NOT NULL OR jsonb_array_length(p_available_routes)>0
             THEN pgjobdb.job_status_at(j,p_now) END AS status,
-        f.append_key,f.job_type,j.route_job_type,j.work_kind,j.task_type,
+        f.record_kind,f.terminal_failure,f.append_key,f.job_type,j.route_job_type,j.work_kind,j.task_type,
         j.resume_job_type,j.task_input_ordinal,j.task_output_ordinal,j.task_input_hash,
         f.run_policy,j.wait_for,
         f.app_metadata,f.schema_hash,f.parent_job_id,f.created_at,
@@ -43,7 +43,7 @@ WITH parameters AS NOT MATERIALIZED (SELECT
     SELECT f.tenant_id,f.job_id,f.goal_id,f.cell_id,f.cell_repo,'ARCHIVED'::text,
         CASE WHEN a.final_cancel_requested OR a.completion_status='cancelled'
             THEN 'CANCELLED' ELSE 'COMPLETED' END,
-        f.append_key,f.job_type,a.final_route_job_type,a.final_work_kind,a.final_task_type,
+        f.record_kind,f.terminal_failure,f.append_key,f.job_type,a.final_route_job_type,a.final_work_kind,a.final_task_type,
         a.final_resume_job_type,a.final_task_input_ordinal,a.final_task_output_ordinal,a.final_task_input_hash,
         f.run_policy,a.final_wait_for,
         f.app_metadata,f.schema_hash,f.parent_job_id,f.created_at,
@@ -53,11 +53,11 @@ WITH parameters AS NOT MATERIALIZED (SELECT
         NULL::text,f.hidden_at,NULL::text,NULL::text
     FROM pgjobdb.jobs_archive a
     JOIN pgjobdb.job_facts f USING(tenant_id,job_id)
-    WHERE a.final_route_job_type IS NOT NULL
+    WHERE a.final_route_job_type IS NOT NULL OR f.record_kind<>'EXECUTION'
 ), page AS MATERIALIZED (
     SELECT n.* FROM candidates n CROSS JOIN parameters
     WHERE (p_append_keys IS NULL OR cardinality(p_append_keys)=0 OR n.append_key=ANY(p_append_keys)) AND n.tenant_id = ANY(p_tenant_ids) AND n.cell_id=ANY(p_cell_ids)
-      AND (p_goal_ids IS NULL OR n.goal_id=ANY(p_goal_ids) OR EXISTS(SELECT 1 FROM pgjobdb.goal_candidates gc WHERE gc.tenant_id=n.tenant_id AND gc.job_id=n.job_id AND gc.goal_id=ANY(p_goal_ids)))
+      AND (p_goal_ids IS NULL OR n.goal_id=ANY(p_goal_ids))
       AND (p_include_hidden OR n.hidden_at IS NULL)
       AND (p_statuses IS NULL OR n.status = ANY(p_statuses))
       AND (jsonb_array_length(p_available_routes)=0 OR (
@@ -102,7 +102,7 @@ WITH parameters AS NOT MATERIALIZED (SELECT
 )
 SELECT jsonb_build_object(
     'cell_id',n.cell_id,'cell_repo',n.cell_repo,'cell',(SELECT name FROM pgjobdb.cells WHERE tenant_id=n.tenant_id AND cell_id=n.cell_id),
- 'tenant_id',n.tenant_id,'job_id',n.job_id,'goal_id',n.goal_id,
+ 'record_kind',n.record_kind,'terminal_failure',n.terminal_failure,'tenant_id',n.tenant_id,'job_id',n.job_id,'goal_id',n.goal_id,
     'store',n.store,'status',COALESCE(n.status,(SELECT pgjobdb.job_status_at(j,p_now)
         FROM pgjobdb.jobs j WHERE j.tenant_id=n.tenant_id AND j.job_id=n.job_id)),
     'job_type',n.job_type,'append_key',n.append_key,

@@ -59,15 +59,12 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 			id := pgjobdb.JobID(fmt.Sprintf("consumer-%03d", i))
 			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "test", JobType: "consumer", AppMetadata: metadata, Dependencies: []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: producer.GoalID}, Condition: jobdb.JobPrereqSuccess}}, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"large":"` + strings.Repeat("p", 32768) + `"}`)}})
 			require.NoError(t, err)
-			if i%20 == 0 {
-				_, err = pgjobdb.AddGoalCandidate(ctx, db, jobdb.AddGoalCandidateRequest{GoalKey: nativeGoalKey(secondary), JobID: string(id)})
-				require.NoError(t, err)
-			}
+
 		}
 		// Exercise equal-timestamp cursor ties rather than relying on sleep timing.
 		_, err := db.Exec(`UPDATE pgjobdb.job_facts SET created_at='2026-01-01' WHERE job_type='consumer'`)
 		require.NoError(t, err)
-		_, err = db.Exec(`ANALYZE pgjobdb.jobs; ANALYZE pgjobdb.job_facts; ANALYZE pgjobdb.dependency_waits; ANALYZE pgjobdb.goal_candidates; ANALYZE pgjobdb.job_client_state`)
+		_, err = db.Exec(`ANALYZE pgjobdb.jobs; ANALYZE pgjobdb.job_facts; ANALYZE pgjobdb.dependency_waits; ANALYZE pgjobdb.job_client_state`)
 		require.NoError(t, err)
 		forbidListDiagnostics(t, db)
 		for _, size := range []int{1, 100, 200} {
@@ -110,9 +107,9 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 		d := &listQueryRecorder{DB: db}
 		page, err := pgjobdb.ListJobSummaries(ctx, d, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, GoalIDs: []string{secondary.GoalID}, JobTypes: []pgjobdb.JobType{"consumer"}, MetadataPredicates: []pgjobdb.MetadataPredicate{{Path: []string{"team"}, Values: []json.RawMessage{json.RawMessage(`"blue"`)}}}, PageSize: 100})
 		require.NoError(t, err)
-		require.Len(t, page.Jobs, 12)
+		require.Empty(t, page.Jobs)
 		require.Equal(t, 2, d.queries)
-		recordCompactListPlan(t, db, d, "secondary-goal-metadata")
+		recordCompactListPlan(t, db, d, "unrelated-primary-goal-metadata")
 	})
 }
 

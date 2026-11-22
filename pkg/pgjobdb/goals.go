@@ -2,9 +2,11 @@ package pgjobdb
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/colony-2/jobdb/pkg/jobdb/runtime/cellstate"
 	"strings"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
@@ -94,8 +96,6 @@ func goalQuery[T any](ctx context.Context, db DB, query string, args ...any) (ou
 			v.ClosedAt = &u
 		}
 		normalizeFailure(v.Failure)
-	case *jobdb.GoalCandidateInfo:
-		v.AddedAt = v.AddedAt.UTC()
 	case *jobdb.DependencyWaitInfo:
 		if v.Deadline != nil {
 			u := v.Deadline.UTC()
@@ -142,23 +142,24 @@ func GetGoal(ctx context.Context, db DB, key jobdb.GoalKey) (jobdb.GoalInfo, err
 	return goalQuery[jobdb.GoalInfo](ctx, db, `SELECT pgjobdb.goal_info($1,$2)`, key.TenantId, key.GoalID)
 }
 
-// AddGoalCandidate attaches a job and resolves the goal if it already succeeded.
-func AddGoalCandidate(ctx context.Context, db DB, req jobdb.AddGoalCandidateRequest) (jobdb.GoalCandidateInfo, error) {
-	if err := req.GoalKey.Validate(); err != nil {
-		return jobdb.GoalCandidateInfo{}, err
-	}
-	if strings.TrimSpace(req.JobID) == "" {
-		return jobdb.GoalCandidateInfo{}, jobdb.ErrInvalidDependency
-	}
-	return goalQuery[jobdb.GoalCandidateInfo](ctx, db, `SELECT pgjobdb.add_goal_candidate($1,$2,$3)`, req.GoalKey.TenantId, req.GoalKey.GoalID, req.JobID)
-}
-
 // FailGoal freezes a failure snapshot without cancelling candidates.
 func FailGoal(ctx context.Context, db DB, req jobdb.FailGoalRequest) (jobdb.GoalInfo, error) {
 	if err := req.Validate(); err != nil {
 		return jobdb.GoalInfo{}, err
 	}
-	return goalQuery[jobdb.GoalInfo](ctx, db, `SELECT pgjobdb.fail_goal($1,$2,$3)`, req.GoalKey.TenantId, req.GoalKey.GoalID, req.Message)
+	var out jobdb.GoalInfo
+	err := cellTx(ctx, db, req.GoalKey.TenantId, func(tx *sql.Tx, _ *cellstate.State) error {
+		g, err := GetGoal(ctx, tx, req.GoalKey)
+		if err != nil {
+			return err
+		}
+		if err = jobdb.AuthorizeCell(ctx, req.GoalKey.TenantId, g.CellID, "jobs.submit"); err != nil {
+			return err
+		}
+		out, err = goalQuery[jobdb.GoalInfo](ctx, tx, `SELECT pgjobdb.fail_goal($1,$2,$3)`, req.GoalKey.TenantId, req.GoalKey.GoalID, req.Message)
+		return err
+	})
+	return out, err
 }
 
 // GetDependencyWait reads retained bindings and projects expired deadlines without writes.

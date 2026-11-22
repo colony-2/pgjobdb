@@ -22,7 +22,7 @@ func selectedNative(t *testing.T, ctx context.Context, db pgjobdb.DB, id, goal s
 
 func assertNoSelectedScheduler(t *testing.T, ctx context.Context, db pgjobdb.DB, id string) {
 	t.Helper()
-	for _, table := range []string{"jobs", "jobs_archive", "job_facts", "goal_candidates", "dependency_waits", "dependency_targets"} {
+	for _, table := range []string{"jobs", "jobs_archive", "job_facts", "dependency_waits", "dependency_targets"} {
 		var n int
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.`+table+` WHERE tenant_id='tenant' AND job_id=$1`, id).Scan(&n))
 		require.Zero(t, n, table)
@@ -36,6 +36,7 @@ func TestSelectedNativeTransactions(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		ctx = runtimetest.PrimaryGoalContext(ctx)
 		source := nativeGoalJob(t, ctx, db, "source")
+		retireNativeMember(t, ctx, db, "source")
 		dependency := nativeGoalJob(t, ctx, db, "dependency")
 		deps := []jobdb.Dependency{{Target: jobdb.DependencyTarget{JobID: string(dependency.JobID)}, Condition: jobdb.JobPrereqSuccess}}
 		for _, savepoint := range []bool{false, true} {
@@ -70,6 +71,7 @@ func TestSelectedNativeTransactions(t *testing.T) {
 				p, err = pgjobdb.PrepareJob(ctx, db, prep)
 				require.NoError(t, err)
 				require.NotNil(t, p.Receipt)
+				require.NoError(t, pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID(name), WorkerID: "fixture-drain"}))
 			})
 		}
 		// Publication errors roll back their own savepoint, leaving the caller's
@@ -83,4 +85,10 @@ func TestSelectedNativeTransactions(t *testing.T) {
 		require.NoError(t, tx.Commit())
 		assertNoSelectedScheduler(t, ctx, db, prep.Key.JobId)
 	})
+}
+
+// An ordinary unsuccessful completion drains admission without closing a goal.
+func retireNativeMember(t *testing.T, ctx context.Context, db pgjobdb.DB, id string) {
+	t.Helper()
+	require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", pgjobdb.JobID(id), "test-drain", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp}))
 }

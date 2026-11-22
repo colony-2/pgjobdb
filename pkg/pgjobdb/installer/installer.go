@@ -4,29 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-
-	pgjobdbsql "github.com/colony-2/pgjobdb/pkg/pgjobdb"
+	"io"
 )
 
 // Installer applies and verifies the pgjobdb schema.
 type Installer struct {
 	DB     *sql.DB
 	Schema string
+	// ReportWriter receives the authoritative staged report before commit. A write failure rolls back conversion.
+	ReportWriter io.Writer
 }
 
-// Apply executes the embedded pgjobdb DDL.
+// Apply validates and applies the same transactional path used by startup.
 func (i Installer) Apply(ctx context.Context) error {
-	if i.DB == nil {
-		return fmt.Errorf("pgjobdb: installer DB is nil")
-	}
-	if ctx == nil {
-		return fmt.Errorf("pgjobdb: context is nil")
-	}
-	if err := i.validateDatabase(ctx); err != nil {
-		return err
-	}
-
-	_, err := i.DB.ExecContext(ctx, pgjobdbsql.SQL)
+	_, err := i.ApplyWithReport(ctx, i.ReportWriter)
 	return err
 }
 
@@ -43,7 +34,7 @@ func (i Installer) Verify(ctx context.Context) error {
 	}
 	schema := i.schemaName()
 
-	for _, tbl := range []string{"lease_events", "cells", "cell_names", "cell_catalog", "installation", "jobs", "jobs_archive", "jobs_trace", "job_facts", "job_client_state", "goals", "goal_candidates", "job_preparations", "dependency_waits", "dependency_targets"} {
+	for _, tbl := range []string{"lease_events", "cells", "cell_names", "cell_catalog", "installation", "jobs", "jobs_archive", "jobs_trace", "job_facts", "job_client_state", "job_preparations", "dependency_waits", "dependency_targets"} {
 		if err := i.assertTable(ctx, schema, tbl); err != nil {
 			return err
 		}
@@ -51,7 +42,7 @@ func (i Installer) Verify(ctx context.Context) error {
 	for table, columns := range map[string][]string{
 		"dependency_waits": {"deadline_exact"},
 		"job_preparations": {"selected_goal_id", "receipt"},
-		"job_facts":        {"append_key", "append_gen", "hidden_at", "goal_id", "cell_id", "cell_repo", "cell_name"},
+		"job_facts":        {"append_key", "append_gen", "hidden_at", "goal_id", "cell_id", "cell_repo", "cell_name", "goal_origin", "goal_created_at", "goal_closed_at", "goal_success_job_id", "historical_goal_success", "record_kind", "terminal_failure"},
 		"job_client_state": {"client_payload", "revision", "initial_payload_digest"},
 		"jobs":             {"goal_id", "dependency_wait_id", "route_job_type", "work_kind", "lease_worker_id", "lease_route_job_type", "lease_work_kind", "lease_task_type", "alternate_at", "wait_until_is_deadline"},
 		"jobs_archive":     {"final_route_job_type", "final_work_kind", "final_alternate_at"},
@@ -63,7 +54,7 @@ func (i Installer) Verify(ctx context.Context) error {
 		}
 	}
 	for _, fn := range []string{
-		"prepare_job", "goal_info", "add_goal_candidate", "fail_goal", "dependency_wait_info",
+		"prepare_job", "goal_info", "fail_goal", "dependency_wait_info",
 		"submit_native_job", "get_native_work", "delete_native_jobs",
 		"job_status_at", "effective_native_route",
 		"complete_native_job", "complete_native_unheld_job",
@@ -80,47 +71,38 @@ func (i Installer) Verify(ctx context.Context) error {
 	if err := i.assertInstallation(ctx, schema); err != nil {
 		return err
 	}
-	return nil
-}
-
-func (i Installer) validateDatabase(ctx context.Context) error {
-	if err := i.validateSchemaName(); err != nil {
+	for _, object := range []string{"goals", "goal_candidates"} {
+		var exists bool
+		if err := i.DB.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, schema+"."+object).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("pgjobdb: removed table %s remains", object)
+		}
+	}
+	var retired bool
+	if err := i.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname='add_goal_candidate')`, schema).Scan(&retired); err != nil {
 		return err
 	}
-	var oldScheduler bool
-	if err := i.DB.QueryRowContext(ctx, `SELECT EXISTS (
-		SELECT 1 FROM information_schema.schemata WHERE schema_name = 'pgwf'
-	)`).Scan(&oldScheduler); err != nil {
-		return fmt.Errorf("pgjobdb: inspect legacy scheduler: %w", err)
+	if retired {
+		return fmt.Errorf("pgjobdb: removed add_goal_candidate function remains")
 	}
-	if oldScheduler {
-		return fmt.Errorf("pgjobdb: legacy pgwf schema found; use a new empty database")
+	tx, err := i.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return err
 	}
-
-	schema := i.schemaName()
-	var initialized bool
-	if err := i.DB.QueryRowContext(ctx, `SELECT EXISTS (
-		SELECT 1 FROM information_schema.schemata WHERE schema_name = $1
-	)`, schema).Scan(&initialized); err != nil {
-		return fmt.Errorf("pgjobdb: inspect schema: %w", err)
+	defer tx.Rollback()
+	version, err := inspectInstallation(ctx, tx)
+	if err != nil {
+		return err
 	}
-	if initialized {
-		return i.assertInstallation(ctx, schema)
+	if version != FormatVersion {
+		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
-
-	var existingTable sql.NullString
-	if err := i.DB.QueryRowContext(ctx, `SELECT n.nspname || '.' || c.relname
-		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE c.relkind IN ('r', 'p')
-			AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-			AND n.nspname NOT LIKE 'pg_toast%'
-		ORDER BY n.nspname, c.relname LIMIT 1`).Scan(&existingTable); err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("pgjobdb: inspect existing tables: %w", err)
+	if err = validateInput(ctx, tx, 13); err != nil {
+		return err
 	}
-	if existingTable.Valid {
-		return fmt.Errorf("pgjobdb: existing table %s found; use a new empty database", existingTable.String)
-	}
-	return nil
+	return validateTargetContract(ctx, tx)
 }
 
 func (i Installer) validateSchemaName() error {
@@ -155,7 +137,7 @@ func (i Installer) assertInstallation(ctx context.Context, schema string) error 
 	if err := i.DB.QueryRowContext(ctx, query, schema).Scan(&version); err != nil {
 		return fmt.Errorf("pgjobdb: read installation marker: %w", err)
 	}
-	if version != 12 {
+	if version != 13 {
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil

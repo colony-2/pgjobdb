@@ -1,0 +1,143 @@
+{
+  "historical": {
+    "index/facts_goal_idx": [
+      "CREATE INDEX facts_goal_idx ON pgjobdb.job_facts USING btree (tenant_id, goal_id, job_id)",
+      false,
+      true,
+      true,
+      true
+    ],
+    "function/_terminal_goals": "CREATE OR REPLACE FUNCTION pgjobdb._terminal_goals()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE g TEXT;\nBEGIN\n IF NEW.goal_id IS NULL THEN RETURN NEW; END IF;\n PERFORM pgjobdb._cancel_waits(NEW.tenant_id,NEW.job_id);\n PERFORM pgjobdb._settle_target(NEW.tenant_id,'job',NEW.job_id);\n IF NEW.completion_status='success' THEN\n  FOR g IN SELECT NEW.goal_id UNION SELECT goal_id FROM pgjobdb.goal_candidates WHERE tenant_id=NEW.tenant_id AND job_id=NEW.job_id LOOP\n   PERFORM pgjobdb._resolve_goal(NEW.tenant_id,g,NEW.job_id);\n  END LOOP;\n END IF;\n RETURN NEW;\nEND $function$\n",
+    "function/_check_active_goal": "CREATE OR REPLACE FUNCTION pgjobdb._check_active_goal()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n IF NOT EXISTS(SELECT 1 FROM pgjobdb.job_facts f WHERE f.tenant_id=NEW.tenant_id AND f.job_id=NEW.job_id AND f.goal_id=NEW.goal_id) THEN\n  RAISE EXCEPTION 'active goal differs from retained identity' USING ERRCODE='JGM01';\n END IF;\n RETURN NEW;\nEND $function$\n",
+    "function/_immutable_goal_id": "CREATE OR REPLACE FUNCTION pgjobdb._immutable_goal_id()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n IF NEW.goal_id IS DISTINCT FROM OLD.goal_id THEN RAISE EXCEPTION 'primary goal is immutable' USING ERRCODE='JGF01'; END IF;\n RETURN NEW;\nEND $function$\n",
+    "constraint/jobs/active_goal_fk": [
+      "FOREIGN KEY (tenant_id, goal_id) REFERENCES pgjobdb.goals(tenant_id, goal_id)",
+      true,
+      false,
+      false,
+      true
+    ],
+    "trigger/jobs/check_active_goal": [
+      "CREATE TRIGGER check_active_goal BEFORE INSERT ON pgjobdb.jobs FOR EACH ROW EXECUTE FUNCTION pgjobdb._check_active_goal()",
+      "O",
+      false
+    ],
+    "trigger/jobs/immutable_goal_id": [
+      "CREATE TRIGGER immutable_goal_id BEFORE UPDATE OF goal_id ON pgjobdb.jobs FOR EACH ROW EXECUTE FUNCTION pgjobdb._immutable_goal_id()",
+      "O",
+      false
+    ],
+    "function/_archive_goal_identity": "CREATE OR REPLACE FUNCTION pgjobdb._archive_goal_identity()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n SELECT goal_id INTO NEW.goal_id FROM pgjobdb.jobs WHERE tenant_id=NEW.tenant_id AND job_id=NEW.job_id;\n RETURN NEW;\nEND $function$\n",
+    "trigger/job_facts/immutable_goal_id": [
+      "CREATE TRIGGER immutable_goal_id BEFORE UPDATE OF goal_id ON pgjobdb.job_facts FOR EACH ROW EXECUTE FUNCTION pgjobdb._immutable_goal_id()",
+      "O",
+      false
+    ],
+    "trigger/jobs_archive/terminal_goals": [
+      "CREATE TRIGGER terminal_goals AFTER INSERT ON pgjobdb.jobs_archive FOR EACH ROW EXECUTE FUNCTION pgjobdb._terminal_goals()",
+      "O",
+      false
+    ],
+    "trigger/jobs_archive/immutable_goal_id": [
+      "CREATE TRIGGER immutable_goal_id BEFORE UPDATE OF goal_id ON pgjobdb.jobs_archive FOR EACH ROW EXECUTE FUNCTION pgjobdb._immutable_goal_id()",
+      "O",
+      false
+    ],
+    "constraint/jobs_archive/archive_goal_fk": [
+      "FOREIGN KEY (tenant_id, goal_id) REFERENCES pgjobdb.goals(tenant_id, goal_id)",
+      true,
+      false,
+      false,
+      true
+    ],
+    "trigger/jobs_archive/archive_goal_identity": [
+      "CREATE TRIGGER archive_goal_identity BEFORE INSERT ON pgjobdb.jobs_archive FOR EACH ROW EXECUTE FUNCTION pgjobdb._archive_goal_identity()",
+      "O",
+      false
+    ],
+    "constraint/goal_candidates/candidate_job_fk": [
+      "FOREIGN KEY (tenant_id, job_id) REFERENCES pgjobdb.job_facts(tenant_id, job_id)",
+      true,
+      false,
+      false,
+      true
+    ],
+    "constraint/job_facts/job_facts_tenant_id_goal_id_fkey": [
+      "FOREIGN KEY (tenant_id, goal_id) REFERENCES pgjobdb.goals(tenant_id, goal_id)",
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "retained": {
+    "index/facts_goal_idx": [
+      "CREATE INDEX facts_goal_idx ON pgjobdb.job_facts USING btree (tenant_id, goal_id, job_id)",
+      false,
+      true,
+      true,
+      true
+    ],
+    "function/_terminal_goals": "CREATE OR REPLACE FUNCTION pgjobdb._terminal_goals()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE g TEXT;\nBEGIN\n IF NEW.goal_id IS NULL THEN RETURN NEW; END IF;\n PERFORM pgjobdb._cancel_waits(NEW.tenant_id,NEW.job_id);\n PERFORM pgjobdb._settle_target(NEW.tenant_id,'job',NEW.job_id);\n IF NEW.completion_status='success' THEN\n  PERFORM pgjobdb._resolve_goal(NEW.tenant_id,NEW.goal_id,NEW.job_id);\n END IF;\n RETURN NEW;\nEND $function$\n",
+    "function/_check_active_goal": "CREATE OR REPLACE FUNCTION pgjobdb._check_active_goal()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n IF NOT EXISTS(SELECT 1 FROM pgjobdb.job_facts f WHERE f.tenant_id=NEW.tenant_id AND f.job_id=NEW.job_id AND f.goal_id=NEW.goal_id AND f.record_kind='EXECUTION') THEN\n  RAISE EXCEPTION 'active goal differs from retained identity' USING ERRCODE='JGM01';\n END IF;\n RETURN NEW;\nEND $function$\n",
+    "function/_immutable_goal_id": "CREATE OR REPLACE FUNCTION pgjobdb._immutable_goal_id()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n IF NEW.goal_id IS DISTINCT FROM OLD.goal_id THEN RAISE EXCEPTION 'primary goal is immutable' USING ERRCODE='JGF01'; END IF;\n RETURN NEW;\nEND $function$\n",
+    "index/facts_goal_origin_idx": [
+      "CREATE UNIQUE INDEX facts_goal_origin_idx ON pgjobdb.job_facts USING btree (tenant_id, goal_id COLLATE \"C\") WHERE goal_origin",
+      true,
+      true,
+      true,
+      true
+    ],
+    "index/facts_goal_closure_idx": [
+      "CREATE UNIQUE INDEX facts_goal_closure_idx ON pgjobdb.job_facts USING btree (tenant_id, goal_id) WHERE (goal_closed_at IS NOT NULL)",
+      true,
+      true,
+      true,
+      true
+    ],
+    "trigger/jobs/check_active_goal": [
+      "CREATE TRIGGER check_active_goal BEFORE INSERT OR UPDATE ON pgjobdb.jobs FOR EACH ROW EXECUTE FUNCTION pgjobdb._check_active_goal()",
+      "O",
+      false
+    ],
+    "trigger/jobs/immutable_goal_id": [
+      "CREATE TRIGGER immutable_goal_id BEFORE UPDATE OF goal_id ON pgjobdb.jobs FOR EACH ROW EXECUTE FUNCTION pgjobdb._immutable_goal_id()",
+      "O",
+      false
+    ],
+    "function/_archive_goal_identity": "CREATE OR REPLACE FUNCTION pgjobdb._archive_goal_identity()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE f pgjobdb.job_facts;\nBEGIN\n SELECT * INTO STRICT f FROM pgjobdb.job_facts WHERE tenant_id=NEW.tenant_id AND job_id=NEW.job_id;\n IF NEW.goal_id IS NOT NULL AND NEW.goal_id\u003c\u003ef.goal_id THEN\n  RAISE EXCEPTION 'archive goal differs from retained identity' USING ERRCODE='JGM01';\n END IF;\n NEW.goal_id:=f.goal_id;\n IF f.record_kind\u003c\u003e'EXECUTION' AND (\n   NEW.completion_status IS DISTINCT FROM 'failed' OR NEW.created_at IS DISTINCT FROM f.created_at\n   OR NEW.archived_at IS DISTINCT FROM f.goal_closed_at\n   OR NEW.completion_detail IS DISTINCT FROM f.terminal_failure-\u003e\u003e'message'\n   OR NEW.lease_id IS NOT NULL OR NEW.final_route_job_type IS NOT NULL\n   OR NEW.payload\u003c\u003e'{}'::jsonb OR NEW.metadata\u003c\u003e'{}'::jsonb\n   OR NEW.wait_for\u003c\u003e'{}'::text[] OR NEW.cancel_requested\n   OR NEW.final_lease_worker_id IS NOT NULL OR NEW.final_lease_expires_at IS NOT NULL\n ) THEN RAISE EXCEPTION 'protected archive differs from retained failure' USING ERRCODE='JGF01'; END IF;\n RETURN NEW;\nEND $function$\n",
+    "function/_immutable_retained_goal": "CREATE OR REPLACE FUNCTION pgjobdb._immutable_retained_goal()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n IF (NEW.goal_origin,NEW.goal_created_at,NEW.record_kind,NEW.terminal_failure,NEW.cell_id,NEW.cell_repo)\n  IS DISTINCT FROM (OLD.goal_origin,OLD.goal_created_at,OLD.record_kind,OLD.terminal_failure,OLD.cell_id,OLD.cell_repo)\n  OR (OLD.goal_closed_at IS NOT NULL AND (NEW.goal_closed_at,NEW.goal_success_job_id,NEW.historical_goal_success)\n   IS DISTINCT FROM (OLD.goal_closed_at,OLD.goal_success_job_id,OLD.historical_goal_success)) THEN\n  RAISE EXCEPTION 'retained goal identity or first closure is immutable' USING ERRCODE='JGF01';\n END IF;\n RETURN NEW;\nEND $function$\n",
+    "trigger/job_facts/immutable_goal_id": [
+      "CREATE TRIGGER immutable_goal_id BEFORE UPDATE OF goal_id ON pgjobdb.job_facts FOR EACH ROW EXECUTE FUNCTION pgjobdb._immutable_goal_id()",
+      "O",
+      false
+    ],
+    "trigger/jobs_archive/terminal_goals": [
+      "CREATE TRIGGER terminal_goals AFTER INSERT ON pgjobdb.jobs_archive FOR EACH ROW EXECUTE FUNCTION pgjobdb._terminal_goals()",
+      "O",
+      false
+    ],
+    "trigger/jobs_archive/immutable_goal_id": [
+      "CREATE TRIGGER immutable_goal_id BEFORE UPDATE OF goal_id ON pgjobdb.jobs_archive FOR EACH ROW EXECUTE FUNCTION pgjobdb._immutable_goal_id()",
+      "O",
+      false
+    ],
+    "constraint/job_facts/retained_goal_shape": [
+      "CHECK ((((goal_origin = (goal_created_at IS NOT NULL)) AND (((goal_closed_at IS NULL) AND (goal_success_job_id IS NULL) AND (terminal_failure IS NULL) AND (NOT historical_goal_success)) OR ((goal_closed_at IS NOT NULL) AND (((goal_success_job_id IS NOT NULL) AND (terminal_failure IS NULL) AND (record_kind = 'EXECUTION'::text)) OR ((goal_success_job_id IS NULL) AND (terminal_failure IS NOT NULL) AND (record_kind = ANY (ARRAY['GOAL_FAILURE'::text, 'MIGRATED_GOAL_FAILURE'::text])))))) AND (((record_kind = 'EXECUTION'::text) AND (terminal_failure IS NULL)) OR ((record_kind = ANY (ARRAY['GOAL_FAILURE'::text, 'MIGRATED_GOAL_FAILURE'::text])) AND (NOT goal_origin) AND (job_type = 'jobdb.goal_failure'::text) AND ((terminal_failure -\u003e\u003e 'code'::text) = 'goal_failed'::text) AND ((terminal_failure -\u003e\u003e 'goalId'::text) = goal_id) AND ((terminal_failure -\u003e\u003e 'message'::text) IS NOT NULL) AND (((terminal_failure -\u003e\u003e 'failedAt'::text))::timestamp with time zone = goal_closed_at) AND (jsonb_typeof((terminal_failure -\u003e 'terminalJobIds'::text)) = 'array'::text) AND (jsonb_typeof((terminal_failure -\u003e 'nonTerminalJobIds'::text)) = 'array'::text)))) IS TRUE))",
+      true,
+      false,
+      false,
+      false
+    ],
+    "trigger/job_facts/immutable_retained_goal": [
+      "CREATE TRIGGER immutable_retained_goal BEFORE UPDATE ON pgjobdb.job_facts FOR EACH ROW EXECUTE FUNCTION pgjobdb._immutable_retained_goal()",
+      "O",
+      false
+    ],
+    "trigger/jobs_archive/archive_goal_identity": [
+      "CREATE TRIGGER archive_goal_identity BEFORE INSERT OR UPDATE ON pgjobdb.jobs_archive FOR EACH ROW EXECUTE FUNCTION pgjobdb._archive_goal_identity()",
+      "O",
+      false
+    ]
+  }
+}

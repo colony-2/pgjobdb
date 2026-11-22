@@ -32,6 +32,7 @@ Go submission arguments. Updating Go code alone leaves old SQL timestamp readers
 vulnerable to non-UTC session settings. `runtime.NewSQLDB` applies the embedded SQL;
 native callers can use `installer.Installer.Apply` and `Verify`.
 
-The installation remains format 12. No migration or reconstruction of original
-nanoseconds from old rows is performed. General long polling and unrelated
+The availability repair originated in format 12. The retained-goal installer now
+converts supported formats 9–12 to 13; it preserves these timestamps without
+reconstructing original nanoseconds. See [retained goals and conversion](retained-goals.md). General long polling and unrelated
 expiration/reschedule conversions are outside this repair.

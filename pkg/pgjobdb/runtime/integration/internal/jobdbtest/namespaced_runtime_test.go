@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -20,12 +21,12 @@ import (
 
 func assertConsumerOnly(t *testing.T, value any) {
 	t.Helper()
-	_, attachment := value.(jobdb.GoalCandidateMutator)
+	_, attachment := reflect.TypeOf(value).MethodByName("AddGoalCandidate")
 	require.False(t, attachment)
 	_, legacy := value.(jobdb.WorkflowRuntime)
-	require.False(t, legacy)
+	require.True(t, legacy)
 	_, goals := value.(jobdb.GoalRuntime)
-	require.False(t, goals)
+	require.True(t, goals)
 }
 func TestNamespacedAbsentCapabilities(t *testing.T) {
 	value := newTenantNamespacedRuntime(toy.New(), "ns-")

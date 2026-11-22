@@ -33,6 +33,9 @@ func GetJob(ctx context.Context, db DB, tenant TenantID, job JobID) (*JobDetail,
 		return nil, fmt.Errorf("pgjobdb: decode native job: %w", err)
 	}
 	normalizeJobTimes(&detail)
+	if detail.TerminalFailure != nil {
+		detail.TerminalFailure.FailedAt = detail.TerminalFailure.FailedAt.UTC()
+	}
 	detail.ClientPayload = append(json.RawMessage(nil), payload...)
 	detail.ClientPayloadRevision = revision
 	detail.InitialPayloadDigest = initialDigest

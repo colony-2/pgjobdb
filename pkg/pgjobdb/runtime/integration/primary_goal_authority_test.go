@@ -27,6 +27,7 @@ func TestSelectedNativeCurrentAuthority(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		admin := runtimetest.PrimaryGoalContext(ctx)
 		source := nativeGoalJob(t, admin, db, "source")
+		retireNativeMember(t, ctx, db, "source")
 		prep, publication := selectedNative(t, admin, db, "selected", source.GoalID, nil)
 		policies := []struct {
 			name, tenant string

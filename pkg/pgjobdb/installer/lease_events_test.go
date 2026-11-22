@@ -335,8 +335,6 @@ func TestLeaseEventsAttributionAndGoalIsolation(t *testing.T) {
 		require.NoError(t, err)
 		var otherGoal string
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT goal_id FROM pgjobdb.job_facts WHERE tenant_id='other' AND job_id='goal-owner'`).Scan(&otherGoal))
-		_, err = pgjobdb.AddGoalCandidate(ctx, db, jobdb.AddGoalCandidateRequest{GoalKey: jobdb.GoalKey{TenantId: "other", GoalID: otherGoal}, JobID: "same"})
-		require.NoError(t, err)
 		page, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", GoalIDs: []string{otherGoal}})
 		require.NoError(t, err)
 		require.Empty(t, page.Events)
@@ -346,8 +344,6 @@ func TestLeaseEventsAttributionAndGoalIsolation(t *testing.T) {
 		require.NoError(t, err)
 		var extra string
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT goal_id FROM pgjobdb.job_facts WHERE tenant_id='tenant' AND job_id='goal-owner'`).Scan(&extra))
-		_, err = pgjobdb.AddGoalCandidate(ctx, db, jobdb.AddGoalCandidateRequest{GoalKey: jobdb.GoalKey{TenantId: "tenant", GoalID: extra}, JobID: "same"})
-		require.NoError(t, err)
 		page, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", GoalIDs: []string{extra, original.GoalID}})
 		require.NoError(t, err)
 		require.Len(t, page.Events, 2)

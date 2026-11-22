@@ -170,6 +170,7 @@ type backendPorts interface {
 	jobdb.JobSchemaRegistry
 	jobdb.JobDeletionRuntime
 	jobdb.PrimaryGoalSelectionCapability
+	jobdb.JobGoalCapability
 	LeaseTransport
 	ConfigurationLimits() jobdb.ConfigurationLimits
 	SecretResolutionLimits() jobdb.SecretLimits
@@ -279,6 +280,7 @@ type storagePorts interface {
 	jobdb.JobSchemaRegistry
 	jobdb.JobDeletionRuntime
 	jobdb.PrimaryGoalSelectionCapability
+	jobdb.JobGoalCapability
 	ConfigurationLimits() jobdb.ConfigurationLimits
 	SecretResolutionLimits() jobdb.SecretLimits
 }
@@ -320,4 +322,12 @@ type namespacedDevelopmentBackend struct {
 func newNamespacedDevelopmentBackend(rt developmentBackendPorts, prefix string) jobdb.ConsumerRuntime {
 	backend := NewNamespacedBackend(rt, prefix).(*namespacedBackend)
 	return &namespacedDevelopmentBackend{backend, developmentAdapter{backend.tenantNamespacedRuntime, rt}}
+}
+
+// Forward actual backend guarantees independently of selection support.
+func (r *namespacedBackend) JobGoalCapabilities() jobdb.JobGoalCapabilities {
+	return r.limits.JobGoalCapabilities()
+}
+func (r *namespacedStorage) JobGoalCapabilities() jobdb.JobGoalCapabilities {
+	return r.limits.JobGoalCapabilities()
 }

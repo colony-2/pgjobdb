@@ -15,6 +15,8 @@ import (
 // membership enumeration or evaluated dependency explanations. Stored payloads,
 // policy, task coordinates, prerequisites, and completion detail are included.
 type JobListSummary struct {
+	RecordKind            jobdb.JobRecordKind          `json:"record_kind"`
+	TerminalFailure       *jobdb.GoalFailure           `json:"terminal_failure"`
 	AppendKey             string                       `json:"append_key"`
 	Cell                  string                       `json:"cell"`
 	CellID                string                       `json:"cell_id"`
@@ -70,6 +72,9 @@ func ListJobSummaries(ctx context.Context, db DB, opts ListJobsOptions) (*ListJo
 		}
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return item, fmt.Errorf("pgjobdb: decode job summary: %w", err)
+		}
+		if item.TerminalFailure != nil {
+			item.TerminalFailure.FailedAt = item.TerminalFailure.FailedAt.UTC()
 		}
 		item.CreatedAt = item.CreatedAt.UTC()
 		item.AvailableAt = item.AvailableAt.UTC()
