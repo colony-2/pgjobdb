@@ -200,3 +200,19 @@ SELECT EXISTS (
 	}
 	return nil
 }
+
+// VerifyTransaction validates the scheduler contract and retained references in
+// the caller's snapshot. Project adoption calls it after excluding writers.
+func VerifyTransaction(ctx context.Context, tx *sql.Tx) error {
+	if ctx == nil || tx == nil {
+		return fmt.Errorf("pgjobdb: context and transaction are required")
+	}
+	version, err := inspectInstallation(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if version != FormatVersion {
+		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
+	}
+	return validateInput(ctx, tx, version)
+}

@@ -14,7 +14,7 @@ import (
 )
 
 func TestPublicRuntimeLeaseTransport(t *testing.T) {
-	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
+	withPreparedDatabase(t, func(ctx context.Context, db *sql.DB) {
 		runtime, err := directruntime.NewSQLDB(ctx, db, directruntime.Config{
 			BlobStoreURI: "blobfs://" + t.TempDir(),
 		})
@@ -27,7 +27,7 @@ func TestPublicRuntimeLeaseTransport(t *testing.T) {
 			t.Fatal(err)
 		}
 		root, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "tenant", JobID: "root", JobType: "collect", Data: input,
+			TenantId: "c2", JobID: "root", JobType: "collect", Data: input,
 		}})
 		if err != nil {
 			t.Fatal(err)
@@ -45,7 +45,7 @@ func TestPublicRuntimeLeaseTransport(t *testing.T) {
 		}
 		child, err := runtime.SubmitJobWithLeaseByID(ctx, root.JobKey,
 			lease.LeaseID(), "worker", jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-				TenantId: "tenant", JobID: "child", JobType: "collect", Data: input,
+				TenantId: "c2", JobID: "child", JobType: "collect", Data: input,
 			}})
 		if err != nil || child.JobKey.JobId != "child" {
 			t.Fatalf("submit child = %+v, %v", child, err)

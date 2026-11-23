@@ -36,19 +36,19 @@ func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
 	createdActiveB := now.Add(-2 * time.Minute)
 	createdArchive := now.Add(-3 * time.Minute)
 
-	if _, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "test-tenant", Name: "test", Repo: "example.test/test"}); err != nil {
+	if _, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "AR56al1yl0yzJyAEqN1IteLC5Vi", Name: "test", Repo: "example.test/test"}); err != nil {
 		t.Fatal(err)
 	}
 	insertJob := func(id, jobType string, created time.Time, taskType string, cancel bool) {
 		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-			TenantID: "test-tenant", JobID: pgjobdb.JobID(id),
+			TenantID: "AR56al1yl0yzJyAEqN1IteLC5Vi", JobID: pgjobdb.JobID(id),
 			WorkerID: "submitter", JobType: pgjobdb.JobType(jobType),
 		})
 		if err != nil {
 			t.Fatalf("submit job %s: %v", id, err)
 		}
 		if taskType != "" {
-			err = pgjobdb.RescheduleUnheldJob(ctx, db, "test-tenant", pgjobdb.JobID(id),
+			err = pgjobdb.RescheduleUnheldJob(ctx, db, "AR56al1yl0yzJyAEqN1IteLC5Vi", pgjobdb.JobID(id),
 				"submitter", pgjobdb.RescheduleRequest{
 					RouteJobType: pgjobdb.JobType(jobType), WorkKind: pgjobdb.WorkKindTask,
 					Task: &pgjobdb.TaskWork{TaskType: pgjobdb.TaskType(taskType),
@@ -60,20 +60,20 @@ func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
 			}
 		}
 		_, err = db.ExecContext(ctx, `UPDATE pgjobdb.job_facts SET created_at = $1
-			WHERE tenant_id = 'test-tenant' AND job_id = $2`, created, id)
+			WHERE tenant_id = 'AR56al1yl0yzJyAEqN1IteLC5Vi' AND job_id = $2`, created, id)
 		if err != nil {
 			t.Fatalf("set creation time %s: %v", id, err)
 		}
 		if cancel {
 			if _, err := db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET cancel_requested = true
-				WHERE tenant_id = 'test-tenant' AND job_id = $1`, id); err != nil {
+				WHERE tenant_id = 'AR56al1yl0yzJyAEqN1IteLC5Vi' AND job_id = $1`, id); err != nil {
 				t.Fatalf("mark cancelled %s: %v", id, err)
 			}
 		}
 	}
 	insertArchive := func(id, jobType string, created time.Time, taskType string) {
 		insertJob(id, jobType, created, taskType, false)
-		if err := pgjobdb.CompleteUnheldJob(ctx, db, "test-tenant", pgjobdb.JobID(id),
+		if err := pgjobdb.CompleteUnheldJob(ctx, db, "AR56al1yl0yzJyAEqN1IteLC5Vi", pgjobdb.JobID(id),
 			"submitter", pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}); err != nil {
 			t.Fatalf("archive job %s: %v", id, err)
 		}
@@ -86,7 +86,7 @@ func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
 
 	t.Run("completed status uses archive only", func(t *testing.T) {
 		resp, err := engine.ListJobs(ctx, jobdb.ListJobsRequest{
-			TenantIds: []string{"test-tenant"},
+			TenantIds: []string{"AR56al1yl0yzJyAEqN1IteLC5Vi"},
 			Statuses:  []jobdb.JobStatus{jobdb.JobStatusCompleted},
 		})
 		if err != nil {
@@ -106,7 +106,7 @@ func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
 
 	t.Run("filters by job type on active", func(t *testing.T) {
 		resp, err := engine.ListJobs(ctx, jobdb.ListJobsRequest{
-			TenantIds: []string{"test-tenant"},
+			TenantIds: []string{"AR56al1yl0yzJyAEqN1IteLC5Vi"},
 			JobTypes:  []string{"alpha"},
 			Stores:    []jobdb.JobStore{jobdb.JobStoreActive},
 		})
@@ -124,7 +124,7 @@ func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
 
 	t.Run("filters by job/task tuple", func(t *testing.T) {
 		resp, err := engine.ListJobs(ctx, jobdb.ListJobsRequest{
-			TenantIds: []string{"test-tenant"},
+			TenantIds: []string{"AR56al1yl0yzJyAEqN1IteLC5Vi"},
 			JobTasks:  []jobdb.JobTaskFilter{{JobType: "beta", TaskType: "task"}},
 		})
 		if err != nil {
@@ -143,10 +143,10 @@ func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
 
 	t.Run("filters by job ids list", func(t *testing.T) {
 		resp, err := engine.ListJobs(ctx, jobdb.ListJobsRequest{
-			TenantIds: []string{"test-tenant"},
+			TenantIds: []string{"AR56al1yl0yzJyAEqN1IteLC5Vi"},
 			JobKeys: []jobdb.JobKey{
-				{TenantId: "test-tenant", JobId: "job-active-A"},
-				{TenantId: "test-tenant", JobId: "job-archived-D"},
+				{TenantId: "AR56al1yl0yzJyAEqN1IteLC5Vi", JobId: "job-active-A"},
+				{TenantId: "AR56al1yl0yzJyAEqN1IteLC5Vi", JobId: "job-archived-D"},
 			},
 		})
 		if err != nil {
@@ -165,7 +165,7 @@ func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
 
 	t.Run("paginates newest first across union", func(t *testing.T) {
 		resp, err := engine.ListJobs(ctx, jobdb.ListJobsRequest{
-			TenantIds: []string{"test-tenant"},
+			TenantIds: []string{"AR56al1yl0yzJyAEqN1IteLC5Vi"},
 			PageSize:  2,
 		})
 		if err != nil {
@@ -182,7 +182,7 @@ func TestListJobsRoutesByStatusAndOrdersWithUnion(t *testing.T) {
 		}
 
 		resp2, err := engine.ListJobs(ctx, jobdb.ListJobsRequest{
-			TenantIds: []string{"test-tenant"},
+			TenantIds: []string{"AR56al1yl0yzJyAEqN1IteLC5Vi"},
 			PageSize:  2,
 			PageToken: resp.NextPageToken,
 		})

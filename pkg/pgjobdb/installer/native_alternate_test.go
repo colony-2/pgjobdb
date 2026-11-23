@@ -13,7 +13,7 @@ func TestNativeAlternateRoutes(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, id := range []pgjobdb.JobID{"job", "delayed", "task", "task-to-job"} {
 			if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-				TenantID: "tenant", JobID: id, WorkerID: "submitter", JobType: "collect",
+				TenantID: "c2", JobID: id, WorkerID: "submitter", JobType: "collect",
 			}); err != nil {
 				t.Fatalf("submit %s: %v", id, err)
 			}
@@ -22,16 +22,16 @@ func TestNativeAlternateRoutes(t *testing.T) {
 			RouteJobType: "collect", WorkKind: pgjobdb.WorkKindJob,
 			Alternate: &pgjobdb.AlternateRoute{JobType: "fallback"},
 		}
-		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "job", "worker", jobRoute); err != nil {
+		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "job", "worker", jobRoute); err != nil {
 			t.Fatalf("set job alternate: %v", err)
 		}
 		original := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}
 		fallback := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"fallback"}}
-		if lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job", "worker",
+		if lease, err := pgjobdb.GetJobLease(ctx, db, "c2", "job", "worker",
 			original, pgjobdb.GetJobLeaseOptions{}); err != nil || lease != nil {
 			t.Fatalf("original route still selected: %+v, %v", lease, err)
 		}
-		lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job", "worker",
+		lease, err := pgjobdb.GetJobLease(ctx, db, "c2", "job", "worker",
 			fallback, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || lease == nil || lease.RouteJobType != "fallback" ||
 			lease.WorkKind != pgjobdb.WorkKindJob {
@@ -39,14 +39,14 @@ func TestNativeAlternateRoutes(t *testing.T) {
 		}
 
 		jobRoute.Alternate.After = time.Hour
-		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "delayed", "worker", jobRoute); err != nil {
+		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "delayed", "worker", jobRoute); err != nil {
 			t.Fatalf("set delayed alternate: %v", err)
 		}
-		if notDue, err := pgjobdb.GetJobLease(ctx, db, "tenant", "delayed", "worker",
+		if notDue, err := pgjobdb.GetJobLease(ctx, db, "c2", "delayed", "worker",
 			fallback, pgjobdb.GetJobLeaseOptions{}); err != nil || notDue != nil {
 			t.Fatalf("early fallback lease = %+v, %v", notDue, err)
 		}
-		if due, err := pgjobdb.GetJobLease(ctx, db, "tenant", "delayed", "worker",
+		if due, err := pgjobdb.GetJobLease(ctx, db, "c2", "delayed", "worker",
 			original, pgjobdb.GetJobLeaseOptions{}); err != nil || due == nil {
 			t.Fatalf("original route before delay = %+v, %v", due, err)
 		}
@@ -61,10 +61,10 @@ func TestNativeAlternateRoutes(t *testing.T) {
 				JobType: "fallback", TaskType: "alternate-download",
 			},
 		}
-		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "task", "worker", taskRoute); err != nil {
+		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "task", "worker", taskRoute); err != nil {
 			t.Fatalf("set task alternate: %v", err)
 		}
-		altTask, err := pgjobdb.GetJobLease(ctx, db, "tenant", "task", "worker",
+		altTask, err := pgjobdb.GetJobLease(ctx, db, "c2", "task", "worker",
 			pgjobdb.WorkSelector{Tasks: []pgjobdb.TaskSelector{
 				{JobType: "fallback", TaskType: "alternate-download"},
 			}}, pgjobdb.GetJobLeaseOptions{})
@@ -75,11 +75,11 @@ func TestNativeAlternateRoutes(t *testing.T) {
 		}
 
 		taskRoute.Alternate = &pgjobdb.AlternateRoute{JobType: "fallback"}
-		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "task-to-job",
+		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "task-to-job",
 			"worker", taskRoute); err != nil {
 			t.Fatalf("set task-to-job alternate: %v", err)
 		}
-		altJob, err := pgjobdb.GetJobLease(ctx, db, "tenant", "task-to-job",
+		altJob, err := pgjobdb.GetJobLease(ctx, db, "c2", "task-to-job",
 			"worker", fallback, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || altJob == nil || altJob.WorkKind != pgjobdb.WorkKindJob ||
 			altJob.Task != nil {

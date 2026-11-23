@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -94,6 +96,76 @@ func waitAlternate(at time.Time) {
 	}
 }
 
+// The workflow records an absolute deadline, but rescheduling sends a relative
+// duration. PostgreSQL starts that duration when it receives the operation, so
+// HTTP transit and admission can make its eligibility later than the history.
+// Observe availability without claiming or rerunning the job; execute it once.
+func waitAlternateRoute(t *testing.T, rt jobdb.ConsumerRuntime, key jobdb.JobKey, route jobdb.Route) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), 5*time.Second)
+	defer cancel()
+	for {
+		page, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{
+			TenantIds: []string{key.TenantId}, JobKeys: []jobdb.JobKey{key},
+			AvailableRoutes: []jobdb.Route{route},
+		})
+		require.NoError(t, err)
+		if len(page.Jobs) != 0 {
+			require.Len(t, page.Jobs, 1)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("route %+v did not become available: %v", route, ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// Exercise a known transport delay rather than relying on a fast local server.
+func TestPostgresTaskAlternateDelayedReschedule(t *testing.T) {
+	ctx := celltest.Context(context.Background())
+	backend := conformanceRuntimeFactory(t)(t)
+	handler := celltest.Handler(remote.NewConsumerServer(backend))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/reschedule") {
+			time.Sleep(1500 * time.Millisecond)
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	rt, err := remote.New(server.URL, server.Client())
+	require.NoError(t, err)
+	h, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+		Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "delayed", JobType: "alternate-test",
+		Data:      jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Second}),
+		RunPolicy: jobdb.DefaultRunPolicy(),
+	}})
+	require.NoError(t, err)
+	require.Equal(t, wf.JobRunSuspended, runAlternate(t, rt, h.JobKey, alternateJob{}, true).Status)
+	at := alternateDeadline(t, rt, h.JobKey)
+	// Transit outlasted the nominal deadline, but the scheduler starts the
+	// relative delay only on arrival. The old deadline + 10ms wait is over.
+	require.True(t, time.Now().After(at.Add(10*time.Millisecond)))
+	page, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{
+		TenantIds: []string{h.JobKey.TenantId}, JobKeys: []jobdb.JobKey{h.JobKey},
+		AvailableRoutes: []jobdb.Route{{JobType: "alternate-test", TaskType: "fallback"}},
+	})
+	require.NoError(t, err)
+	require.Empty(t, page.Jobs, "nominal workflow deadline does not imply scheduler eligibility")
+	waitAlternateRoute(t, rt, h.JobKey, jobdb.Route{JobType: "alternate-test", TaskType: "fallback"})
+	// The old wait of history deadline + 10ms precedes actual eligibility.
+	require.GreaterOrEqual(t, time.Since(at), 1400*time.Millisecond)
+	t.Logf("scheduler eligibility observed %s after recorded workflow deadline", time.Since(at))
+	out := runAlternate(t, rt, h.JobKey, alternateJob{}, true)
+	require.Equal(t, wf.JobRunCompleted, out.Status, "%+v", out)
+	info, err := rt.GetJob(ctx, h.JobKey)
+	require.NoError(t, err)
+	raw, err := info.Data.GetData()
+	require.NoError(t, err)
+	require.JSONEq(t, `"fallback"`, string(raw))
+}
+
 func runTaskAlternateLifecycle(t *testing.T, newRuntime func(testing.TB) *pgjobdbruntime.Runtime) {
 	for _, backend := range []string{"postgres", "remote-postgres"} {
 		for _, mode := range []string{"fallback", "human-before", "human-late", "race", "crash"} {
@@ -103,7 +175,7 @@ func runTaskAlternateLifecycle(t *testing.T, newRuntime func(testing.TB) *pgjobd
 				at := time.Now().UTC().Add(400 * time.Millisecond)
 				policy := jobdb.DefaultRunPolicy()
 				policy.Retry.MaximumAttempts = 1
-				handle, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "job", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Until(at)}), RunPolicy: policy}})
+				handle, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "job", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Until(at)}), RunPolicy: policy}})
 				require.NoError(t, err)
 				w := alternateJob{}
 				require.Equal(t, wf.JobRunSuspended, runAlternate(t, rt, handle.JobKey, w, true).Status)
@@ -123,7 +195,7 @@ func runTaskAlternateLifecycle(t *testing.T, newRuntime func(testing.TB) *pgjobd
 					expected = "human"
 					waitAlternate(at.Add(10 * time.Millisecond))
 				case "human-late":
-					waitAlternate(at.Add(10 * time.Millisecond))
+					waitAlternateRoute(t, rt, handle.JobKey, jobdb.Route{JobType: w.Name(), TaskType: "fallback"})
 					require.False(t, runAlternate(t, rt, handle.JobKey, w, false).LeaseAcquired)
 					// A fresh lookup after eligibility still sees the original pending task.
 					pending, err = engine.GetWaitingTask(ctx, handle.JobKey)
@@ -132,7 +204,7 @@ func runTaskAlternateLifecycle(t *testing.T, newRuntime func(testing.TB) *pgjobd
 					require.NoError(t, finish())
 					expected = "human"
 				case "race":
-					waitAlternate(at.Add(10 * time.Millisecond))
+					waitAlternateRoute(t, rt, handle.JobKey, jobdb.Route{JobType: w.Name(), TaskType: "fallback"})
 					var wg sync.WaitGroup
 					wg.Add(1)
 					var humanErr error
@@ -143,7 +215,7 @@ func runTaskAlternateLifecycle(t *testing.T, newRuntime func(testing.TB) *pgjobd
 						expected = "human"
 					}
 				case "crash":
-					waitAlternate(at.Add(10 * time.Millisecond))
+					waitAlternateRoute(t, rt, handle.JobKey, jobdb.Route{JobType: w.Name(), TaskType: "fallback"})
 					// PostgreSQL leases have whole-second precision.
 					lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: handle.JobKey, WorkerID: "crashed", Routes: []jobdb.Route{{JobType: w.Name(), TaskType: "fallback"}}, LeaseDuration: time.Second})
 					require.NoError(t, err)
@@ -157,7 +229,7 @@ func runTaskAlternateLifecycle(t *testing.T, newRuntime func(testing.TB) *pgjobd
 					require.NotNil(t, page.Jobs[0].LeaseExpiresAt)
 					waitAlternate(page.Jobs[0].LeaseExpiresAt.Add(10 * time.Millisecond))
 				default:
-					waitAlternate(at.Add(10 * time.Millisecond))
+					waitAlternateRoute(t, rt, handle.JobKey, jobdb.Route{JobType: w.Name(), TaskType: "fallback"})
 				}
 				result := runAlternate(t, rt, handle.JobKey, w, true)
 				require.True(t, result.Status == wf.JobRunCompleted || (mode == "race" && result.Status == wf.JobRunNotLeaseable), "%+v", result)
@@ -189,7 +261,7 @@ func runTaskAlternateHardTimeout(t *testing.T, newRuntime func(testing.TB) *pgjo
 				case "job-total":
 					policy.TotalTimeout = jobdb.AsDuration(500 * time.Millisecond)
 				}
-				h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "deadline", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: 2 * time.Second}), RunPolicy: policy}})
+				h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "deadline", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: 2 * time.Second}), RunPolicy: policy}})
 				require.NoError(t, err)
 				w := alternateJob{taskPolicy}
 				require.Equal(t, wf.JobRunSuspended, runAlternate(t, rt, h.JobKey, w, true).Status)
@@ -215,7 +287,7 @@ func runTaskAlternateHonorsJobInvocationTimeout(t *testing.T, newRuntime func(te
 			policy.InvocationTimeout = jobdb.AsDuration(500 * time.Millisecond)
 			at := time.Now().Add(1500 * time.Millisecond)
 			h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-				TenantId: "tenant", JobType: "alternate-test", RunPolicy: policy,
+				TenantId: "c2", JobType: "alternate-test", RunPolicy: policy,
 				Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Until(at)}),
 			}})
 			require.NoError(t, err)
@@ -237,7 +309,7 @@ func runTaskAlternateClaimAfterHardDeadline(t *testing.T, newRuntime func(testin
 			policy := jobdb.DefaultRunPolicy()
 			policy.Retry.MaximumAttempts = 1
 			h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-				TenantId: "tenant", JobType: "alternate-test", RunPolicy: policy,
+				TenantId: "c2", JobType: "alternate-test", RunPolicy: policy,
 				Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: 100 * time.Millisecond}),
 			}})
 			require.NoError(t, err)
@@ -256,11 +328,11 @@ func runTaskAlternateSuppliedLease(t *testing.T, newRuntime func(testing.TB) *pg
 	ctx := celltest.Context(context.Background())
 	rt := alternateRuntime(t, "remote-postgres", newRuntime)
 	at := time.Now().Add(100 * time.Millisecond)
-	h, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "supplied", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Until(at)}), RunPolicy: jobdb.DefaultRunPolicy()}})
+	h, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "supplied", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: time.Until(at)}), RunPolicy: jobdb.DefaultRunPolicy()}})
 	require.NoError(t, err)
 	w := alternateJob{}
 	require.Equal(t, wf.JobRunSuspended, runAlternate(t, rt, h.JobKey, w, true).Status)
-	waitAlternate(alternateDeadline(t, rt, h.JobKey).Add(10 * time.Millisecond))
+	waitAlternateRoute(t, rt, h.JobKey, jobdb.Route{JobType: w.Name(), TaskType: "fallback"})
 	lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: h.JobKey, WorkerID: "dispatcher", Routes: []jobdb.Route{{JobType: w.Name(), TaskType: "fallback"}}, LeaseDuration: time.Second})
 	require.NoError(t, err)
 	require.NotNil(t, lease)
@@ -286,7 +358,7 @@ func runCompletedExternalTaskReplaysAfterDeadline(t *testing.T, newRuntime func(
 		t.Run(backend, func(t *testing.T) {
 			ctx := celltest.Context(context.Background())
 			rt := alternateRuntime(t, backend, newRuntime)
-			h, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "completed-input", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: 2 * time.Second}), RunPolicy: jobdb.DefaultRunPolicy()}})
+			h, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "completed-input", JobType: "alternate-test", Data: jobdb.NewTaskDataOrPanic(wf.TaskAlternateAfter{TaskType: "fallback", After: 2 * time.Second}), RunPolicy: jobdb.DefaultRunPolicy()}})
 			require.NoError(t, err)
 			w := alternateJob{jobdb.RunPolicy{TotalTimeout: jobdb.AsDuration(200 * time.Millisecond)}}
 			require.Equal(t, wf.JobRunSuspended, runAlternate(t, rt, h.JobKey, w, true).Status)

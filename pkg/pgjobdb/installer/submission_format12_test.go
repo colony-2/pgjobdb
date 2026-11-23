@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/projects"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,12 +24,13 @@ func TestSubmissionFormat12Upgrade(t *testing.T) {
 		_, err := db.ExecContext(ctx, format12BeforeAvailabilityRepair)
 		require.NoError(t, err)
 		before := time.Date(1850, 1, 1, 0, 0, 0, 123456000, time.UTC)
-		_, err = submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: "existing", WorkerID: "submit", JobType: "work", Cell: "test", CellRepo: "example.test/test", AvailableAt: &before})
+		historicalJob(t, ctx, db, 12, "existing")
+		_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET available_at=$1 WHERE tenant_id='c2' AND job_id='existing'`, before)
 		require.NoError(t, err)
 		db.SetMaxOpenConns(1)
 		_, err = db.ExecContext(ctx, `SET TimeZone='Europe/Paris'`)
 		require.NoError(t, err)
-		_, err = pgjobdb.GetJob(ctx, db, "tenant", "existing")
+		_, err = pgjobdb.GetJob(ctx, db, "c2", "existing")
 		// Baseline's historical seconds in the local offset cannot be decoded.
 		// created_at is modern, so availability alone exposes the defect.
 		require.ErrorContains(t, err, "decode native job")
@@ -43,10 +46,12 @@ func TestSubmissionFormat12Upgrade(t *testing.T) {
 		reopened, err := sql.Open("postgres", "host=localhost port="+port+" user=postgres password=postgres dbname=postgres sslmode=disable")
 		require.NoError(t, err)
 		defer reopened.Close()
-		row, err := pgjobdb.GetJob(ctx, reopened, "tenant", "existing")
+		row, err := pgjobdb.GetJob(ctx, reopened, "c2", "existing")
 		require.NoError(t, err)
 		require.Equal(t, before, row.AvailableAt)
-		lease, err := pgjobdb.GetJobLease(ctx, reopened, "tenant", "existing", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"work"}}, pgjobdb.GetJobLeaseOptions{})
+		require.NoError(t, projects.PrepareShared(projectfixture.Context(ctx), reopened))
+		require.NoError(t, projectfixture.Adopt(ctx, reopened))
+		lease, err := pgjobdb.GetJobLease(ctx, reopened, "c2", "existing", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}, pgjobdb.GetJobLeaseOptions{})
 		require.NoError(t, err)
 		require.NotNil(t, lease)
 		var zone string

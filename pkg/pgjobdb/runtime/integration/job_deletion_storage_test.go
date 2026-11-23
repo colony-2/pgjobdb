@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"sync"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestPostgresJobDeletionReopenAndChildren(t *testing.T) {
 			cfg := pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()}
 			backend := openConfigurationRuntime(t, dsn, cfg)
 			rt := configurationTransport(t, backend, transport)
-			req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "parent", JobType: "job", Data: jobdb.NewTaskDataOrPanic("input")}}
+			req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "parent", JobType: "job", Data: jobdb.NewTaskDataOrPanic("input")}}
 			parent, err := celltest.Submit(rt, ctx, req)
 			require.NoError(t, err)
 			lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: parent.JobKey, WorkerID: "parent", Routes: []jobdb.Route{{JobType: "job"}}, LeaseDuration: time.Minute})
@@ -35,7 +36,7 @@ func TestPostgresJobDeletionReopenAndChildren(t *testing.T) {
 			require.NotNil(t, lease)
 			child, err := lease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", JobID: "child", JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
 			require.NoError(t, err)
-			_, err = rt.(jobdb.JobDeletionRuntime).DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []string{parent.JobKey.JobId}})
+			_, err = rt.(jobdb.JobDeletionRuntime).DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []string{parent.JobKey.JobId}})
 			require.NoError(t, err)
 			info, err := rt.GetJob(ctx, child.JobKey)
 			require.NoError(t, err)
@@ -45,11 +46,11 @@ func TestPostgresJobDeletionReopenAndChildren(t *testing.T) {
 			duplicate, err := celltest.Submit(rt, ctx, req)
 			require.NoError(t, err)
 			require.Equal(t, parent.JobKey, duplicate.JobKey)
-			visible, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}})
+			visible, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"c2"}})
 			require.NoError(t, err)
 			require.Len(t, visible.Jobs, 1)
 			require.Equal(t, child.JobKey, visible.Jobs[0].JobKey)
-			query := jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, IncludeHidden: true, PageSize: 1}
+			query := jobdb.ListJobsRequest{TenantIds: []string{"c2"}, IncludeHidden: true, PageSize: 1}
 			first, err := rt.ListJobs(ctx, query)
 			require.NoError(t, err)
 			require.Len(t, first.Jobs, 1)
@@ -92,18 +93,18 @@ func (s deletionCreationGate) CreateJob(ctx context.Context, req runtimecore.Cre
 
 func TestPostgresJobDeletionFencesInFlightChild(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
+		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: projectfixture.Control(db), BlobStoreURI: "blobfs://" + t.TempDir()})
 		require.NoError(t, err)
 		defer chapters.Close(ctx)
-		schemas, err := schemapostgres.NewSQLDB(ctx, db)
+		schemas, err := schemapostgres.NewSQLDB(ctx, db, projectfixture.Control(db))
 		require.NoError(t, err)
 		gate := deletionCreationGate{Scheduler: runtimeadapter.Scheduler{DB: db}, entered: make(chan struct{}), release: make(chan struct{})}
 		var release sync.Once
 		unblock := func() { release.Do(func() { close(gate.release) }) }
 		defer unblock()
-		rt, err := runtimecore.NewRuntime(runtimecore.Config{Scheduler: gate, Chapters: chapters, Schemas: schemas, Configurations: newConfigurationStore(t, ctx, db)})
+		rt, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(db), Scheduler: gate, Chapters: chapters, Schemas: schemas, Configurations: newConfigurationStore(t, ctx, db)})
 		require.NoError(t, err)
-		parent, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "parent", JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
+		parent, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "parent", JobType: "job", Data: jobdb.NewTaskDataOrPanic(nil)}})
 		require.NoError(t, err)
 		lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: parent.JobKey, WorkerID: "parent", Routes: []jobdb.Route{{JobType: "job"}}, LeaseDuration: time.Minute})
 		require.NoError(t, err)
@@ -118,11 +119,11 @@ func TestPostgresJobDeletionFencesInFlightChild(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
 		}
-		_, err = rt.DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []string{"parent"}})
+		_, err = rt.DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []string{"parent"}})
 		require.NoError(t, err)
 		unblock()
 		require.ErrorIs(t, <-done, jobdb.ErrExecutionLeaseLost)
-		_, err = rt.GetJob(ctx, jobdb.JobKey{TenantId: "tenant", JobId: "child"})
+		_, err = rt.GetJob(ctx, jobdb.JobKey{TenantId: "c2", JobId: "child"})
 		require.ErrorIs(t, err, jobdb.ErrJobNotFound)
 	})
 }
@@ -147,7 +148,7 @@ func TestPostgresJobDeletionAcquisitionRace(t *testing.T) {
 					done <- acquired{l, err}
 				}()
 				close(start)
-				result, err := rt.(jobdb.JobDeletionRuntime).DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []string{key.JobId}})
+				result, err := rt.(jobdb.JobDeletionRuntime).DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []string{key.JobId}})
 				require.NoError(t, err)
 				require.EqualValues(t, 1, result.DeletedCount)
 				got := <-done

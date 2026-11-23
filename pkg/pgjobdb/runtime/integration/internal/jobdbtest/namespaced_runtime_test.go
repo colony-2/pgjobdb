@@ -29,7 +29,7 @@ func assertConsumerOnly(t *testing.T, value any) {
 	require.True(t, goals)
 }
 func TestNamespacedAbsentCapabilities(t *testing.T) {
-	value := newTenantNamespacedRuntime(toy.New(), "ns-")
+	value := newTenantNamespacedRuntime(toy.New(toy.WithProjects(celltest.UnrestrictedProjects{})), "ns-")
 	assertConsumerOnly(t, value)
 	_, ok := value.(jobdb.ConfigurationAdmin)
 	require.False(t, ok)
@@ -45,12 +45,12 @@ func TestNamespacedAbsentCapabilities(t *testing.T) {
 	require.False(t, ok)
 	_, ok = value.(LeaseTransport)
 	require.False(t, ok)
-	assertConsumerOnly(t, celltest.WithCells(toy.New()))
+	assertConsumerOnly(t, celltest.WithCells(toy.New(toy.WithProjects(celltest.UnrestrictedProjects{}))))
 }
 
 func TestNamespacedConfigurationAndDevelopment(t *testing.T) {
 	ctx := celltest.Context(context.Background())
-	embedded, err := sqlite.StartEmbeddedRuntime(ctx)
+	embedded, err := sqlite.StartEmbeddedRuntime(ctx, sqlite.WithProjects(celltest.UnrestrictedProjects{}))
 	require.NoError(t, err)
 	defer embedded.Shutdown()
 	rt := embedded.Runtime
@@ -123,7 +123,7 @@ func TestNamespacedConfigurationAndDevelopment(t *testing.T) {
 
 func TestNamespacedClientDelegation(t *testing.T) {
 	ctx := celltest.Context(context.Background())
-	embedded, err := sqlite.StartEmbeddedRuntime(ctx)
+	embedded, err := sqlite.StartEmbeddedRuntime(ctx, sqlite.WithProjects(celltest.UnrestrictedProjects{}))
 	require.NoError(t, err)
 	defer embedded.Shutdown()
 	server := httptest.NewServer(celltest.Handler(remote.NewConsumerServer(embedded.Runtime)))
@@ -163,7 +163,7 @@ func TestNamespacedClientDelegation(t *testing.T) {
 
 func TestNamespacedEnginePreservesCapabilities(t *testing.T) {
 	ctx := celltest.Context(context.Background())
-	embedded, err := sqlite.StartEmbeddedRuntime(ctx)
+	embedded, err := sqlite.StartEmbeddedRuntime(ctx, sqlite.WithProjects(celltest.UnrestrictedProjects{}))
 	require.NoError(t, err)
 	defer embedded.Shutdown()
 	ns := &tenantNamespacedRuntime{runtime: embedded.Runtime, prefix: "engine-"}
@@ -183,20 +183,20 @@ func TestNamespacedEnginePreservesCapabilities(t *testing.T) {
 
 // These ports are independent: adding one never installs the others.
 func TestNamespacedIndividualPorts(t *testing.T) {
-	ns := &tenantNamespacedRuntime{runtime: toy.New(), prefix: "n-"}
+	ns := &tenantNamespacedRuntime{runtime: toy.New(toy.WithProjects(celltest.UnrestrictedProjects{})), prefix: "n-"}
 	for _, v := range []any{
 		struct {
 			*tenantNamespacedRuntime
 			configurationAdapter
-		}{ns, configurationAdapter{ns, toy.New()}},
+		}{ns, configurationAdapter{ns, toy.New(toy.WithProjects(celltest.UnrestrictedProjects{}))}},
 		struct {
 			*tenantNamespacedRuntime
 			schemaAdapter
-		}{ns, schemaAdapter{ns, toy.New()}},
+		}{ns, schemaAdapter{ns, toy.New(toy.WithProjects(celltest.UnrestrictedProjects{}))}},
 		struct {
 			*tenantNamespacedRuntime
 			deletionAdapter
-		}{ns, deletionAdapter{ns, toy.New()}},
+		}{ns, deletionAdapter{ns, toy.New(toy.WithProjects(celltest.UnrestrictedProjects{}))}},
 	} {
 		assertConsumerOnly(t, v)
 		_, ok := v.(jobdb.LeaseDelegator)
@@ -225,7 +225,7 @@ func TestNamespacedLeaseAbsentCapabilities(t *testing.T) {
 
 func TestNamespacedAbsentSelectionAndSchema(t *testing.T) {
 	ctx := celltest.Context(context.Background())
-	underlying := toy.New()
+	underlying := toy.New(toy.WithProjects(celltest.UnrestrictedProjects{}))
 	ns := &tenantNamespacedRuntime{runtime: underlying, prefix: "selection-"}
 	value := struct {
 		*tenantNamespacedRuntime

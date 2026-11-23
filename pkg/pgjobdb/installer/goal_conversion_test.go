@@ -8,8 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 	chapterpostgres "github.com/colony-2/jobdb/pkg/jobdb/chapterstore/postgres"
+	"github.com/colony-2/jobdb/pkg/jobdb/configuration"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
+	schemapostgres "github.com/colony-2/jobdb/pkg/jobdb/schemastore/postgres"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"io"
 	"testing"
 	"time"
@@ -31,18 +35,18 @@ var format11 string
 // where that format supports them. No marker-only fixture is used.
 func historicalJob(t *testing.T, ctx context.Context, db *sql.DB, version int, id string) string {
 	t.Helper()
-	_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
-	if !errors.Is(err, jobdb.ErrCellConflict) {
-		require.NoError(t, err)
-	}
-	query := `SELECT pgjobdb.submit_native_job('tenant',$1,'submitter','collect','{}','{}',NULL,NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,NULL,FALSE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo)) FROM pgjobdb.cells WHERE tenant_id='tenant' AND name='test'`
+	// Reconstruct the pre-project producer through its historical SQL contract.
+	// Current Go writers intentionally cannot mutate an uninstalled catalog.
+	_, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.cells(tenant_id,cell_id,name,repo,state,description,metadata,revision,created_at_ns,updated_at_ns) VALUES('c2','historical-cell','test','example.test/test','ACTIVE','','{}','historical-revision',0,0) ON CONFLICT DO NOTHING; INSERT INTO pgjobdb.cell_names VALUES('c2','test','historical-cell') ON CONFLICT DO NOTHING`)
+	require.NoError(t, err)
+	query := `SELECT pgjobdb.submit_native_job('c2',$1,'submitter','collect','{}','{}',NULL,NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,NULL,FALSE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo)) FROM pgjobdb.cells WHERE tenant_id='c2' AND name='test'`
 	if version == 12 {
-		query = `SELECT pgjobdb.submit_native_job('tenant',$1,'submitter','collect','{}','{}',NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,NULL,FALSE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo)) FROM pgjobdb.cells WHERE tenant_id='tenant' AND name='test'`
+		query = `SELECT pgjobdb.submit_native_job('c2',$1,'submitter','collect','{}','{}',NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,NULL,FALSE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo)) FROM pgjobdb.cells WHERE tenant_id='c2' AND name='test'`
 	}
 	_, err = db.ExecContext(ctx, query, id)
 	require.NoError(t, err)
 	var goal string
-	require.NoError(t, db.QueryRowContext(ctx, `SELECT goal_id FROM pgjobdb.job_facts WHERE tenant_id='tenant' AND job_id=$1`, id).Scan(&goal))
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT goal_id FROM pgjobdb.job_facts WHERE tenant_id='c2' AND job_id=$1`, id).Scan(&goal))
 	return goal
 }
 
@@ -55,30 +59,30 @@ func historicalBaseline(t *testing.T, ctx context.Context, db *sql.DB, version i
 	historicalJob(t, ctx, db, version, "consumer")
 	// Frozen historical secondary links resolve cross-primary success, while the
 	// failed goal's original snapshot includes a subsequently discarded member.
-	_, err := db.ExecContext(ctx, `SELECT pgjobdb.add_goal_candidate('tenant',$1,'cross-winner')`, a)
+	_, err := db.ExecContext(ctx, `SELECT pgjobdb.add_goal_candidate('c2',$1,'cross-winner')`, a)
 	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `SELECT pgjobdb.add_goal_candidate('tenant',$1,'cross-winner')`, failed)
+	_, err = db.ExecContext(ctx, `SELECT pgjobdb.add_goal_candidate('c2',$1,'cross-winner')`, failed)
 	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `SELECT pgjobdb.fail_goal('tenant',$1,E' exact\n保存 failure ')`, failed)
+	_, err = db.ExecContext(ctx, `SELECT pgjobdb.fail_goal('c2',$1,E' exact\n保存 failure ')`, failed)
 	require.NoError(t, err)
-	require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", "cross-winner", "worker", pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}))
+	historicalComplete(t, ctx, db, "cross-winner", "success")
 	// Preserve a genuine inherited overlap made by old shared Restart semantics.
-	_, err = db.ExecContext(ctx, `SELECT pgjobdb.prepare_job('tenant','overlap-member',NULL,'overlap-origin',TRUE,'historical shared descriptor','[]','test','example.test/test',cell_id,name,repo,'') FROM pgjobdb.cells WHERE tenant_id='tenant' AND name='test'`)
+	_, err = db.ExecContext(ctx, `SELECT pgjobdb.prepare_job('c2','overlap-member',NULL,'overlap-origin',TRUE,'historical shared descriptor','[]','test','example.test/test',cell_id,name,repo,'') FROM pgjobdb.cells WHERE tenant_id='c2' AND name='test'`)
 	require.NoError(t, err)
-	query := `SELECT pgjobdb.submit_native_job('tenant','overlap-member','submitter','collect','{}','{}',NULL,NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,$1,TRUE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo)) FROM pgjobdb.cells WHERE tenant_id='tenant' AND name='test'`
+	query := `SELECT pgjobdb.submit_native_job('c2','overlap-member','submitter','collect','{}','{}',NULL,NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,$1,TRUE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo)) FROM pgjobdb.cells WHERE tenant_id='c2' AND name='test'`
 	if version == 12 {
-		query = `SELECT pgjobdb.submit_native_job('tenant','overlap-member','submitter','collect','{}','{}',NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,$1,TRUE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo)) FROM pgjobdb.cells WHERE tenant_id='tenant' AND name='test'`
+		query = `SELECT pgjobdb.submit_native_job('c2','overlap-member','submitter','collect','{}','{}',NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,$1,TRUE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo)) FROM pgjobdb.cells WHERE tenant_id='c2' AND name='test'`
 	}
 	_, err = db.ExecContext(ctx, query, overlap)
 	require.NoError(t, err)
 	if version >= 11 {
 		selectedGoal := historicalJob(t, ctx, db, version, "selected-origin")
-		require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", "selected-origin", "worker", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp}))
-		_, err = db.ExecContext(ctx, `SELECT pgjobdb.prepare_job('tenant','accepted-selected',NULL,NULL,FALSE,'selected original descriptor','[]','test','example.test/test',cell_id,name,repo,'',$1) FROM pgjobdb.cells WHERE tenant_id='tenant' AND name='test'`, selectedGoal)
+		historicalComplete(t, ctx, db, "selected-origin", "failed_app")
+		_, err = db.ExecContext(ctx, `SELECT pgjobdb.prepare_job('c2','accepted-selected',NULL,NULL,FALSE,'selected original descriptor','[]','test','example.test/test',cell_id,name,repo,'',$1) FROM pgjobdb.cells WHERE tenant_id='c2' AND name='test'`, selectedGoal)
 		require.NoError(t, err)
-		selectedQuery := `SELECT pgjobdb.submit_native_job('tenant','accepted-selected','submitter','collect','{}','{}',NULL,NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,$1,FALSE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo),$1) FROM pgjobdb.cells WHERE tenant_id='tenant' AND name='test'`
+		selectedQuery := `SELECT pgjobdb.submit_native_job('c2','accepted-selected','submitter','collect','{}','{}',NULL,NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,$1,FALSE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo),$1) FROM pgjobdb.cells WHERE tenant_id='c2' AND name='test'`
 		if version == 12 {
-			selectedQuery = `SELECT pgjobdb.submit_native_job('tenant','accepted-selected','submitter','collect','{}','{}',NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,$1,FALSE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo),$1) FROM pgjobdb.cells WHERE tenant_id='tenant' AND name='test'`
+			selectedQuery = `SELECT pgjobdb.submit_native_job('c2','accepted-selected','submitter','collect','{}','{}',NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,$1,FALSE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo),$1) FROM pgjobdb.cells WHERE tenant_id='c2' AND name='test'`
 		}
 		_, err = db.ExecContext(ctx, selectedQuery, selectedGoal)
 		require.NoError(t, err)
@@ -88,9 +92,9 @@ func historicalBaseline(t *testing.T, ctx context.Context, db *sql.DB, version i
 	}
 	// Actual durable wait/target functions preserve both frozen settlements and
 	// pending targets. No evaluation or retargeting is performed by conversion.
-	_, err = db.ExecContext(ctx, `SELECT pgjobdb._register_wait('tenant','consumer',jsonb_build_object('waitId','settled','dependencies',jsonb_build_array(jsonb_build_object('target',jsonb_build_object('goalId',$1::text),'condition','success'))))`, a)
+	_, err = db.ExecContext(ctx, `SELECT pgjobdb._register_wait('c2','consumer',jsonb_build_object('waitId','settled','dependencies',jsonb_build_array(jsonb_build_object('target',jsonb_build_object('goalId',$1::text),'condition','success'))))`, a)
 	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `SELECT pgjobdb._register_wait('tenant','consumer',jsonb_build_object('waitId','pending','dependencies',jsonb_build_array(jsonb_build_object('target',jsonb_build_object('goalId',$1::text),'condition','success'))))`, overlap)
+	_, err = db.ExecContext(ctx, `SELECT pgjobdb._register_wait('c2','consumer',jsonb_build_object('waitId','pending','dependencies',jsonb_build_array(jsonb_build_object('target',jsonb_build_object('goalId',$1::text),'condition','success'))))`, overlap)
 	require.NoError(t, err)
 	// Metadata/declarations/client payload stay byte-for-byte; public history and
 	// artifact stores are unrelated to the conversion and must survive as well.
@@ -124,19 +128,19 @@ func TestGoalConversionHistoricalFormats(t *testing.T) {
 				_, err := db.ExecContext(ctx, fixture.ddl)
 				require.NoError(t, err)
 				a, b, failure, overlap := historicalBaseline(t, ctx, db, fixture.version)
-				chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
+				chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: celltest.UnrestrictedProjects{}, BlobStoreURI: "blobfs://" + t.TempDir()})
 				require.NoError(t, err)
 				defer chapters.Close(ctx)
-				logKey := runtimecore.ChapterLogKey{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "origin"}}
+				logKey := runtimecore.ChapterLogKey{JobKey: jobdb.JobKey{TenantId: "c2", JobId: "origin"}}
 				payload := []byte("historical opaque declaration\x00\xff")
 				artifactBytes := []byte("original artifact\x00保存")
 				require.NoError(t, chapters.Create(ctx, logKey, runtimecore.EncodedChapter{Ordinal: 0, Payload: payload, ArtifactUploads: []jobdb.ArtifactUpload{{Name: "source.bin", Size: int64(len(artifactBytes)), Open: func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(artifactBytes)), nil }}}}))
 				before := stableHistoricalRows(t, ctx, db)
 				var oldFailure string
 				var closed time.Time
-				require.NoError(t, db.QueryRowContext(ctx, `SELECT failure::text,closed_at FROM pgjobdb.goals WHERE tenant_id='tenant' AND goal_id=$1`, failure).Scan(&oldFailure, &closed))
+				require.NoError(t, db.QueryRowContext(ctx, `SELECT failure::text,closed_at FROM pgjobdb.goals WHERE tenant_id='c2' AND goal_id=$1`, failure).Scan(&oldFailure, &closed))
 				var successTime time.Time
-				require.NoError(t, db.QueryRowContext(ctx, `SELECT closed_at FROM pgjobdb.goals WHERE tenant_id='tenant' AND goal_id=$1`, a).Scan(&successTime))
+				require.NoError(t, db.QueryRowContext(ctx, `SELECT closed_at FROM pgjobdb.goals WHERE tenant_id='c2' AND goal_id=$1`, a).Scan(&successTime))
 				install := installer.Installer{DB: db}
 				preflight, err := install.Preflight(ctx)
 				require.NoError(t, err)
@@ -183,7 +187,7 @@ func TestGoalConversionHistoricalFormats(t *testing.T) {
 				for idx := range preflight.RemovedLinks {
 					require.JSONEq(t, string(preflight.RemovedLinks[idx]), string(r.RemovedLinks[idx]))
 				}
-				key := jobdb.GoalKey{TenantId: "tenant", GoalID: failure}
+				key := jobdb.GoalKey{TenantId: "c2", GoalID: failure}
 				g, err := pgjobdb.GetGoal(ctx, db, key)
 				require.NoError(t, err)
 				require.NotEmpty(t, g.FailureJobID)
@@ -198,24 +202,25 @@ func TestGoalConversionHistoricalFormats(t *testing.T) {
 				require.True(t, g.ClosedAt.Equal(closed))
 				require.Contains(t, g.Failure.NonTerminalJobIDs, "cross-winner")
 				require.NotContains(t, g.Failure.NonTerminalJobIDs, g.FailureJobID)
-				info, err := pgjobdb.GetJob(ctx, db, "tenant", pgjobdb.JobID(g.FailureJobID))
+				info, err := pgjobdb.GetJob(ctx, db, "c2", pgjobdb.JobID(g.FailureJobID))
 				require.NoError(t, err)
 				require.Equal(t, jobdb.JobRecordMigratedGoalFailure, info.RecordKind)
 				require.Empty(t, info.RouteJobType)
-				success, err := pgjobdb.GetGoal(ctx, db, jobdb.GoalKey{TenantId: "tenant", GoalID: a})
+				success, err := pgjobdb.GetGoal(ctx, db, jobdb.GoalKey{TenantId: "c2", GoalID: a})
 				require.NoError(t, err)
 				require.Equal(t, "cross-winner", success.SuccessfulJobID)
 				require.True(t, success.ClosedAt.Equal(successTime))
+				prepareHistoricalProjectFixture(t, ctx, db)
 				// No cancellation/reset: both inherited nonterminal members remain and
 				// admission blocks until every one has drained through ordinary completion.
 				selected := jobdb.WithPrimaryGoalSelectionAuthorizer(ctx, func(context.Context, jobdb.GoalKey, jobdb.ResolvedCell) error { return nil })
-				p, err := pgjobdb.PrepareJob(selected, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "tenant", JobId: "recovery"}, Cell: "test", CellRepo: "example.test/test", SelectedGoalID: overlap, Descriptor: "recovery"})
+				p, err := pgjobdb.PrepareJob(selected, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "c2", JobId: "recovery"}, Cell: "test", CellRepo: "example.test/test", SelectedGoalID: overlap, Descriptor: "recovery"})
 				require.NoError(t, err)
-				req := pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: "recovery", WorkerID: "worker", JobType: "collect", Cell: "test", CellRepo: "example.test/test", GoalID: overlap, SelectedGoalID: overlap, Target: p.Target}
+				req := pgjobdb.SubmitJobRequest{TenantID: "c2", JobID: "recovery", WorkerID: "worker", JobType: "collect", Cell: "test", CellRepo: "example.test/test", GoalID: overlap, SelectedGoalID: overlap, Target: p.Target}
 				_, err = pgjobdb.SubmitJob(selected, db, req)
 				require.ErrorIs(t, err, jobdb.ErrGoalConflict)
 				for _, id := range []pgjobdb.JobID{"overlap-origin", "overlap-member"} {
-					require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", id, "worker", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp}))
+					require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "c2", id, "worker", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp}))
 					_, err = pgjobdb.SubmitJob(selected, db, req)
 					if id == "overlap-origin" {
 						require.ErrorIs(t, err, jobdb.ErrGoalConflict)
@@ -312,4 +317,46 @@ func TestGoalConversionOriginTie(t *testing.T) {
 		require.Equal(t, expected, actual)
 		require.NotEmpty(t, report.MetadataDerivations)
 	})
+}
+
+func historicalComplete(t *testing.T, ctx context.Context, db *sql.DB, id, status string) {
+	t.Helper()
+	_, err := db.ExecContext(ctx, `SELECT pgjobdb.complete_native_unheld_job('c2',$1,'worker',$2,NULL,NULL,NULL)`, id, status)
+	require.NoError(t, err)
+}
+
+// This fixture explicitly removes the empty retired schedule participant after
+// preservation checks. Production adoption correctly refuses unknown tables;
+// deleting historical resources is never an implicit installer action.
+func prepareHistoricalProjectFixture(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	var retired bool
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_regclass('pgjobdb.schedules') IS NOT NULL`).Scan(&retired))
+	if retired {
+		var count int
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.schedules`).Scan(&count))
+		require.Zero(t, count)
+		_, err := db.ExecContext(ctx, `-- Fixture-only retirement: no schedule rows or references may be lost.
+ALTER TABLE pgjobdb.job_facts DROP CONSTRAINT job_facts_tenant_id_schedule_id_fkey;
+DROP FUNCTION pgjobdb.upsert_schedule(text,text,text,text,jsonb,text,jsonb,text,jsonb,timestamptz,text,text,text,text,bigint),
+ pgjobdb.mutate_schedule(text,text,text,timestamptz,text,bigint),
+ pgjobdb.pause_schedule(text,text,bigint),
+ pgjobdb.resume_schedule(text,text,timestamptz,text,bigint),
+ pgjobdb.archive_schedule(text,text,bigint),
+ pgjobdb.get_schedule(text,text),
+ pgjobdb.list_schedules(text,text[],text[],timestamptz,text,integer,text[]);
+DROP TABLE pgjobdb.schedules`)
+		require.NoError(t, err)
+	}
+	// Historical chapter fixtures can already have the three chapter tables.
+	// Prepare each intentionally missing store explicitly; the production helper
+	// must continue to reject partial shared sets.
+	_, err := schemapostgres.NewSQLDB(ctx, db)
+	require.NoError(t, err)
+	_, err = configuration.NewSQLStore(ctx, db, configuration.Postgres)
+	require.NoError(t, err)
+	chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
+	require.NoError(t, err)
+	require.NoError(t, chapters.Close(ctx))
+	require.NoError(t, projectfixture.Adopt(ctx, db))
 }

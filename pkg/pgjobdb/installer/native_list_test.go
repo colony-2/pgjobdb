@@ -18,12 +18,12 @@ func TestNativeListJobsFiltersBeforePagination(t *testing.T) {
 			jobType pgjobdb.JobType
 			source  string
 		}{
-			{"tenant", "root", "", "collect", "api"},
-			{"tenant", "child", "root", "collect", "batch"},
-			{"tenant", "task", "root", "collect", "api"},
-			{"tenant", "archived", "root", "collect", "api"},
-			{"tenant", "unrelated", "", "cleanup", "other"},
-			{"other-tenant", "other", "", "collect", "api"},
+			{"c2", "root", "", "collect", "api"},
+			{"c2", "child", "root", "collect", "batch"},
+			{"c2", "task", "root", "collect", "api"},
+			{"c2", "archived", "root", "collect", "api"},
+			{"c2", "unrelated", "", "cleanup", "other"},
+			{"TqtggXyN1eGriOdDqH0R8ApQbbb", "other", "", "collect", "api"},
 		} {
 			metadata, _ := json.Marshal(map[string]string{"source": item.source})
 			if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
@@ -34,7 +34,7 @@ func TestNativeListJobsFiltersBeforePagination(t *testing.T) {
 				t.Fatalf("submit %s: %v", item.id, err)
 			}
 		}
-		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "task", "worker",
+		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "task", "worker",
 			pgjobdb.RescheduleRequest{
 				RouteJobType: "collect", WorkKind: pgjobdb.WorkKindTask,
 				Task: &pgjobdb.TaskWork{
@@ -44,11 +44,11 @@ func TestNativeListJobsFiltersBeforePagination(t *testing.T) {
 			}); err != nil {
 			t.Fatalf("route task: %v", err)
 		}
-		if err := pgjobdb.CompleteUnheldJob(ctx, db, "tenant", "archived", "worker",
+		if err := pgjobdb.CompleteUnheldJob(ctx, db, "c2", "archived", "worker",
 			pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}); err != nil {
 			t.Fatalf("archive job: %v", err)
 		}
-		base := pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}}
+		base := pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}}
 		all, err := pgjobdb.ListJobs(ctx, db, base)
 		if err != nil || len(all.Jobs) != 5 {
 			t.Fatalf("all tenant jobs = %+v, %v", all, err)
@@ -85,7 +85,7 @@ func TestNativeListJobsFiltersBeforePagination(t *testing.T) {
 			t.Fatalf("parent pages = %v", listed)
 		}
 		if _, err := pgjobdb.ListJobs(ctx, db, pgjobdb.ListJobsOptions{
-			TenantIDs: []pgjobdb.TenantID{"tenant"}, RootOnly: true,
+			TenantIDs: []pgjobdb.TenantID{"c2"}, RootOnly: true,
 			PageToken: parent.PageToken,
 		}); err == nil {
 			t.Fatal("expected page token filter mismatch")
@@ -106,7 +106,7 @@ func TestNativeListJobsFiltersBeforePagination(t *testing.T) {
 			t.Fatalf("archived jobs = %+v, %v", archives, err)
 		}
 		keyFilter := base
-		keyFilter.JobKeys = []pgjobdb.JobKey{{TenantID: "tenant", JobID: "child"}}
+		keyFilter.JobKeys = []pgjobdb.JobKey{{TenantID: "c2", JobID: "child"}}
 		keys, err := pgjobdb.ListJobs(ctx, db, keyFilter)
 		if err != nil || len(keys.Jobs) != 1 || keys.Jobs[0].JobID != "child" {
 			t.Fatalf("key jobs = %+v, %v", keys, err)

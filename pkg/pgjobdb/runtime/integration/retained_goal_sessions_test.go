@@ -22,7 +22,7 @@ func orderedGoalWriters(t *testing.T, ctx context.Context, db *sql.DB, first, se
 	a, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	defer a.Rollback()
-	_, err = a.ExecContext(ctx, `SELECT pgjobdb._goal_lock('tenant')`)
+	_, err = a.ExecContext(ctx, `SELECT pgjobdb._goal_lock('c2')`)
 	require.NoError(t, err)
 	require.NoError(t, first(a))
 	b, err := db.Conn(ctx)
@@ -106,7 +106,7 @@ func TestRetainedGoalIndependentCommitOrders(t *testing.T) {
 				g := reopenedGoal(t, ctx, db, key)
 				require.Equal(t, jobdb.GoalFailed, g.State)
 				var active int
-				require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.jobs WHERE tenant_id='tenant' AND goal_id=$1`, key.GoalID).Scan(&active))
+				require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.jobs WHERE tenant_id='c2' AND goal_id=$1`, key.GoalID).Scan(&active))
 				if reverse {
 					require.Equal(t, 1, active)
 					require.Contains(t, g.Failure.NonTerminalJobIDs, string(request.JobID))
@@ -132,7 +132,7 @@ func TestRetainedGoalIndependentCommitOrders(t *testing.T) {
 					require.NoError(t, orderedGoalWriters(t, ctx, db, fail, wait))
 				}
 				g := reopenedGoal(t, ctx, db, key)
-				w, err := pgjobdb.GetDependencyWait(ctx, db, jobdb.DependencyWaitKey{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: string(consumer.JobID)}, WaitID: "joined"})
+				w, err := pgjobdb.GetDependencyWait(ctx, db, jobdb.DependencyWaitKey{JobKey: jobdb.JobKey{TenantId: "c2", JobId: string(consumer.JobID)}, WaitID: "joined"})
 				require.NoError(t, err)
 				require.Equal(t, jobdb.DependencyFailed, w.State)
 				require.Equal(t, g.Failure, w.Failure)
@@ -163,7 +163,7 @@ func TestRetainedGoalIndependentCommitOrders(t *testing.T) {
 				} else {
 					require.NoError(t, orderedGoalWriters(t, ctx, db, ca, cb))
 				}
-				key := jobdb.DependencyWaitKey{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: string(consumer.JobID)}, WaitID: "multi"}
+				key := jobdb.DependencyWaitKey{JobKey: jobdb.JobKey{TenantId: "c2", JobId: string(consumer.JobID)}, WaitID: "multi"}
 				settled, err := pgjobdb.GetDependencyWait(ctx, db, key)
 				require.NoError(t, err)
 				require.Equal(t, jobdb.DependencySatisfied, settled.State)
@@ -257,14 +257,16 @@ func TestRetainedGoalPublicationRollbackAndReopen(t *testing.T) {
 		nativeGoalJob(t, ctx, db, "fault-waiter")
 		lease := nativeGoalLease(t, ctx, db, "fault-waiter")
 		require.NoError(t, lease.Reschedule(ctx, db, pgjobdb.RescheduleRequest{RouteJobType: "work", WorkKind: pgjobdb.WorkKindJob, DependencyWait: nativeGoalWait("wait", source.GoalID)}))
-		_, err := db.ExecContext(ctx, `ALTER TABLE pgjobdb.jobs_archive ADD CONSTRAINT injected_terminal_failure CHECK(completion_status<>'failed') NOT VALID`)
+		_, err := db.ExecContext(ctx, `CREATE FUNCTION pgjobdb.test_terminal_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN IF NEW.completion_status='failed' THEN RAISE EXCEPTION 'injected_terminal_failure'; END IF; RETURN NEW; END $$;
+CREATE TRIGGER test_terminal_failure BEFORE INSERT ON pgjobdb.jobs_archive FOR EACH ROW EXECUTE FUNCTION pgjobdb.test_terminal_failure()`)
 		require.NoError(t, err)
 		before := schedulerSnapshot(t, ctx, db)
 		request := jobdb.FailGoalRequest{GoalKey: key, Message: " exact\n保存 "}
 		_, err = pgjobdb.FailGoal(ctx, db, request)
 		require.ErrorContains(t, err, "injected_terminal_failure")
 		require.Equal(t, before, schedulerSnapshot(t, ctx, db))
-		_, err = db.ExecContext(ctx, `ALTER TABLE pgjobdb.jobs_archive DROP CONSTRAINT injected_terminal_failure`)
+		_, err = db.ExecContext(ctx, `DROP TRIGGER test_terminal_failure ON pgjobdb.jobs_archive; DROP FUNCTION pgjobdb.test_terminal_failure()`)
 		require.NoError(t, err)
 		// Commit the result, discard its response, then reopen and retry that same
 		// request. No public identity or first-closure snapshot is allocated twice.
@@ -277,7 +279,7 @@ func TestRetainedGoalPublicationRollbackAndReopen(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, committed, replay)
 		require.Equal(t, committed, reopenedGoal(t, ctx, db, key))
-		_, err = pgjobdb.DeleteJobs(ctx, db, pgjobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []pgjobdb.JobID{pgjobdb.JobID(committed.FailureJobID), "fault-origin"}})
+		_, err = pgjobdb.DeleteJobs(ctx, db, pgjobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []pgjobdb.JobID{pgjobdb.JobID(committed.FailureJobID), "fault-origin"}})
 		require.NoError(t, err)
 		replay, err = pgjobdb.FailGoal(ctx, db, request)
 		require.NoError(t, err)

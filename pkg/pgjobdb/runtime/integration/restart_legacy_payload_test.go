@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"strings"
 	"testing"
 
@@ -22,17 +23,17 @@ import (
 func TestRestartPreservesOversizedLegacyChapters(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		blobURI := "blobfs://" + t.TempDir()
-		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{BlobStoreURI: blobURI})
+		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: projectfixture.Control(db), BlobStoreURI: blobURI})
 		require.NoError(t, err)
 		defer chapters.Close(ctx)
-		schemas, err := schemapostgres.NewSQLDB(ctx, db)
+		schemas, err := schemapostgres.NewSQLDB(ctx, db, projectfixture.Control(db))
 		require.NoError(t, err)
 		// Seed history admitted before the current 256 KiB write limit.
-		legacy, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, db), Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas, MaxChapterApplicationPayloadBytes: 2 * 1024 * 1024})
+		legacy, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(db), Configurations: newConfigurationStore(t, ctx, db), Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas, MaxChapterApplicationPayloadBytes: 2 * 1024 * 1024})
 		require.NoError(t, err)
-		source, err := celltest.Submit(legacy, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "legacy", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
+		source, err := celltest.Submit(legacy, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "legacy", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
 		require.NoError(t, err)
-		leases, err := legacy.PollWork(ctx, jobdb.PollWorkRequest{TenantId: "tenant", WorkerID: "writer", Routes: []jobdb.Route{{JobType: "recipe"}}, Limit: 1})
+		leases, err := legacy.PollWork(ctx, jobdb.PollWorkRequest{TenantId: "c2", WorkerID: "writer", Routes: []jobdb.Route{{JobType: "recipe"}}, Limit: 1})
 		require.NoError(t, err)
 		require.Len(t, leases, 1)
 		large, err := json.Marshal(map[string]string{"recipe_yaml": strings.Repeat("x", 1260320)})

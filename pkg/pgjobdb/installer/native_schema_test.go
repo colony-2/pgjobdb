@@ -29,28 +29,28 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 			t.Fatalf("recurring schedule objects remain: %d", scheduleObjects)
 		}
 
-		cell, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
+		cell, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "c2", Name: "test", Repo: "example.test/test"})
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		const insertFact = `INSERT INTO pgjobdb.job_facts
             (goal_origin,goal_created_at,cell_id,cell_name,cell_repo,tenant_id,job_id,goal_id,job_type,run_policy,app_metadata)
-            VALUES (TRUE,now(),$1,'test','example.test/test','tenant','job-1','goal-1','collect','{}','{"source":"test"}')`
+            VALUES (TRUE,now(),$1,'test','example.test/test','c2','job-1','goal-1','collect','{}','{"source":"test"}')`
 		if _, err := db.ExecContext(ctx, insertFact, cell.ID); err != nil {
 			t.Fatal(err)
 		}
 
 		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.jobs
 			(tenant_id, job_id, route_job_type, work_kind, task_type)
-			VALUES ('tenant', 'invalid', 'collect', 'TASK', 'task')`); err == nil {
+			VALUES ('c2', 'invalid', 'collect', 'TASK', 'task')`); err == nil {
 			t.Fatal("expected incomplete task coordinates to fail")
 		}
 		if _, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.jobs
 			(tenant_id, job_id, goal_id, route_job_type, work_kind, task_type,
 			resume_job_type, task_input_ordinal, task_output_ordinal,
 			task_input_hash)
-			VALUES ('tenant', 'job-1', 'goal-1', 'collect', 'TASK', 'task',
+			VALUES ('c2', 'job-1', 'goal-1', 'collect', 'TASK', 'task',
 			'collect', 1, 2, 'sha256:input')`); err != nil {
 			t.Fatalf("insert typed task route: %v", err)
 		}
@@ -61,7 +61,7 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 			final_resume_job_type, final_task_input_ordinal,
 			final_task_output_ordinal, final_task_input_hash,
 			final_wait_for, final_available_at, final_cancel_requested)
-			VALUES ('tenant', 'job-1', now(), 'failed_app',
+			VALUES ('c2', 'job-1', now(), 'failed_app',
 			'collect', 'TASK', 'task', 'collect', 1, 2, 'sha256:input',
 			ARRAY['prerequisite'], now(), TRUE)`); err != nil {
 			t.Fatalf("insert archived task snapshot: %v", err)
@@ -71,7 +71,7 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 		if err := db.QueryRowContext(ctx, `SELECT final_route_job_type,
 			final_work_kind, final_wait_for[1],
 			final_cancel_requested FROM pgjobdb.jobs_archive
-			WHERE tenant_id = 'tenant' AND job_id = 'job-1'`).Scan(
+			WHERE tenant_id = 'c2' AND job_id = 'job-1'`).Scan(
 			&route, &workKind, &waitFor, &cancelled,
 		); err != nil {
 			t.Fatalf("read archived task snapshot: %v", err)

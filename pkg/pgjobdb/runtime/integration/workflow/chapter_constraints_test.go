@@ -23,7 +23,7 @@ func TestExecutionHistoryConstraintsAcrossEngines(t *testing.T) {
 			worker := &deterministicJob{}
 			var engine workflow.Engine
 			configure := func(b *workflow.EngineBuilder) {
-				b.WithWorkerTenantId("test-tenant").PlusWorkers(worker, &incrementTask{})
+				b.WithWorkerTenantId("AR56al1yl0yzJyAEqN1IteLC5Vi").PlusWorkers(worker, &incrementTask{})
 			}
 			if backend == "toy" {
 				var cancel context.CancelFunc
@@ -43,7 +43,7 @@ func TestExecutionHistoryConstraintsAcrossEngines(t *testing.T) {
 				go engine.Run(ctx)
 			}
 			ctx := celltest.Context(context.Background())
-			keyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "test-tenant", JobType: worker.Name(), Data: jobdb.NewTaskDataOrPanic(map[string]int{"n": 1})})
+			keyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "AR56al1yl0yzJyAEqN1IteLC5Vi", JobType: worker.Name(), Data: jobdb.NewTaskDataOrPanic(map[string]int{"n": 1})})
 			key := keyHandle.JobKey
 			if err != nil {
 				t.Fatal(err)

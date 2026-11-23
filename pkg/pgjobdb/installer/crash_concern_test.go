@@ -29,26 +29,26 @@ func TestCrashConcernExcludesNativeAcquisition(t *testing.T) {
 					claim = waitingClaim(t, ctx, db, string(id))
 					selector = pgjobdb.WorkSelector{Tasks: []pgjobdb.TaskSelector{{JobType: "collect", TaskType: "download"}, {JobType: "wrong", TaskType: "wrong"}}}
 				} else {
-					_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, JobType: "collect", WorkerID: "submitter"})
+					_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: id, JobType: "collect", WorkerID: "submitter"})
 					require.NoError(t, err)
 				}
 				get := func() *pgjobdb.JobLease {
-					lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", id, "worker", selector, pgjobdb.GetJobLeaseOptions{})
+					lease, err := pgjobdb.GetJobLease(ctx, db, "c2", id, "worker", selector, pgjobdb.GetJobLeaseOptions{})
 					require.NoError(t, err)
 					return lease
 				}
 				poll := func() *pgjobdb.JobLease {
-					lease, err := pgjobdb.GetWork(ctx, db, "worker", selector, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}})
+					lease, err := pgjobdb.GetWork(ctx, db, "worker", selector, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"c2"}})
 					require.NoError(t, err)
 					return lease
 				}
 				expire := func() {
-					_, err := db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id='tenant' AND job_id=$1`, id)
+					_, err := db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id='c2' AND job_id=$1`, id)
 					require.NoError(t, err)
 				}
 				count := func() int {
 					var n int
-					require.NoError(t, db.QueryRowContext(ctx, `SELECT consecutive_expirations FROM pgjobdb.jobs WHERE tenant_id='tenant' AND job_id=$1`, id).Scan(&n))
+					require.NoError(t, db.QueryRowContext(ctx, `SELECT consecutive_expirations FROM pgjobdb.jobs WHERE tenant_id='c2' AND job_id=$1`, id).Scan(&n))
 					return n
 				}
 				for n := 0; n <= 2; n++ {
@@ -64,28 +64,28 @@ func TestCrashConcernExcludesNativeAcquisition(t *testing.T) {
 					_, err := pgjobdb.KeepAliveLease(ctx, db, lease.Identity(), time.Minute)
 					require.NoError(t, err)
 					require.Equal(t, n, count(), "renewal must not erase consecutive crashes")
-					row, err := pgjobdb.GetJob(ctx, db, "tenant", id)
+					row, err := pgjobdb.GetJob(ctx, db, "c2", id)
 					require.NoError(t, err)
 					require.Equal(t, pgjobdb.JobStatusActive, row.Status)
 					expire()
 				}
 				if task {
-					_, err := db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET alternate_at=clock_timestamp()-interval '1 second' WHERE tenant_id='tenant' AND job_id=$1`, id)
+					_, err := db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET alternate_at=clock_timestamp()-interval '1 second' WHERE tenant_id='c2' AND job_id=$1`, id)
 					require.NoError(t, err)
 					_, err = pgjobdb.ClaimTask(ctx, db, claim)
 					require.ErrorIs(t, err, pgjobdb.ErrTaskConflict)
 				}
-				before, err := pgjobdb.GetJob(ctx, db, "tenant", id)
+				before, err := pgjobdb.GetJob(ctx, db, "c2", id)
 				require.NoError(t, err)
 				require.Equal(t, pgjobdb.JobStatusCrashConcern, before.Status)
 				for i := 0; i < 2; i++ {
 					require.Nil(t, get())
 					require.Nil(t, poll())
 				}
-				after, err := pgjobdb.GetJob(ctx, db, "tenant", id)
+				after, err := pgjobdb.GetJob(ctx, db, "c2", id)
 				require.NoError(t, err)
 				require.Equal(t, before, after, "rejected acquisition must not promote alternates or change the lease")
-				_, err = db.ExecContext(ctx, `SELECT pgjobdb.clear_crash_concern('tenant',$1,'operator','investigated')`, id)
+				_, err = db.ExecContext(ctx, `SELECT pgjobdb.clear_crash_concern('c2',$1,'operator','investigated')`, id)
 				require.NoError(t, err)
 				lease := get()
 				require.NotNil(t, lease, "explicit clearing restores acquisition")
@@ -94,7 +94,7 @@ func TestCrashConcernExcludesNativeAcquisition(t *testing.T) {
 				selector = pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"reset"}}
 				require.NotNil(t, get())
 				expire()
-				row, err := pgjobdb.GetJob(ctx, db, "tenant", id)
+				row, err := pgjobdb.GetJob(ctx, db, "c2", id)
 				require.NoError(t, err)
 				require.Equal(t, pgjobdb.JobStatusReady, row.Status)
 			})
@@ -104,17 +104,17 @@ func TestCrashConcernExcludesNativeAcquisition(t *testing.T) {
 
 func TestNativeReadyAcquisitionPreservesRowLocking(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "job", JobType: "collect", WorkerID: "submitter"})
+		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: "job", JobType: "collect", WorkerID: "submitter"})
 		require.NoError(t, err)
 		selector := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}
 		tx, err := db.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		defer tx.Rollback()
-		_, err = tx.ExecContext(ctx, `SELECT 1 FROM pgjobdb.jobs WHERE tenant_id='tenant' AND job_id='job' FOR UPDATE`)
+		_, err = tx.ExecContext(ctx, `SELECT 1 FROM pgjobdb.jobs WHERE tenant_id='c2' AND job_id='job' FOR UPDATE`)
 		require.NoError(t, err)
 		short, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
-		lease, err := pgjobdb.GetWork(short, db, "worker", selector, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}})
+		lease, err := pgjobdb.GetWork(short, db, "worker", selector, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"c2"}})
 		require.NoError(t, err, "status-view filtering must preserve SKIP LOCKED")
 		require.Nil(t, lease)
 		require.NoError(t, tx.Rollback())
@@ -128,7 +128,7 @@ func TestNativeReadyAcquisitionPreservesRowLocking(t *testing.T) {
 			go func(i int) {
 				defer wg.Done()
 				<-start
-				leases[i], errs[i] = pgjobdb.GetJobLease(ctx, db, "tenant", "job", "worker", selector, pgjobdb.GetJobLeaseOptions{})
+				leases[i], errs[i] = pgjobdb.GetJobLease(ctx, db, "c2", "job", "worker", selector, pgjobdb.GetJobLeaseOptions{})
 			}(i)
 		}
 		close(start)

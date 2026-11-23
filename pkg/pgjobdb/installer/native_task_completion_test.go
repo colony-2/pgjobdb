@@ -16,27 +16,27 @@ import (
 func waitingClaim(t *testing.T, ctx context.Context, db *sql.DB, id string) pgjobdb.ClaimTaskRequest {
 	t.Helper()
 	_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-		TenantID: "tenant", JobID: pgjobdb.JobID(id), WorkerID: "submitter", JobType: "collect",
+		TenantID: "c2", JobID: pgjobdb.JobID(id), WorkerID: "submitter", JobType: "collect",
 		ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"keep":true}`)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	task := pgjobdb.TaskWork{TaskType: "download", ResumeJobType: "resume", InputOrdinal: 2, OutputOrdinal: 3, InputHash: "sha256:input"}
-	if err := pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", pgjobdb.JobID(id), "worker", pgjobdb.RescheduleRequest{
+	if err := pgjobdb.RescheduleUnheldJob(ctx, db, "c2", pgjobdb.JobID(id), "worker", pgjobdb.RescheduleRequest{
 		RouteJobType: "collect", WorkKind: pgjobdb.WorkKindTask, Task: &task,
 		Alternate: &pgjobdb.AlternateRoute{JobType: "wrong", TaskType: "wrong", After: time.Hour},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return pgjobdb.ClaimTaskRequest{TenantID: "tenant", JobID: pgjobdb.JobID(id), WorkerID: "external", JobType: "collect", Task: task, LeaseDuration: 30 * time.Second}
+	return pgjobdb.ClaimTaskRequest{TenantID: "c2", JobID: pgjobdb.JobID(id), WorkerID: "external", JobType: "collect", Task: task, LeaseDuration: 30 * time.Second}
 }
 
 func TestNativeTaskClaimGuards(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		req := waitingClaim(t, ctx, db, "guards")
 		for name, mutate := range map[string]func(*pgjobdb.ClaimTaskRequest){
-			"tenant":         func(r *pgjobdb.ClaimTaskRequest) { r.TenantID = "other" },
+			"c2":             func(r *pgjobdb.ClaimTaskRequest) { r.TenantID = "TqtggXyN1eGriOdDqH0R8ApQbbb" },
 			"job":            func(r *pgjobdb.ClaimTaskRequest) { r.JobID = "missing" },
 			"route":          func(r *pgjobdb.ClaimTaskRequest) { r.JobType = "other" },
 			"task":           func(r *pgjobdb.ClaimTaskRequest) { r.Task.TaskType = "other" },
@@ -62,7 +62,7 @@ func TestNativeTaskClaimGuards(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				r := waitingClaim(t, ctx, db, tc.name)
-				if _, err := db.ExecContext(ctx, "UPDATE pgjobdb.jobs SET "+tc.update+" WHERE tenant_id='tenant' AND job_id=$1", string(r.JobID)); err != nil {
+				if _, err := db.ExecContext(ctx, "UPDATE pgjobdb.jobs SET "+tc.update+" WHERE tenant_id='c2' AND job_id=$1", string(r.JobID)); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := pgjobdb.ClaimTask(ctx, db, r); !errors.Is(err, pgjobdb.ErrTaskConflict) {
@@ -113,11 +113,11 @@ func TestNativeTaskClaimCommitsRecoveryRoute(t *testing.T) {
 		if _, err := db.ExecContext(ctx, "UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE job_id='claim'"); err != nil {
 			t.Fatal(err)
 		}
-		taskLease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "claim", "task-worker", pgjobdb.WorkSelector{Tasks: []pgjobdb.TaskSelector{{JobType: "collect", TaskType: "download"}, {JobType: "wrong", TaskType: "wrong"}}}, pgjobdb.GetJobLeaseOptions{})
+		taskLease, err := pgjobdb.GetJobLease(ctx, db, "c2", "claim", "task-worker", pgjobdb.WorkSelector{Tasks: []pgjobdb.TaskSelector{{JobType: "collect", TaskType: "download"}, {JobType: "wrong", TaskType: "wrong"}}}, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || taskLease != nil {
 			t.Fatalf("task got recovery work: %+v %v", taskLease, err)
 		}
-		jobLease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "claim", "recovery", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"resume"}}, pgjobdb.GetJobLeaseOptions{})
+		jobLease, err := pgjobdb.GetJobLease(ctx, db, "c2", "claim", "recovery", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"resume"}}, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || jobLease == nil || jobLease.LeaseID == claim.Identity.LeaseID {
 			t.Fatalf("recovery lease: %+v %v", jobLease, err)
 		}

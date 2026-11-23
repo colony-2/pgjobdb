@@ -20,13 +20,13 @@ func TestCompactListFiltersAndReadiness(t *testing.T) {
 			nativeGoalJob(t, ctx, db, id)
 		}
 		nativeGoalLease(t, ctx, db, "active")
-		require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "legacy", "test", pgjobdb.RescheduleRequest{RouteJobType: "work", WorkKind: pgjobdb.WorkKindJob, WaitFor: []pgjobdb.JobID{"producer"}}))
-		require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "pending", "test", pgjobdb.RescheduleRequest{RouteJobType: "work", WorkKind: pgjobdb.WorkKindJob, DependencyWait: nativeGoalWait("pending", producer.GoalID)}))
-		require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "task", "test", pgjobdb.RescheduleRequest{RouteJobType: "routed", WorkKind: pgjobdb.WorkKindTask, Task: &pgjobdb.TaskWork{TaskType: "input", ResumeJobType: "work", InputOrdinal: 1, OutputOrdinal: 2, InputHash: "hash"}}))
-		require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", "archived", "test", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp, Detail: "diagnostic text"}))
-		require.NoError(t, pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "tenant", JobID: "cancelled", WorkerID: "test"}))
-		require.NoError(t, pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "tenant", JobID: "hidden", WorkerID: "test"}))
-		_, err := pgjobdb.DeleteJobs(ctx, db, pgjobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []pgjobdb.JobID{"hidden"}})
+		require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "legacy", "test", pgjobdb.RescheduleRequest{RouteJobType: "work", WorkKind: pgjobdb.WorkKindJob, WaitFor: []pgjobdb.JobID{"producer"}}))
+		require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "pending", "test", pgjobdb.RescheduleRequest{RouteJobType: "work", WorkKind: pgjobdb.WorkKindJob, DependencyWait: nativeGoalWait("pending", producer.GoalID)}))
+		require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "task", "test", pgjobdb.RescheduleRequest{RouteJobType: "routed", WorkKind: pgjobdb.WorkKindTask, Task: &pgjobdb.TaskWork{TaskType: "input", ResumeJobType: "work", InputOrdinal: 1, OutputOrdinal: 2, InputHash: "hash"}}))
+		require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "c2", "archived", "test", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp, Detail: "diagnostic text"}))
+		require.NoError(t, pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "c2", JobID: "cancelled", WorkerID: "test"}))
+		require.NoError(t, pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "c2", JobID: "hidden", WorkerID: "test"}))
+		_, err := pgjobdb.DeleteJobs(ctx, db, pgjobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []pgjobdb.JobID{"hidden"}})
 		require.NoError(t, err)
 		// Fixed timestamps make strict creation bounds and cursor ties reproducible.
 		_, err = db.Exec(`UPDATE pgjobdb.job_facts SET created_at='2026-01-01',app_metadata='{"team":"blue","nested":{"n":3}}';
@@ -45,7 +45,7 @@ func TestCompactListFiltersAndReadiness(t *testing.T) {
 			"types":            {JobTypes: []pgjobdb.JobType{"work"}},
 			"task":             {TaskSelectors: []pgjobdb.TaskSelector{{JobType: "routed", TaskType: "input"}}},
 			"task-or-type":     {JobTypes: []pgjobdb.JobType{"absent"}, TaskSelectors: []pgjobdb.TaskSelector{{JobType: "routed", TaskType: "input"}}},
-			"keys":             {JobKeys: []pgjobdb.JobKey{{TenantID: "tenant", JobID: "child"}, {TenantID: "other", JobID: "producer"}}},
+			"keys":             {JobKeys: []pgjobdb.JobKey{{TenantID: "c2", JobID: "child"}, {TenantID: "TqtggXyN1eGriOdDqH0R8ApQbbb", JobID: "producer"}}},
 			"metadata":         {MetadataPredicates: []pgjobdb.MetadataPredicate{{Path: []string{"nested", "n"}, Values: []json.RawMessage{json.RawMessage(`3`)}}}},
 			"metadata-missing": {MetadataPredicates: []pgjobdb.MetadataPredicate{{Path: []string{"missing"}, Values: []json.RawMessage{json.RawMessage(`null`)}}}},
 			"dates":            {CreatedAfter: &before, CreatedBefore: &after},
@@ -58,7 +58,7 @@ func TestCompactListFiltersAndReadiness(t *testing.T) {
 		}
 		for name, opts := range cases {
 			t.Run(name, func(t *testing.T) {
-				opts.TenantIDs = []pgjobdb.TenantID{"tenant"}
+				opts.TenantIDs = []pgjobdb.TenantID{"c2"}
 				opts.PageSize = 2
 				for {
 					expected, err := pgjobdb.ListJobs(ctx, db, opts)
@@ -93,16 +93,16 @@ func TestCompactListFiltersAndReadiness(t *testing.T) {
 		}
 		// Eligibility agrees with actual leasing, including legacy prerequisites,
 		// an active lease, cancellation, and a stored task route.
-		ready, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, AvailableRoutes: cases["routes"].AvailableRoutes})
+		ready, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, AvailableRoutes: cases["routes"].AvailableRoutes})
 		require.NoError(t, err)
 		eligible := map[pgjobdb.JobID]bool{}
 		for _, j := range ready.Jobs {
 			eligible[j.JobID] = true
 		}
-		all, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}})
+		all, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}})
 		require.NoError(t, err)
 		for _, j := range all.Jobs {
-			l, err := pgjobdb.GetJobLease(ctx, db, "tenant", j.JobID, "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"work"}, Tasks: []pgjobdb.TaskSelector{{JobType: "routed", TaskType: "input"}}}, pgjobdb.GetJobLeaseOptions{LeaseDuration: time.Minute})
+			l, err := pgjobdb.GetJobLease(ctx, db, "c2", j.JobID, "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"work"}, Tasks: []pgjobdb.TaskSelector{{JobType: "routed", TaskType: "input"}}}, pgjobdb.GetJobLeaseOptions{LeaseDuration: time.Minute})
 			require.NoError(t, err)
 			require.Equal(t, eligible[j.JobID], l != nil, "job %s", j.JobID)
 		}
@@ -116,18 +116,18 @@ func TestCompactListExistingInstallation(t *testing.T) {
 		deadline := time.Now().UTC().Add(time.Hour).Truncate(time.Second).Add(123456789 * time.Nanosecond)
 		wait := nativeGoalWait("precise", producer.GoalID)
 		wait.Deadline = &deadline
-		require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "consumer", "test", pgjobdb.RescheduleRequest{RouteJobType: "work", WorkKind: pgjobdb.WorkKindJob, DependencyWait: wait}))
+		require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "consumer", "test", pgjobdb.RescheduleRequest{RouteJobType: "work", WorkKind: pgjobdb.WorkKindJob, DependencyWait: wait}))
 		// Reinstallation accepts only the current complete cell schema.
 		install := installer.Installer{DB: db}
 		require.NoError(t, install.Verify(ctx))
 		for range 2 {
 			require.NoError(t, install.Apply(ctx))
 			require.NoError(t, install.Verify(ctx))
-			page, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, JobKeys: []pgjobdb.JobKey{{TenantID: "tenant", JobID: "consumer"}}})
+			page, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, JobKeys: []pgjobdb.JobKey{{TenantID: "c2", JobID: "consumer"}}})
 			require.NoError(t, err)
 			require.Len(t, page.Jobs, 1)
 			require.Equal(t, &jobdb.DependencyWaitSummary{WaitID: "precise", Deadline: &deadline}, page.Jobs[0].BlockingWaitSummary)
-			detail, err := pgjobdb.BlockingDependencyWait(ctx, db, jobdb.JobKey{TenantId: "tenant", JobId: "consumer"})
+			detail, err := pgjobdb.BlockingDependencyWait(ctx, db, jobdb.JobKey{TenantId: "c2", JobId: "consumer"})
 			require.NoError(t, err)
 			require.Equal(t, &deadline, detail.Deadline)
 			require.Len(t, detail.Dependencies, 1)

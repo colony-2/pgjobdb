@@ -16,8 +16,8 @@ import (
 func TestNativeSchedulerAdapterMutatesTypedJob(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		adapter := runtimeadapter.Scheduler{DB: db}
-		key := jobdb.JobKey{TenantId: "tenant", JobId: "job"}
-		cell, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
+		key := jobdb.JobKey{TenantId: "c2", JobId: "job"}
+		cell, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "c2", Name: "test", Repo: "example.test/test"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -33,7 +33,7 @@ func TestNativeSchedulerAdapterMutatesTypedJob(t *testing.T) {
 			t.Fatalf("create typed job = %+v, %v", created, err)
 		}
 		selector := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}
-		lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job", "worker",
+		lease, err := pgjobdb.GetJobLease(ctx, db, "c2", "job", "worker",
 			selector, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || lease == nil {
 			t.Fatalf("lease job = %+v, %v", lease, err)
@@ -65,7 +65,7 @@ func TestNativeSchedulerAdapterMutatesTypedJob(t *testing.T) {
 		if err != nil || resumed.WorkKind != runtimecore.WorkKindJob || string(resumed.ClientPayload) != `{}` || resumed.ClientPayloadRevision != 1 {
 			t.Fatalf("resume job = %+v, %v", resumed, err)
 		}
-		lease, err = pgjobdb.GetJobLease(ctx, db, "tenant", "job", "worker",
+		lease, err = pgjobdb.GetJobLease(ctx, db, "c2", "job", "worker",
 			selector, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || lease == nil {
 			t.Fatalf("lease resumed job = %+v, %v", lease, err)

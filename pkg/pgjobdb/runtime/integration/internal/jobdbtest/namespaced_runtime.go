@@ -2,16 +2,24 @@ package jobdbtest
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"github.com/colony-2/jobdb/pkg/jobdb"
+	"github.com/segmentio/ksuid"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
 type tenantNamespacedRuntime struct {
-	runtime jobdb.ConsumerRuntime
-	prefix  string
+	runtime      jobdb.ConsumerRuntime
+	prefix       string
+	projects     jobdb.ProjectCatalog
+	projectMu    sync.Mutex
+	projectIDs   map[string]string
+	projectNames map[string]string
 }
 
 func newTenantNamespacedRuntime(runtime jobdb.ConsumerRuntime, prefix string) jobdb.ConsumerRuntime {
@@ -19,6 +27,7 @@ func newTenantNamespacedRuntime(runtime jobdb.ConsumerRuntime, prefix string) jo
 }
 
 func (r *tenantNamespacedRuntime) SubmitJob(ctx context.Context, req jobdb.SubmitJobRequest) (jobdb.JobHandle, error) {
+	ctx = r.prefixContext(ctx)
 	req.Job.TenantId = r.prefixTenant(req.Job.TenantId)
 	handle, err := r.runtime.SubmitJob(ctx, req)
 	if err != nil {
@@ -29,6 +38,7 @@ func (r *tenantNamespacedRuntime) SubmitJob(ctx context.Context, req jobdb.Submi
 }
 
 func (r *tenantNamespacedRuntime) SubmitRestartJob(ctx context.Context, req jobdb.SubmitRestartJobRequest) (jobdb.JobHandle, error) {
+	ctx = r.prefixContext(ctx)
 	req.Job.PriorJobKey = r.prefixJobKey(req.Job.PriorJobKey)
 	handle, err := r.runtime.SubmitRestartJob(ctx, req)
 	if err != nil {
@@ -39,16 +49,19 @@ func (r *tenantNamespacedRuntime) SubmitRestartJob(ctx context.Context, req jobd
 }
 
 func (r *tenantNamespacedRuntime) CancelJob(ctx context.Context, req jobdb.CancelJobRequest) error {
+	ctx = r.prefixContext(ctx)
 	req.JobKey = r.prefixJobKey(req.JobKey)
 	return r.runtime.CancelJob(ctx, req)
 }
 
 func (r *tenantNamespacedRuntime) ClearCrashConcern(ctx context.Context, req jobdb.ClearCrashConcernRequest) error {
+	ctx = r.prefixContext(ctx)
 	req.JobKey = r.prefixJobKey(req.JobKey)
 	return r.runtime.ClearCrashConcern(ctx, req)
 }
 
 func (r *tenantNamespacedRuntime) PollWork(ctx context.Context, req jobdb.PollWorkRequest) ([]jobdb.ExecutionLease, error) {
+	ctx = r.prefixContext(ctx)
 	if req.TenantId != "" {
 		req.TenantId = r.prefixTenant(req.TenantId)
 	}
@@ -60,6 +73,7 @@ func (r *tenantNamespacedRuntime) PollWork(ctx context.Context, req jobdb.PollWo
 }
 
 func (r *tenantNamespacedRuntime) GetJobLease(ctx context.Context, req jobdb.GetJobLeaseRequest) (jobdb.ExecutionLease, error) {
+	ctx = r.prefixContext(ctx)
 	req.JobKey = r.prefixJobKey(req.JobKey)
 	lease, err := r.runtime.GetJobLease(ctx, req)
 	if err != nil || lease == nil {
@@ -69,11 +83,13 @@ func (r *tenantNamespacedRuntime) GetJobLease(ctx context.Context, req jobdb.Get
 }
 
 func (r *tenantNamespacedRuntime) CompleteTaskIfWaiting(ctx context.Context, req jobdb.CompleteTaskIfWaitingRequest) error {
+	ctx = r.prefixContext(ctx)
 	req.JobKey = r.prefixJobKey(req.JobKey)
 	return r.runtime.CompleteTaskIfWaiting(ctx, req)
 }
 
 func (r *tenantNamespacedRuntime) GetJob(ctx context.Context, jobKey jobdb.JobKey) (jobdb.JobInfo, error) {
+	ctx = r.prefixContext(ctx)
 	info, err := r.runtime.GetJob(ctx, r.prefixJobKey(jobKey))
 	if info.BlockingWait != nil {
 		wait := *info.BlockingWait
@@ -84,6 +100,7 @@ func (r *tenantNamespacedRuntime) GetJob(ctx context.Context, jobKey jobdb.JobKe
 }
 
 func (r *tenantNamespacedRuntime) ListJobs(ctx context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
+	ctx = r.prefixContext(ctx)
 	req.TenantIds = r.prefixTenantIDs(req.TenantIds)
 	if len(req.JobKeys) > 0 {
 		jobKeys := make([]jobdb.JobKey, 0, len(req.JobKeys))
@@ -104,21 +121,25 @@ func (r *tenantNamespacedRuntime) ListJobs(ctx context.Context, req jobdb.ListJo
 }
 
 func (r *tenantNamespacedRuntime) GetChapter(ctx context.Context, ref jobdb.ChapterRef) (jobdb.Chapter, error) {
+	ctx = r.prefixContext(ctx)
 	ref.JobKey = r.prefixJobKey(ref.JobKey)
 	return r.runtime.GetChapter(ctx, ref)
 }
 
 func (r *tenantNamespacedRuntime) ListChapters(ctx context.Context, req jobdb.ListChaptersRequest) ([]jobdb.Chapter, error) {
+	ctx = r.prefixContext(ctx)
 	req.JobKey = r.prefixJobKey(req.JobKey)
 	return r.runtime.ListChapters(ctx, req)
 }
 
 func (r *tenantNamespacedRuntime) PutChapter(ctx context.Context, req jobdb.PutChapterRequest) error {
+	ctx = r.prefixContext(ctx)
 	req.Ref.JobKey = r.prefixJobKey(req.Ref.JobKey)
 	return r.runtime.PutChapter(ctx, req)
 }
 
 func (r *tenantNamespacedRuntime) OpenArtifact(ctx context.Context, ref jobdb.ArtifactRef) (jobdb.ArtifactReader, error) {
+	ctx = r.prefixContext(ctx)
 	ref.JobKey = r.prefixJobKey(ref.JobKey)
 	return r.runtime.OpenArtifact(ctx, ref)
 }
@@ -156,13 +177,47 @@ func (r *tenantNamespacedRuntime) stripJobKey(jobKey jobdb.JobKey) jobdb.JobKey 
 }
 
 func (r *tenantNamespacedRuntime) prefixTenant(tenantID string) string {
+	if r.projects != nil && r.prefix == "" {
+		_, err := ksuid.Parse(tenantID)
+		if tenantID == "c2" || tenantID == "0" || err == nil {
+			return tenantID
+		}
+	}
+
 	if tenantID == "" {
 		return ""
+	}
+	if r.projects != nil {
+		r.projectMu.Lock()
+		defer r.projectMu.Unlock()
+		if r.projectNames[tenantID] != "" {
+			return tenantID
+		}
+		if id := r.projectIDs[tenantID]; id != "" {
+			return id
+		}
+		hash := sha256.Sum256([]byte(r.prefix + tenantID))
+		ctx := jobdb.WithProjectAdministration(context.Background(), func(context.Context) error { return nil })
+		created, err := r.projects.CreateProject(ctx, jobdb.CreateProjectRequest{Name: fmt.Sprintf("fixture-%x", hash[:20]), RequestID: fmt.Sprintf("fixture-%x", hash[:])})
+		if err != nil {
+			panic(fmt.Sprintf("explicit conformance project fixture: %v", err))
+		}
+		r.projectIDs[tenantID] = created.Project.ID
+		r.projectNames[created.Project.ID] = tenantID
+		return created.Project.ID
 	}
 	return r.prefix + tenantID
 }
 
 func (r *tenantNamespacedRuntime) stripTenant(tenantID string) string {
+	if r.projects != nil {
+		r.projectMu.Lock()
+		defer r.projectMu.Unlock()
+		if name := r.projectNames[tenantID]; name != "" {
+			return name
+		}
+		return tenantID
+	}
 	return strings.TrimPrefix(tenantID, r.prefix)
 }
 
@@ -178,15 +233,20 @@ func (l *tenantNamespacedLease) ClientPayloadRevision() int64   { return l.lease
 func (l *tenantNamespacedLease) ExecutionState() jobdb.ExecutionState {
 	return l.lease.ExecutionState()
 }
-func (l *tenantNamespacedLease) KeepAlive(ctx context.Context) error { return l.lease.KeepAlive(ctx) }
-func (l *tenantNamespacedLease) StopKeepAlive()                      { l.lease.StopKeepAlive() }
+func (l *tenantNamespacedLease) KeepAlive(ctx context.Context) error {
+	return l.lease.KeepAlive(l.runtime.prefixContext(ctx))
+}
+func (l *tenantNamespacedLease) StopKeepAlive() { l.lease.StopKeepAlive() }
 func (l *tenantNamespacedLease) Complete(ctx context.Context, req jobdb.CompleteExecutionRequest) error {
+	ctx = l.runtime.prefixContext(ctx)
 	return l.lease.Complete(ctx, req)
 }
 func (l *tenantNamespacedLease) Reschedule(ctx context.Context, req jobdb.RescheduleExecutionRequest) error {
+	ctx = l.runtime.prefixContext(ctx)
 	return l.lease.Reschedule(ctx, req)
 }
 func (l *tenantNamespacedLease) SubmitJob(ctx context.Context, req jobdb.SubmitJobRequest) (jobdb.JobHandle, error) {
+	ctx = l.runtime.prefixContext(ctx)
 	req.Job.TenantId = l.runtime.prefixTenant(req.Job.TenantId)
 	handle, err := l.lease.SubmitJob(ctx, req)
 	if err != nil {
@@ -196,6 +256,7 @@ func (l *tenantNamespacedLease) SubmitJob(ctx context.Context, req jobdb.SubmitJ
 	return handle, nil
 }
 func (l *tenantNamespacedLease) SubmitRestartJob(ctx context.Context, req jobdb.SubmitRestartJobRequest) (jobdb.JobHandle, error) {
+	ctx = l.runtime.prefixContext(ctx)
 	req.Job.PriorJobKey = l.runtime.prefixJobKey(req.Job.PriorJobKey)
 	handle, err := l.lease.SubmitRestartJob(ctx, req)
 	if err != nil {
@@ -211,28 +272,34 @@ func (l *tenantNamespacedLease) Job() jobdb.JobHandle {
 }
 
 func (r *tenantNamespacedRuntime) GetConfiguration(ctx context.Context, req jobdb.GetConfigurationRequest) (jobdb.ConfigurationSnapshot, error) {
+	ctx = r.prefixContext(ctx)
 	req.JobKey = r.prefixJobKey(req.JobKey)
 	return r.runtime.GetConfiguration(ctx, req)
 }
 func (l *tenantNamespacedLease) GetConfiguration(ctx context.Context) (jobdb.ConfigurationSnapshot, error) {
+	ctx = l.runtime.prefixContext(ctx)
 	return l.lease.GetConfiguration(ctx)
 }
 
 func (r *tenantNamespacedRuntime) ResolveSecrets(ctx context.Context, req jobdb.ResolveSecretsRequest) (jobdb.SecretResolveResult, error) {
+	ctx = r.prefixContext(ctx)
 	req.JobKey = r.prefixJobKey(req.JobKey)
 	return r.runtime.ResolveSecrets(ctx, req)
 }
 func (l *tenantNamespacedLease) ResolveSecrets(ctx context.Context, names []string) (jobdb.SecretResolveResult, error) {
+	ctx = l.runtime.prefixContext(ctx)
 	return l.lease.ResolveSecrets(ctx, names)
 }
 
 func (r *tenantNamespacedRuntime) GetGoal(ctx context.Context, key jobdb.GoalKey) (jobdb.GoalInfo, error) {
+	ctx = r.prefixContext(ctx)
 	key.TenantId = r.prefixTenant(key.TenantId)
 	info, err := r.runtime.GetGoal(ctx, key)
 	info.GoalKey.TenantId = r.stripTenant(info.GoalKey.TenantId)
 	return info, err
 }
 func (r *tenantNamespacedRuntime) ListGoals(ctx context.Context, req jobdb.ListGoalsRequest) (jobdb.ListGoalsResponse, error) {
+	ctx = r.prefixContext(ctx)
 	req.TenantId = r.prefixTenant(req.TenantId)
 	result, err := r.runtime.ListGoals(ctx, req)
 	result.Goals = slices.Clone(result.Goals)
@@ -242,6 +309,7 @@ func (r *tenantNamespacedRuntime) ListGoals(ctx context.Context, req jobdb.ListG
 	return result, err
 }
 func (r *tenantNamespacedRuntime) ListDependencyWaits(ctx context.Context, req jobdb.ListDependencyWaitsRequest) (jobdb.ListDependencyWaitsResponse, error) {
+	ctx = r.prefixContext(ctx)
 	req.TenantId = r.prefixTenant(req.TenantId)
 	result, err := r.runtime.ListDependencyWaits(ctx, req)
 	result.Waits = slices.Clone(result.Waits)
@@ -251,12 +319,14 @@ func (r *tenantNamespacedRuntime) ListDependencyWaits(ctx context.Context, req j
 	return result, err
 }
 func (r *tenantNamespacedRuntime) FailGoal(ctx context.Context, req jobdb.FailGoalRequest) (jobdb.GoalInfo, error) {
+	ctx = r.prefixContext(ctx)
 	req.GoalKey.TenantId = r.prefixTenant(req.GoalKey.TenantId)
 	info, err := r.runtime.FailGoal(ctx, req)
 	info.GoalKey.TenantId = r.stripTenant(info.GoalKey.TenantId)
 	return info, err
 }
 func (r *tenantNamespacedRuntime) GetDependencyWait(ctx context.Context, key jobdb.DependencyWaitKey) (jobdb.DependencyWaitInfo, error) {
+	ctx = r.prefixContext(ctx)
 	key.JobKey = r.prefixJobKey(key.JobKey)
 	info, err := r.runtime.GetDependencyWait(ctx, key)
 	info.JobKey = r.stripJobKey(info.JobKey)
@@ -264,18 +334,21 @@ func (r *tenantNamespacedRuntime) GetDependencyWait(ctx context.Context, key job
 }
 
 func (r *tenantNamespacedRuntime) CreateCell(ctx context.Context, req jobdb.CreateCellRequest) (out jobdb.Cell, err error) {
+	ctx = r.prefixContext(ctx)
 	req.TenantID = r.prefixTenant(req.TenantID)
 	out, err = r.runtime.CreateCell(ctx, req)
 	out.TenantID = r.stripTenant(out.TenantID)
 	return
 }
 func (r *tenantNamespacedRuntime) GetCell(ctx context.Context, req jobdb.CellKey) (out jobdb.Cell, err error) {
+	ctx = r.prefixContext(ctx)
 	req.TenantID = r.prefixTenant(req.TenantID)
 	out, err = r.runtime.GetCell(ctx, req)
 	out.TenantID = r.stripTenant(out.TenantID)
 	return
 }
 func (r *tenantNamespacedRuntime) ListCells(ctx context.Context, req jobdb.ListCellsRequest) (out jobdb.ListCellsResponse, err error) {
+	ctx = r.prefixContext(ctx)
 	req.TenantID = r.prefixTenant(req.TenantID)
 	out, err = r.runtime.ListCells(ctx, req)
 	out.Cells = slices.Clone(out.Cells)
@@ -285,26 +358,31 @@ func (r *tenantNamespacedRuntime) ListCells(ctx context.Context, req jobdb.ListC
 	return
 }
 func (r *tenantNamespacedRuntime) UpdateCell(ctx context.Context, req jobdb.UpdateCellRequest) (out jobdb.Cell, err error) {
+	ctx = r.prefixContext(ctx)
 	req.TenantID = r.prefixTenant(req.TenantID)
 	out, err = r.runtime.UpdateCell(ctx, req)
 	out.TenantID = r.stripTenant(out.TenantID)
 	return
 }
 func (r *tenantNamespacedRuntime) RetireCell(ctx context.Context, req jobdb.RetireCellRequest) (out jobdb.Cell, err error) {
+	ctx = r.prefixContext(ctx)
 	req.TenantID = r.prefixTenant(req.TenantID)
 	out, err = r.runtime.RetireCell(ctx, req)
 	out.TenantID = r.stripTenant(out.TenantID)
 	return
 }
 func (l *tenantNamespacedLease) ResolveCell(ctx context.Context, name string) (jobdb.ResolvedCell, error) {
+	ctx = l.runtime.prefixContext(ctx)
 	return l.lease.ResolveCell(ctx, name)
 }
 
 func (l *tenantNamespacedLease) LookupCell(ctx context.Context, name string) (jobdb.ResolvedCell, error) {
+	ctx = l.runtime.prefixContext(ctx)
 	return l.lease.LookupCell(ctx, name)
 }
 
 func (l *tenantNamespacedLease) CreateCell(ctx context.Context, req jobdb.CreateCellRequest) (jobdb.Cell, error) {
+	ctx = l.runtime.prefixContext(ctx)
 	if req.TenantID != "" {
 		req.TenantID = l.runtime.prefixTenant(req.TenantID)
 	}
@@ -314,6 +392,7 @@ func (l *tenantNamespacedLease) CreateCell(ctx context.Context, req jobdb.Create
 }
 
 func (r *tenantNamespacedRuntime) ListLeaseEvents(ctx context.Context, req jobdb.ListLeaseEventsRequest) (out jobdb.ListLeaseEventsResponse, err error) {
+	ctx = r.prefixContext(ctx)
 	req.TenantID = r.prefixTenant(req.TenantID)
 	out, err = r.runtime.ListLeaseEvents(ctx, req)
 	out.Events = slices.Clone(out.Events)
@@ -324,6 +403,7 @@ func (r *tenantNamespacedRuntime) ListLeaseEvents(ctx context.Context, req jobdb
 }
 
 func (r *tenantNamespacedRuntime) StartOrAppendJob(ctx context.Context, req jobdb.StartOrAppendJobRequest) (jobdb.JobHandle, error) {
+	ctx = r.prefixContext(ctx)
 	req.Job.Job.TenantId = r.prefixTenant(req.Job.Job.TenantId)
 	handle, err := r.runtime.StartOrAppendJob(ctx, req)
 	if err != nil {
@@ -334,6 +414,7 @@ func (r *tenantNamespacedRuntime) StartOrAppendJob(ctx context.Context, req jobd
 }
 
 func (l *tenantNamespacedLease) StartOrAppendJob(ctx context.Context, req jobdb.StartOrAppendJobRequest) (jobdb.JobHandle, error) {
+	ctx = l.runtime.prefixContext(ctx)
 	req.Job.Job.TenantId = l.runtime.prefixTenant(req.Job.Job.TenantId)
 	handle, err := l.lease.StartOrAppendJob(ctx, req)
 	if err != nil {
@@ -365,7 +446,7 @@ type namespacedRenewableLease struct {
 func (l *namespacedRenewableLease) LeaseWorkerID() string  { return l.renewable.LeaseWorkerID() }
 func (l *namespacedRenewableLease) LeaseExpiry() time.Time { return l.renewable.LeaseExpiry() }
 func (l *namespacedRenewableLease) Renew(ctx context.Context) (jobdb.RenewableExecutionLease, error) {
-	lease, err := l.renewable.Renew(ctx)
+	lease, err := l.renewable.Renew(l.runtime.prefixContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -434,4 +515,17 @@ func (r *tenantNamespacedRuntime) wrapLease(lease jobdb.ExecutionLease) jobdb.Ex
 		return &namespacedTokenLease{base, token}
 	}
 	return base
+}
+
+// prefixContext translates only the authority identity envelope, never metadata,
+// schemas, chapter bytes or cell permissions. It belongs solely to test fixtures.
+func (r *tenantNamespacedRuntime) prefixContext(ctx context.Context) context.Context {
+	if r.projects == nil {
+		return ctx
+	}
+	if authority, ok := jobdb.CellAuthorityFromContext(ctx); ok && authority.TenantID != "" && authority.TenantID != "*" {
+		authority.TenantID = r.prefixTenant(authority.TenantID)
+		ctx = jobdb.WithCellAuthority(ctx, authority)
+	}
+	return ctx
 }

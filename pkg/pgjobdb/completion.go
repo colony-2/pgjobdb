@@ -34,6 +34,9 @@ func CompleteJob(ctx context.Context, db DB, identity LeaseIdentity, completion 
 	if err != nil {
 		return err
 	}
+	if err := AdmitProjectWrite(ctx, db, string(identity.TenantID)); err != nil {
+		return err
+	}
 	var completed bool
 	if err := db.QueryRowContext(ctx, `SELECT pgjobdb.complete_native_job(
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
@@ -61,6 +64,9 @@ func CompleteUnheldJob(ctx context.Context, db DB, tenant TenantID, job JobID,
 		return fmt.Errorf("pgjobdb: complete requires tenant, job, and worker ids")
 	}
 	if err := validateCompletion(completion); err != nil {
+		return err
+	}
+	if err := AdmitProjectWrite(ctx, db, string(tenant)); err != nil {
 		return err
 	}
 	var completed bool

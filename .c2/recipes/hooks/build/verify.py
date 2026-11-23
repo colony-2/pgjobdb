@@ -17,6 +17,16 @@ BEHAVIORS = ('service_free', 'installer', 'conformance', 'runtime')
 PREFIX = 'github.com/colony-2/pgjobdb/'
 INTEGRATION = PREFIX + 'pkg/pgjobdb/runtime/integration'
 COMMAND = PREFIX + 'cmd/jobdb'
+PROJECTS = PREFIX + 'pkg/pgjobdb/projects'
+REQUIRED_PROJECTS = {'TestProjectFreshInstallationAndReopen', 'TestProjectCatalogReceiptsAndDeletion',
+ 'TestProjectAdministrationAndFirstUse', 'TestProjectGuardsAndBorrowedTransactions',
+ 'TestProjectHistoricalAdoptionPreservesResources', 'TestProjectInstallationRollbackAndInventoryFailures',
+ 'TestProjectDamagedGuardsAndResolution', 'TestProjectLargeNumericCatalogMetadata', 'TestProjectOpaqueCatalogStrings', 'TestProjectAdmissionProjectionIntegrity',
+ 'TestProjectInstallationConflictsAndExternalInventory', 'TestProjectWriterExclusionAndUnknownParticipants',
+ 'TestProjectConcurrentRetainedCreationAndDeletion', 'TestProjectCommittedSealSurvivesVacuum', 'TestProjectCommittedCatalogNewerThanWriter', 'TestProjectPartialAndFutureInstallations', 'TestProjectRefusesIncompleteSharedSchema', 'TestProjectRejectsUncommittedSeal',
+ 'TestProjectSQLNoopAdmissionAndCopy', 'TestProjectSealSurvivesDownstreamFailureAndRelaxedCommit'}
+REQUIRED_PROJECT_RUNTIME = {'TestProjectIndependentSharedWriters', 'TestProjectNativeWriterAdmission',
+ 'TestProjectReadDoesNotSeal', 'TestProjectAdmissionBeforeSecretProvider', 'TestProjectHTTPAdministrationAndReceiptReplay', 'TestProjectHTTPLeaseRenewal', 'TestPostgresTaskAlternates', 'TestPostgresTaskAlternateDelayedReschedule'}
 REQUIRED_CONSUMER = {'TestConsumerConstructorCapabilities', 'TestConsumerHTTPRetiresAttachment',
                      'TestConsumerCapabilities', 'TestConsumerReadOnlyHistory',
                      'TestConsumerSignedLeaseAuthority', 'TestConsumerNamespacedAuthority'}
@@ -30,19 +40,21 @@ REQUIRED_INSTALLER = {'TestGoalConversionHistoricalFormats', 'TestGoalConversion
                       'TestGoalConversionLostCommitAcknowledgement', 'TestGoalConversionStartupReport',
                       'TestGoalConversionOriginTie', 'TestRetainedGoalVerifyContract', 'TestRetainedGoalRejectsDamagedMirror',
                       'TestRetainedGoalProtectionDefinitions', 'TestGoalConversionRejectsAlteredProtections'}
-# Delivery-specific human exception, recorded on cancelled owner consultation
-# Dj83t2CdcL0jrAlhoM8nI8uzyyb. Keep raw failures; never retry or skip them.
-INITIAL_HISTORY_DIRECTION = 'we should accept this unreliability for today, not try to fix it.'
-INITIAL_HISTORY_OWNER_JOB = 'Dj83t2CdcL0jrAlhoM8nI8uzyyb'
-INITIAL_HISTORY_VERSION = 'v0.0.99-0.20261121034814-05238600e743'
+# Current human direction on cancelled owner consultation WTYBvQMGp87NeKRx1GATPEIBFXD.
+# Keep the diagnosed raw failures; never retry or skip them. This supersedes the
+# previous delivery's exception for 05238600e743; it does not authorize other bugs.
+INITIAL_HISTORY_DIRECTION = "we don't want to address this bug at this time. please ignore it."
+INITIAL_HISTORY_OWNER_JOB = 'WTYBvQMGp87NeKRx1GATPEIBFXD'
+INITIAL_HISTORY_VERSION = 'v0.0.99-0.20261122051819-86f7ba9bc009'
 INITIAL_HISTORY_ERROR = 'chapter not found: chapterstore: resource not found: chapterstore: chapter not found'
+INITIAL_HISTORY_HTTP_DIAGNOSTIC = 'initial history HTTP response: status=404 error=' + INITIAL_HISTORY_ERROR
 INITIAL_HISTORY_SITES = {
     'TestRetainedGoalConcurrentInitialHistory': 'selected_history_concurrency_test.go:100',
     'TestPostgresPrimaryGoalSelection/direct': 'runtimetest/primary_goal.go:86',
     'TestPostgresPrimaryGoalSelection/remote': 'runtimetest/primary_goal.go:86',
-    'TestPostgresSelectedConcurrentRequests': 'primary_goal_selection_test.go:84',
+    'TestPostgresSelectedConcurrentRequests': 'primary_goal_selection_test.go:86',
 }
-REQUIRED_COMMAND = {'TestPostgresConsumerGoalsCommands'}
+REQUIRED_COMMAND = {'TestPostgresConsumerGoalsCommands', 'TestPostgresProjectCommands'}
 TASK_DELEGATION_PACKAGE = INTEGRATION + '/internal/jobdbtest'
 REQUIRED_TASK_DELEGATION = {'TestPostgresTaskDelegation'}
 ENGINE_CONFORMANCE_PACKAGE = INTEGRATION + '/internal/jobdbtest/engineconformance'
@@ -53,7 +65,7 @@ REQUIRED_RETRY_HISTORY = {'TestGetJobRunRetryRepresentationOnDirectRuntime',
 def select_packages(listing, behavior):
     if len(listing) != len(set(listing)):
         raise ValueError('duplicate package enumeration')
-    required = {COMMAND, INTEGRATION, PREFIX + 'pkg/pgjobdb/installer',
+    required = {COMMAND, INTEGRATION, PROJECTS, PREFIX + 'pkg/pgjobdb/installer',
                 INTEGRATION + '/internal/jobdbtest',
                 INTEGRATION + '/internal/jobdbtest/engineconformance',
                 INTEGRATION + '/internal/jobdbtest/usageparity', INTEGRATION + '/workflow'}
@@ -61,10 +73,10 @@ def select_packages(listing, behavior):
         raise ValueError('missing required packages: ' + ', '.join(sorted(required - set(listing))))
     def selected(pkg):
         name = pkg.removeprefix(PREFIX)
-        if behavior == 'installer': return name == 'pkg/pgjobdb/installer'
+        if behavior == 'installer': return name in ('pkg/pgjobdb/installer', 'pkg/pgjobdb/projects')
         if behavior == 'conformance': return pkg == INTEGRATION
         if behavior == 'runtime': return pkg == COMMAND or pkg.startswith(INTEGRATION)
-        return not (name == 'pkg/pgjobdb/installer' or pkg.startswith(INTEGRATION))
+        return not (name in ('pkg/pgjobdb/installer', 'pkg/pgjobdb/projects') or pkg.startswith(INTEGRATION))
     packages = [p for p in listing if selected(p)]
     if not packages: raise ValueError('empty behavior selection')
     return packages
@@ -80,12 +92,14 @@ def select_tests(package, names, behavior):
         raise ValueError('missing PostgreSQL retry history tests')
     if package == PREFIX + 'pkg/pgjobdb/installer' and not REQUIRED_INSTALLER.issubset(tests):
         raise ValueError('missing required historical conversion/report tests')
+    if package == PROJECTS and not REQUIRED_PROJECTS.issubset(tests):
+        raise ValueError('missing required PostgreSQL project tests')
     if package == COMMAND:
         if not REQUIRED_COMMAND.issubset(tests): raise ValueError('missing PostgreSQL command tests')
-        database = [n for n in tests if n.startswith('TestPostgresConsumerGoals')]
+        database = [n for n in tests if n.startswith(('TestPostgresConsumerGoals', 'TestPostgresProject'))]
         return database if behavior == 'runtime' else [n for n in tests if n not in database]
     if package == INTEGRATION:
-        if not (REQUIRED_CONSUMER | REQUIRED_GOALS).issubset(tests): raise ValueError('missing focused consumer tests')
+        if not (REQUIRED_CONSUMER | REQUIRED_GOALS | REQUIRED_PROJECT_RUNTIME).issubset(tests): raise ValueError('missing focused consumer tests')
         conformance = [n for n in tests if 'Conformance' in n]
         if not conformance: raise ValueError('empty conformance test selection')
         return conformance if behavior == 'conformance' else [n for n in tests if n not in conformance]
@@ -112,6 +126,8 @@ def allowed_history_diagnostics(output, name, site=None):
             continue  # testify emits an empty source header before Error Trace
         if any(re.fullmatch(pattern, text) for pattern in barrier_logs):
             continue
+        if name == 'TestPostgresPrimaryGoalSelection/remote' and re.fullmatch(r'initial_history_http_test[.]go:22: ' + re.escape(INITIAL_HISTORY_HTTP_DIAGNOSTIC), text):
+            continue
         return False
     return not re.search(r'(?i)panic:|fatal error:|cleanup[^\n]*(?:fail|error)', output)
 
@@ -130,6 +146,8 @@ def accepted_initial_history_failures(events, package, pinned):
         # startup error, panic or altered failure is outside this authorization.
         errors = re.findall(r'\bError:\s*(.*?)(?=\s+Test:|\Z)', output, re.S)
         expected = 'Received unexpected error: ' + INITIAL_HISTORY_ERROR
+        if name == 'TestPostgresPrimaryGoalSelection/remote' and INITIAL_HISTORY_HTTP_DIAGNOSTIC in output:
+            expected = 'Received unexpected error: primary goal selection is unsupported'
         if site in output and len(errors) == 1 and ' '.join(errors[0].split()) == expected and allowed_history_diagnostics(output, name, site):
             accepted.add(name)
     parent = 'TestPostgresPrimaryGoalSelection'
@@ -235,8 +253,8 @@ def run(behavior):
     result = {'behavior': behavior, 'status': 'failed', 'commands': [], 'packages': []}
     with (out / (behavior + '.log')).open('w') as log:
         try:
-            if platform.system() != 'Linux' or platform.machine() not in ('aarch64', 'arm64'):
-                raise RuntimeError('verification requires native Linux arm64')
+            if platform.system() != 'Linux' or platform.machine() not in ('aarch64', 'arm64', 'x86_64', 'amd64'):
+                raise RuntimeError('verification requires native Linux arm64 or amd64')
             with tempfile.TemporaryDirectory(prefix='pgjobdb-verify-') as tmp:
                 scratch = Path(tmp)
                 # Non-root binaries need traversal access to their own isolated temporary tree.
@@ -279,7 +297,8 @@ def run(behavior):
                     # Copy source, never credentials, for unprivileged hook tests.
                     hookroot = scratch / 'hook-source'
                     hookroot.mkdir()
-                    for directory in ('.c2', 'cmd', 'pkg'):
+                    for directory in ('.c2', 'cmd', 'pkg', 'internal'):
+                        if not (root / directory).exists(): continue
                         shutil.copytree(root / directory, hookroot / directory,
                                         ignore=shutil.ignore_patterns('__pycache__'))
                     if (root/'tests/published-goals').exists():
@@ -299,6 +318,13 @@ def run(behavior):
                 result['accepted_failures'] = {}
                 modtext = (root / 'go.mod').read_text()
                 pinned = bool(re.search(r'^\s*github\.com/colony-2/jobdb\s+' + re.escape(INITIAL_HISTORY_VERSION) + r'\s*$', modtext, re.M)) and not re.search(r'^\s*replace\b', modtext, re.M)
+                if behavior == 'runtime' and COMMAND in packages:
+                    cli = scratch / 'pgjobdb-cli'
+                    cmd = ['go', 'build', *goflags, '-o', str(cli), './cmd/jobdb']
+                    result['commands'].append(cmd)
+                    if execute(cmd, log, cwd=root, env=buildenv):
+                        raise RuntimeError('production CLI compilation prerequisite failed')
+                    testenv['PGJOBDB_TEST_CLI'] = str(cli)
                 for i, package in enumerate(packages):
                     binary = scratch / ('test-' + str(i))
                     cmd = ['go', 'test', *goflags, '-c', '-o', str(binary), package]
@@ -383,7 +409,7 @@ def aggregate():
         for package, names in record.get('accepted_failures', {}).items():
             report += '\n\nAccepted initial-history failures (raw test outcomes remain failed): ' + package + ': ' + ', '.join(names)
             report += '\nHuman direction on ' + INITIAL_HISTORY_OWNER_JOB + ': “' + INITIAL_HISTORY_DIRECTION + '”'
-    report += '\n\nHeld: Docker container-smoke/Postgres/MinIO topology; amd64/macOS matrix; release, signing and publication.\n'
+    report += '\n\nHeld: Docker container-smoke/Postgres/MinIO topology; other architecture/macOS runs; release, signing and publication.\n'
     (out / 'verification.md').write_text(report)
     metadata = {'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version,
                 'go': subprocess.check_output(['go', 'version'], text=True, timeout=30).strip(),

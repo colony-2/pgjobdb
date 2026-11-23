@@ -2,7 +2,9 @@ package integration_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -22,19 +24,19 @@ func TestConsumerCapabilities(t *testing.T) {
 	for _, transport := range []string{"direct", "default", "signed"} {
 		t.Run(transport, func(t *testing.T) {
 			rt := factory(t)
-			var consumer jobdb.ConsumerRuntime = jobdbtest.NewNamespacedBackend(rt, "identity-")
+			var consumer jobdb.ConsumerRuntime = jobdbtest.NewProjectBackend(rt, "identity-")
 			if transport != "direct" {
-				handler := remote.NewConsumerServer(jobdbtest.NewNamespacedBackend(rt, ""))
+				handler := remote.NewConsumerServer(rt)
 				if transport == "signed" {
 					var err error
-					handler, err = remote.NewConsumerServerWithOptions(jobdbtest.NewNamespacedBackend(rt, ""), remote.ServerOptions{LeaseTokenSigningKey: []byte("capability-signing-key-more-than-32-bytes"), LeaseTokenAudience: "consumer-capabilities"})
+					handler, err = remote.NewConsumerServerWithOptions(rt, remote.ServerOptions{LeaseTokenSigningKey: []byte("capability-signing-key-more-than-32-bytes"), LeaseTokenAudience: "consumer-capabilities"})
 					require.NoError(t, err)
 				}
 				server := httptest.NewServer(selectionTestHandler(handler))
 				t.Cleanup(server.Close)
 				client, err := remote.New(server.URL, server.Client())
 				require.NoError(t, err)
-				consumer = jobdbtest.NewNamespacedClient(client, "identity-")
+				consumer = jobdbtest.NewProjectClient(client, rt, "identity-")
 			}
 			_, ok := reflect.TypeOf(consumer).MethodByName("AddGoalCandidate")
 			require.False(t, ok)
@@ -43,28 +45,28 @@ func TestConsumerCapabilities(t *testing.T) {
 			ctx := runtimetest.PrimaryGoalContext(context.Background())
 			// Administrative authority belongs to the test caller, never the decorator.
 			noAuthority := context.Background()
-			_, err := consumer.CreateCell(noAuthority, jobdb.CreateCellRequest{TenantID: "tenant", Name: "denied", Repo: "example.test/denied"})
+			_, err := consumer.CreateCell(noAuthority, jobdb.CreateCellRequest{TenantID: "c2", Name: "denied", Repo: "example.test/denied"})
 			if transport == "direct" {
 				require.ErrorIs(t, err, jobdb.ErrCellForbidden)
 			}
 			admin := consumer.(jobdb.ConfigurationAdmin)
-			_, err = admin.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "setting", Value: json.RawMessage(`"one"`)})
+			_, err = admin.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "c2", Name: "setting", Value: json.RawMessage(`"one"`)})
 			require.NoError(t, err)
-			config, err := admin.GetTenantConfiguration(ctx, "tenant")
+			config, err := admin.GetTenantConfiguration(ctx, "c2")
 			require.NoError(t, err)
 			require.JSONEq(t, `"one"`, string(config.Values["setting"]))
 			wrong := "wrong"
-			_, err = admin.RemoveTenantConfigurationValue(ctx, jobdb.RemoveTenantConfigurationValueRequest{TenantID: "tenant", Name: "setting", ExpectedRevision: &wrong})
+			_, err = admin.RemoveTenantConfigurationValue(ctx, jobdb.RemoveTenantConfigurationValueRequest{TenantID: "c2", Name: "setting", ExpectedRevision: &wrong})
 			require.ErrorIs(t, err, jobdb.ErrConfigurationRevisionMismatch)
-			schema, err := consumer.(jobdb.JobSchemaRegistry).RegisterJobSchema(ctx, jobdb.RegisterJobSchemaRequest{TenantId: "tenant", Schema: json.RawMessage(`{"chapterShape":{"type":"object"}}`)})
+			schema, err := consumer.(jobdb.JobSchemaRegistry).RegisterJobSchema(ctx, jobdb.RegisterJobSchemaRequest{TenantId: "c2", Schema: json.RawMessage(`{"chapterShape":{"type":"object"}}`)})
 			require.NoError(t, err)
-			require.Equal(t, "tenant", schema.TenantId)
-			got, err := consumer.(jobdb.JobSchemaRegistry).GetJobSchema(ctx, jobdb.JobSchemaKey{TenantId: "tenant", SchemaHash: schema.SchemaHash})
+			require.Equal(t, "c2", schema.TenantId)
+			got, err := consumer.(jobdb.JobSchemaRegistry).GetJobSchema(ctx, jobdb.JobSchemaKey{TenantId: "c2", SchemaHash: schema.SchemaHash})
 			require.NoError(t, err)
 			require.Equal(t, schema, got)
 			submit := func(id, goal string, deps ...jobdb.Dependency) jobdb.JobHandle {
 				t.Helper()
-				h, e := celltest.Submit(consumer, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", CellRepo: "example.test/test", JobID: id, GoalID: goal, JobType: "work", Data: jobdb.NewTaskDataOrPanic("payload"), Schema: &jobdb.JobSchemaSelector{Hash: schema.SchemaHash}, Dependencies: deps}})
+				h, e := celltest.Submit(consumer, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", CellRepo: "example.test/test", JobID: id, GoalID: goal, JobType: "work", Data: jobdb.NewTaskDataOrPanic("payload"), Schema: &jobdb.JobSchemaSelector{Hash: schema.SchemaHash}, Dependencies: deps}})
 				require.NoError(t, e)
 				return h
 			}
@@ -81,7 +83,7 @@ func TestConsumerCapabilities(t *testing.T) {
 			require.Equal(t, dependent.GoalID, info.GoalID)
 			require.Empty(t, info.OtherGoalIDs)
 			require.Equal(t, dependent.JobKey, info.BlockingWait.JobKey)
-			listed, err := consumer.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, JobKeys: []jobdb.JobKey{selected.JobKey}})
+			listed, err := consumer.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"c2"}, JobKeys: []jobdb.JobKey{selected.JobKey}})
 			require.NoError(t, err)
 			require.Len(t, listed.Jobs, 1)
 			require.Equal(t, selected.JobKey, listed.Jobs[0].JobKey)
@@ -126,16 +128,16 @@ func TestConsumerCapabilities(t *testing.T) {
 			require.Equal(t, a.CellRepo, cell.CellRepo)
 			created, err := renewed.CreateCell(ctx, jobdb.CreateCellRequest{Name: "child-cell", Repo: "example.test/child"})
 			require.NoError(t, err)
-			require.Equal(t, "tenant", created.TenantID)
-			child, err := renewed.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", CellRepo: "example.test/test", JobID: "child", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
+			require.Equal(t, "c2", created.TenantID)
+			child, err := renewed.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", CellRepo: "example.test/test", JobID: "child", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 			require.NoError(t, err)
-			require.Equal(t, "tenant", child.JobKey.TenantId)
+			require.Equal(t, "c2", child.JobKey.TenantId)
 			require.NotEmpty(t, child.GoalID)
 			require.Equal(t, a.CellID, child.CellID)
-			group := jobdb.StartOrAppendJobRequest{Job: jobdb.StartOrAppendJob{AppendKey: "group", Append: json.RawMessage(`1`), Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}}}
+			group := jobdb.StartOrAppendJobRequest{Job: jobdb.StartOrAppendJob{AppendKey: "group", Append: json.RawMessage(`1`), Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}}}
 			grouped, err := renewed.StartOrAppendJob(ctx, group)
 			require.NoError(t, err)
-			require.Equal(t, "tenant", grouped.JobKey.TenantId)
+			require.Equal(t, "c2", grouped.JobKey.TenantId)
 			require.NotEmpty(t, grouped.GoalID)
 			repeated, err := renewed.StartOrAppendJob(ctx, group)
 			require.NoError(t, err)
@@ -158,13 +160,13 @@ func TestConsumerCapabilities(t *testing.T) {
 			require.NotNil(t, childLease)
 			childRestart, err := childLease.SubmitRestartJob(ctx, jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{PriorJobKey: a.JobKey, Cell: "test"}})
 			require.NoError(t, err)
-			require.Equal(t, "tenant", childRestart.JobKey.TenantId)
+			require.Equal(t, "c2", childRestart.JobKey.TenantId)
 			require.NotEqual(t, a.GoalID, childRestart.GoalID)
 			history, err := jobdb.GetJobRun(ctx, struct{ jobdb.JobRunReader }{consumer}, jobdb.GetJobRunRequest{JobKey: restart.JobKey, IncludeInputs: true})
 			require.NoError(t, err)
 			require.Equal(t, restart.JobKey, history.Job.JobKey)
 			require.Equal(t, a.GoalID, history.Job.GoalID)
-			deleted, err := consumer.(jobdb.JobDeletionRuntime).DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []string{child.JobKey.JobId}})
+			deleted, err := consumer.(jobdb.JobDeletionRuntime).DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []string{child.JobKey.JobId}})
 			require.NoError(t, err)
 			require.EqualValues(t, 1, deleted.DeletedCount)
 			_, err = childLease.(jobdb.RenewableExecutionLease).Renew(ctx)
@@ -190,7 +192,7 @@ func TestConsumerReadOnlyHistory(t *testing.T) {
 		require.Equal(t, h.GoalID, run.Job.GoalID)
 		require.Empty(t, run.Job.OtherGoalIDs)
 		require.NotNil(t, run.Start.Input)
-		_, err = jobdb.GetJobRun(ctx, reader, jobdb.GetJobRunRequest{JobKey: jobdb.JobKey{TenantId: "other", JobId: "reader"}})
+		_, err = jobdb.GetJobRun(ctx, reader, jobdb.GetJobRunRequest{JobKey: jobdb.JobKey{TenantId: "TqtggXyN1eGriOdDqH0R8ApQbbb", JobId: "reader"}})
 		require.ErrorIs(t, err, jobdb.ErrJobNotFound)
 	})
 }
@@ -203,25 +205,35 @@ func TestConsumerNamespacedAuthority(t *testing.T) {
 		t.Run(transport, func(t *testing.T) {
 			rt := factory(t)
 			admin := runtimetest.PrimaryGoalContext(context.Background())
-			source, err := celltest.Submit(rt, admin, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "identity-tenant", Cell: "test", CellRepo: "example.test/test", JobID: "source", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
+			hash := sha256.Sum256([]byte("identity-c2"))
+			project, err := rt.CreateProject(jobdb.WithProjectAdministration(admin, func(context.Context) error { return nil }), jobdb.CreateProjectRequest{Name: fmt.Sprintf("fixture-%x", hash[:20]), RequestID: fmt.Sprintf("fixture-%x", hash[:])})
+			require.NoError(t, err)
+			physicalTenant := project.Project.ID
+			source, err := celltest.Submit(rt, admin, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: physicalTenant, Cell: "test", CellRepo: "example.test/test", JobID: "source", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 			require.NoError(t, err)
 			goalComplete(t, rt, source, false)
 			for _, policy := range []struct {
 				name, tenant       string
 				permissions, cells map[string]bool
 			}{
-				{"allowed", "identity-tenant", map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}, nil},
-				{"no-selection", "identity-tenant", map[string]bool{"jobs.submit": true, "goals.get": true}, nil},
+				{"allowed", physicalTenant, map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}, nil},
+				{"no-selection", physicalTenant, map[string]bool{"jobs.submit": true, "goals.get": true}, nil},
 				{"wrong-tenant", "identity-other", map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}, nil},
-				{"wrong-cell", "identity-tenant", map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}, map[string]bool{"other-cell": true}},
+				{"wrong-cell", physicalTenant, map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}, map[string]bool{"other-cell": true}},
 			} {
 				t.Run(policy.name, func(t *testing.T) {
-					ctx := selectedPolicy(context.Background(), policy.tenant, policy.permissions, policy.cells)
-					var consumer jobdb.ConsumerRuntime = jobdbtest.NewNamespacedBackend(rt, "identity-")
+					tenant := policy.tenant
+					if transport == "direct" && tenant == physicalTenant {
+						// Embedded authority is expressed in the caller’s namespace;
+						// HTTP middleware below binds the physical project identity.
+						tenant = "c2"
+					}
+					ctx := selectedPolicy(context.Background(), tenant, policy.permissions, policy.cells)
+					var consumer jobdb.ConsumerRuntime = jobdbtest.NewProjectBackend(rt, "identity-")
 					if transport != "direct" {
-						var handler http.Handler = remote.NewConsumerServer(jobdbtest.NewNamespacedBackend(rt, ""))
+						var handler http.Handler = remote.NewConsumerServer(rt)
 						if transport == "signed" {
-							handler, err = remote.NewConsumerServerWithOptions(jobdbtest.NewNamespacedBackend(rt, ""), remote.ServerOptions{LeaseTokenSigningKey: []byte("namespaced-authority-key-at-least-32-bytes")})
+							handler, err = remote.NewConsumerServerWithOptions(rt, remote.ServerOptions{LeaseTokenSigningKey: []byte("namespaced-authority-key-at-least-32-bytes")})
 							require.NoError(t, err)
 						}
 						server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -231,21 +243,21 @@ func TestConsumerNamespacedAuthority(t *testing.T) {
 						defer server.Close()
 						client, e := remote.New(server.URL, server.Client())
 						require.NoError(t, e)
-						consumer = jobdbtest.NewNamespacedClient(client, "identity-")
+						consumer = jobdbtest.NewProjectClient(client, rt, "identity-")
 					}
-					before, e := rt.GetGoal(admin, jobdb.GoalKey{TenantId: "identity-tenant", GoalID: source.GoalID})
+					before, e := rt.GetGoal(admin, jobdb.GoalKey{TenantId: physicalTenant, GoalID: source.GoalID})
 					require.NoError(t, e)
-					h, e := consumer.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: policy.name, GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
+					h, e := consumer.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", JobID: policy.name, GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 					if policy.name == "allowed" {
 						require.NoError(t, e)
-						require.Equal(t, "tenant", h.JobKey.TenantId)
+						require.Equal(t, "c2", h.JobKey.TenantId)
 						require.Equal(t, source.GoalID, h.GoalID)
 						return
 					}
 					require.Error(t, e)
-					_, e = rt.GetJob(admin, jobdb.JobKey{TenantId: "identity-tenant", JobId: policy.name})
+					_, e = rt.GetJob(admin, jobdb.JobKey{TenantId: physicalTenant, JobId: policy.name})
 					require.ErrorIs(t, e, jobdb.ErrJobNotFound)
-					after, e := rt.GetGoal(admin, jobdb.GoalKey{TenantId: "identity-tenant", GoalID: source.GoalID})
+					after, e := rt.GetGoal(admin, jobdb.GoalKey{TenantId: physicalTenant, GoalID: source.GoalID})
 					require.NoError(t, e)
 					require.Equal(t, before, after)
 				})

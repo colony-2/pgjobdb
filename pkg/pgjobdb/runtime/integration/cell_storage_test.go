@@ -14,13 +14,13 @@ import (
 
 func TestCellStorageColumns(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		req := jobdb.CreateCellRequest{TenantID: "storage", Name: "root", Repo: "example.test/root", RequestID: "create", Metadata: map[string]json.RawMessage{"large": json.RawMessage(`1e999999`)}}
+		req := jobdb.CreateCellRequest{TenantID: "KQoE5ZNNjvdjwlaUc25aNvuCYiT", Name: "root", Repo: "example.test/root", RequestID: "create", Metadata: map[string]json.RawMessage{"large": json.RawMessage(`1e999999`)}}
 		c, err := pgjobdb.CreateCell(ctx, db, req)
 		require.NoError(t, err)
-		p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "storage", JobId: "job"}, Cell: "root", Descriptor: "job"})
+		p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "KQoE5ZNNjvdjwlaUc25aNvuCYiT", JobId: "job"}, Cell: "root", Descriptor: "job"})
 		require.NoError(t, err)
 		var id, name, repo string
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT cell_id,cell_name,cell_repo FROM pgjobdb.job_preparations WHERE tenant_id='storage'`).Scan(&id, &name, &repo))
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT cell_id,cell_name,cell_repo FROM pgjobdb.job_preparations WHERE tenant_id='KQoE5ZNNjvdjwlaUc25aNvuCYiT'`).Scan(&id, &name, &repo))
 		require.Equal(t, c.ID, id)
 		require.Equal(t, c.Name, name)
 		require.Equal(t, c.Repo, repo)

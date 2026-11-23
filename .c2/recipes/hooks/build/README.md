@@ -22,11 +22,11 @@ coverage, which the pgjobdb test workflow does not request.
 | Workflow behavior | Hook task or held reason |
 | --- | --- |
 | test.yml native arm64 `go test -v -tags=integration ./...` | `service_free`: all packages outside installer and runtime/integration, including CLI configuration/help/completion/rejection tests and compilation of packages with no test files. Database command tests run in `runtime`. |
-| Same native suite: installer | `installer`: complete pkg/pgjobdb/installer suite. |
+| Same native suite: installer | `installer`: complete pkg/pgjobdb/installer and pkg/pgjobdb/projects suites, including explicit installation, inventory preservation, receipts and independent SQL guards. Required coverage includes opaque catalog strings, admission projection integrity, committed catalog updates newer than an active resource writer's transaction ID, plus rejection of uncommitted seals. |
 | Same native suite: runtime conformance | `conformance`: all names containing Conformance, enumerated from the compiled integration test binary, including workflow runtime, start-or-append, fixture isolation and cell conformance. |
-| Same native suite: other runtime tests | `runtime`: remaining tests in runtime/integration and all descendant packages, including engineconformance, usageparity and workflow, plus `TestPostgresConsumerGoals…` in cmd/jobdb. No package is discarded because it also contains conformance tests. |
+| Same native suite: other runtime tests | `runtime`: remaining tests in runtime/integration and all descendant packages, including engineconformance, usageparity and workflow, plus PostgreSQL consumer-goal and project CLI tests in cmd/jobdb. The hook builds and supplies the actual production CLI. No package is discarded because it also contains conformance tests. |
 | test-summary | `report`: checks all four behavior statuses and required logs/JSON; exports verification.md and environment.json. |
-| test.yml amd64/macOS matrix | Held: alternate architecture/OS. |
+| test.yml architecture/macOS matrix | Each run covers its recorded native Linux arm64 or amd64 host. Other architecture and macOS runs remain held. |
 | test.yml container-smoke | Held: Docker daemon/buildx, amd64 release-shaped image, Postgres/MinIO service topology and container persistence smoke. |
 | release.yaml tests | Covered by the same native selection above. |
 | release.yaml wait/tag/release/image/signing/login/push | Held: remote Actions, publication credentials, Docker and signing. |
@@ -45,6 +45,18 @@ internal/jobdbtest is required during enumeration, including default and signed
 consumer servers, nonempty namespaces, and the standard remote PostgreSQL factory.
 Every selected child outcome, including shared conformance and availability checks,
 must pass; any skipped native test fails its behavior and remains recorded.
+The sole accepted failure is the diagnosed initial-history race at the exact
+JobDB pin `v0.0.99-0.20261122051819-86f7ba9bc009`, under human cancellation of
+`WTYBvQMGp87NeKRx1GATPEIBFXD`: “we don't want to address this bug at this time.
+please ignore it.” The four existing assertion sites remain narrowly matched;
+raw failures and nonzero exits are retained. Other errors, added assertions,
+cleanup failures, skips, replacement modules and different pins still fail.
+Hook unit tests bind each local accepted site to its exact assertion in current
+source, so fixture edits cannot silently leave a stale line match behind.
+At the existing remote selection assertion only, the published client can map
+the missing-chapter 404 to unsupported selection. That symptom is accepted only
+with the fixture's exact captured 404/missing-chapter diagnostic; an unsupported
+route or capability without that evidence still fails.
 The service-free selection first executes the bounded hook unit tests from an
 isolated source copy as the same unprivileged UID, without acquisition credentials.
 Per-command execution is bounded to 30 minutes. Unprivileged Linux subreaper
@@ -56,7 +68,7 @@ dependent tests were not run. Evidence/report generation failures fail the hook;
 the standard shared caller handles operation failures and cancellation.
 
 Embedded PostgreSQL uses the existing test helpers and pinned embedded-postgres
-v1.32.0 default PostgreSQL 17.5.0. Linux arm64v8 binaries are downloaded by that
+v1.32.0 default PostgreSQL 17.5.0. Native Linux binaries are downloaded by that
 library using its checked checksum behavior. Startup failure is a failure, never a
 passing skip. If a future binary becomes unavailable, report its exact limitation
 and make any held-suite change explicit; do not silently skip database tests.

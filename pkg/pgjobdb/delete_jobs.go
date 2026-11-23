@@ -73,6 +73,9 @@ func DeleteJobs(ctx context.Context, db DB, req DeleteJobsRequest) (DeleteJobsRe
 	if req.Now.IsZero() {
 		req.Now = time.Now().UTC()
 	}
+	if err = AdmitProjectWrite(ctx, db, string(req.TenantID)); err != nil {
+		return out, err
+	}
 	err = db.QueryRowContext(ctx, `SELECT matched_count,deleted_count FROM pgjobdb.delete_native_jobs($1,$2,$3,$4,$5,$6,$7)`,
 		string(req.TenantID), pq.Array(ids), cutoff, string(raw), req.All, req.DryRun, req.Now).Scan(&out.MatchedCount, &out.DeletedCount)
 	if err != nil {

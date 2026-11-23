@@ -13,22 +13,22 @@ import (
 
 func selectedNative(t *testing.T, ctx context.Context, db pgjobdb.DB, id, goal string, deps []jobdb.Dependency) (pgjobdb.JobPreparation, pgjobdb.SubmitJobRequest) {
 	t.Helper()
-	prep := pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "tenant", JobId: id}, Cell: "test", CellRepo: "example.test/test", SelectedGoalID: goal, Descriptor: "submit " + id, Dependencies: deps}
+	prep := pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "c2", JobId: id}, Cell: "test", CellRepo: "example.test/test", SelectedGoalID: goal, Descriptor: "submit " + id, Dependencies: deps}
 	p, err := pgjobdb.PrepareJob(ctx, db, prep)
 	require.NoError(t, err)
 	require.False(t, p.Published)
-	return prep, pgjobdb.SubmitJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID(id), Cell: "test", CellRepo: "example.test/test", Target: p.Target, GoalID: goal, SelectedGoalID: goal, WorkerID: "submit", JobType: "work", Dependencies: deps}
+	return prep, pgjobdb.SubmitJobRequest{TenantID: "c2", JobID: pgjobdb.JobID(id), Cell: "test", CellRepo: "example.test/test", Target: p.Target, GoalID: goal, SelectedGoalID: goal, WorkerID: "submit", JobType: "work", Dependencies: deps}
 }
 
 func assertNoSelectedScheduler(t *testing.T, ctx context.Context, db pgjobdb.DB, id string) {
 	t.Helper()
 	for _, table := range []string{"jobs", "jobs_archive", "job_facts", "dependency_waits", "dependency_targets"} {
 		var n int
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.`+table+` WHERE tenant_id='tenant' AND job_id=$1`, id).Scan(&n))
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.`+table+` WHERE tenant_id='c2' AND job_id=$1`, id).Scan(&n))
 		require.Zero(t, n, table)
 	}
 	var n int
-	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.job_preparations WHERE tenant_id='tenant' AND job_id=$1 AND (published OR receipt IS NOT NULL)`, id).Scan(&n))
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.job_preparations WHERE tenant_id='c2' AND job_id=$1 AND (published OR receipt IS NOT NULL)`, id).Scan(&n))
 	require.Zero(t, n)
 }
 
@@ -71,7 +71,7 @@ func TestSelectedNativeTransactions(t *testing.T) {
 				p, err = pgjobdb.PrepareJob(ctx, db, prep)
 				require.NoError(t, err)
 				require.NotNil(t, p.Receipt)
-				require.NoError(t, pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID(name), WorkerID: "fixture-drain"}))
+				require.NoError(t, pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "c2", JobID: pgjobdb.JobID(name), WorkerID: "fixture-drain"}))
 			})
 		}
 		// Publication errors roll back their own savepoint, leaving the caller's
@@ -90,5 +90,5 @@ func TestSelectedNativeTransactions(t *testing.T) {
 // An ordinary unsuccessful completion drains admission without closing a goal.
 func retireNativeMember(t *testing.T, ctx context.Context, db pgjobdb.DB, id string) {
 	t.Helper()
-	require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", pgjobdb.JobID(id), "test-drain", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp}))
+	require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "c2", pgjobdb.JobID(id), "test-drain", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp}))
 }

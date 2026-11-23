@@ -34,12 +34,12 @@ func TestSelectedNativeCurrentAuthority(t *testing.T) {
 			permissions  map[string]bool
 			cells        map[string]bool
 		}{
-			{name: "read-only", tenant: "tenant", permissions: map[string]bool{"goals.get": true}},
-			{name: "submit-only", tenant: "tenant", permissions: map[string]bool{"jobs.submit": true}},
-			{name: "selection-without-access", tenant: "tenant", permissions: map[string]bool{"jobs.submit": true, "goals.select-primary": true}},
-			{name: "access-without-selection", tenant: "tenant", permissions: map[string]bool{"jobs.submit": true, "goals.get": true}},
-			{name: "other-tenant", tenant: "other", permissions: map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}},
-			{name: "other-cell", tenant: "tenant", permissions: map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}, cells: map[string]bool{"other": true}},
+			{name: "read-only", tenant: "c2", permissions: map[string]bool{"goals.get": true}},
+			{name: "submit-only", tenant: "c2", permissions: map[string]bool{"jobs.submit": true}},
+			{name: "selection-without-access", tenant: "c2", permissions: map[string]bool{"jobs.submit": true, "goals.select-primary": true}},
+			{name: "access-without-selection", tenant: "c2", permissions: map[string]bool{"jobs.submit": true, "goals.get": true}},
+			{name: "other-tenant", tenant: "TqtggXyN1eGriOdDqH0R8ApQbbb", permissions: map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}},
+			{name: "other-cell", tenant: "c2", permissions: map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}, cells: map[string]bool{"other": true}},
 		}
 		for _, policy := range policies {
 			t.Run(policy.name, func(t *testing.T) {
@@ -52,7 +52,7 @@ func TestSelectedNativeCurrentAuthority(t *testing.T) {
 				assertNoSelectedScheduler(t, ctx, db, "selected")
 			})
 		}
-		allowed := selectedPolicy(ctx, "tenant", map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}, nil)
+		allowed := selectedPolicy(ctx, "c2", map[string]bool{"jobs.submit": true, "goals.get": true, "goals.select-primary": true}, nil)
 		_, err := pgjobdb.SubmitJob(allowed, db, publication)
 		require.NoError(t, err)
 		receipt, err := pgjobdb.PrepareJob(allowed, db, prep)

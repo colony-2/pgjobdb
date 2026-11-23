@@ -28,6 +28,11 @@ func withCellTx(ctx context.Context, db DB, tenant string, mutate bool, fn func(
 	if tenant == "" {
 		return jobdb.ErrInvalidCell
 	}
+	if mutate {
+		if err = AdmitProjectWrite(ctx, db, tenant); err != nil {
+			return err
+		}
+	}
 	var tx *sql.Tx
 	owned := false
 	if existing, ok := db.(*sql.Tx); ok {
@@ -197,7 +202,11 @@ func GetCell(ctx context.Context, db DB, key jobdb.CellKey) (out jobdb.Cell, err
 	return s.Get(ctx, key)
 }
 func ListCells(ctx context.Context, db DB, req jobdb.ListCellsRequest) (out jobdb.ListCellsResponse, err error) {
-	err = cellTx(ctx, db, req.TenantID, func(_ *sql.Tx, s *cellstate.State) error { var e error; out, e = s.List(ctx, req); return e })
+	s, e := loadCells(ctx, db, req.TenantID)
+	if e != nil {
+		return out, e
+	}
+	return s.List(ctx, req)
 	return
 }
 func UpdateCell(ctx context.Context, db DB, req jobdb.UpdateCellRequest) (out jobdb.Cell, err error) {

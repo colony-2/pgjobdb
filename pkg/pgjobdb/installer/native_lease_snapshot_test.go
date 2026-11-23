@@ -17,7 +17,7 @@ func TestNativeLeaseExecutionSnapshot(t *testing.T) {
 			t.Run(kind, func(t *testing.T) {
 				id := pgjobdb.JobID(kind)
 				_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-					TenantID: "tenant", JobID: id, WorkerID: "submitter", JobType: "primary",
+					TenantID: "c2", JobID: id, WorkerID: "submitter", JobType: "primary",
 					Runtime: pgjobdb.RuntimeMetadata{SchemaHash: "schema"}, RunPolicy: pgjobdb.RunPolicy{Retry: pgjobdb.RetryPolicy{MaximumAttempts: 3}},
 					ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"cursor":1}`)},
 				})
@@ -33,7 +33,7 @@ func TestNativeLeaseExecutionSnapshot(t *testing.T) {
 						route.Alternate.TaskType = "fallback-task"
 					}
 				}
-				require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", id, "submitter", route))
+				require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, "c2", id, "submitter", route))
 				selector := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"primary"}}
 				if route.Task != nil {
 					selector = pgjobdb.WorkSelector{Tasks: []pgjobdb.TaskSelector{{JobType: "primary", TaskType: "task"}}}
@@ -43,14 +43,14 @@ func TestNativeLeaseExecutionSnapshot(t *testing.T) {
 					if kind == "task-alternate" {
 						selector = pgjobdb.WorkSelector{Tasks: []pgjobdb.TaskSelector{{JobType: "fallback", TaskType: "fallback-task"}}}
 					}
-					early, err := pgjobdb.GetJobLease(ctx, db, "tenant", id, "owner", selector, pgjobdb.GetJobLeaseOptions{})
+					early, err := pgjobdb.GetJobLease(ctx, db, "c2", id, "owner", selector, pgjobdb.GetJobLeaseOptions{})
 					require.NoError(t, err)
 					require.Nil(t, early)
 					// Advance eligibility across the boundary without a wall-clock sleep.
 					_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET alternate_at=clock_timestamp()-interval '1 second' WHERE job_id=$1`, id)
 					require.NoError(t, err)
 				}
-				acquired, err := pgjobdb.GetJobLease(ctx, db, "tenant", id, "owner", selector, pgjobdb.GetJobLeaseOptions{LeaseDuration: 10 * time.Second})
+				acquired, err := pgjobdb.GetJobLease(ctx, db, "c2", id, "owner", selector, pgjobdb.GetJobLeaseOptions{LeaseDuration: 10 * time.Second})
 				require.NoError(t, err)
 				require.NotNil(t, acquired)
 				require.Equal(t, "schema", acquired.SchemaHash)
@@ -82,13 +82,13 @@ func TestNativeLeaseExecutionSnapshot(t *testing.T) {
 				if route.Alternate != nil {
 					_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 millisecond' WHERE job_id=$1`, id)
 					require.NoError(t, err)
-					next, err := pgjobdb.GetJobLease(ctx, db, "tenant", id, "new-owner", selector, pgjobdb.GetJobLeaseOptions{})
+					next, err := pgjobdb.GetJobLease(ctx, db, "c2", id, "new-owner", selector, pgjobdb.GetJobLeaseOptions{})
 					require.NoError(t, err)
 					require.NotNil(t, next)
 					require.NotEqual(t, acquired.LeaseID, next.LeaseID)
 					require.Equal(t, acquired.RouteJobType, next.RouteJobType)
 					require.Equal(t, acquired.Task, next.Task)
-					row, err := pgjobdb.GetJob(ctx, db, "tenant", id)
+					row, err := pgjobdb.GetJob(ctx, db, "c2", id)
 					require.NoError(t, err)
 					require.Empty(t, row.AlternateJobType)
 					require.Nil(t, row.AlternateAfterSeconds)
@@ -103,9 +103,9 @@ func TestNativeLeaseExecutionSnapshot(t *testing.T) {
 
 func TestNativeRenewalCannotReviveLeaseAfterLockWait(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "locked", WorkerID: "submitter", JobType: "job"})
+		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: "locked", WorkerID: "submitter", JobType: "job"})
 		require.NoError(t, err)
-		lease, err := pgjobdb.GetWork(ctx, db, "owner", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"job"}}, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, LeaseDuration: time.Second})
+		lease, err := pgjobdb.GetWork(ctx, db, "owner", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"job"}}, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, LeaseDuration: time.Second})
 		require.NoError(t, err)
 		require.NotNil(t, lease)
 		tx, err := db.BeginTx(ctx, nil)

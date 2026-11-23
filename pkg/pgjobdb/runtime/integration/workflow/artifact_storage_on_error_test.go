@@ -62,7 +62,7 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 
 		// Build engine with the job and task worker
 		engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
-			b.WithWorkerTenantId("test-tenant").PlusWorkers(jobWorker, taskWorker)
+			b.WithWorkerTenantId("AR56al1yl0yzJyAEqN1IteLC5Vi").PlusWorkers(jobWorker, taskWorker)
 		})
 
 		// Run engine in background
@@ -70,7 +70,7 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 
 		// Start the job
 		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "test-tenant",
+			TenantId: "AR56al1yl0yzJyAEqN1IteLC5Vi",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"input": "data"}),
 		})
@@ -137,7 +137,7 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 
 		// Build engine with retry policy
 		engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
-			b.WithWorkerTenantId("test-tenant").PlusWorkers(jobWorker, taskWorker)
+			b.WithWorkerTenantId("AR56al1yl0yzJyAEqN1IteLC5Vi").PlusWorkers(jobWorker, taskWorker)
 		})
 
 		// Run engine in background
@@ -145,7 +145,7 @@ func TestArtifactStorageOnTaskError(t *testing.T) {
 
 		// Start the job with retry policy
 		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "test-tenant",
+			TenantId: "AR56al1yl0yzJyAEqN1IteLC5Vi",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"input": "data"}),
 			RunPolicy: jobdb.RunPolicy{
@@ -217,7 +217,7 @@ func TestArtifactStorageOnJobError(t *testing.T) {
 
 		// Build engine
 		engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
-			b.WithWorkerTenantId("test-tenant").PlusWorkers(jobWorker)
+			b.WithWorkerTenantId("AR56al1yl0yzJyAEqN1IteLC5Vi").PlusWorkers(jobWorker)
 		})
 
 		// Run engine in background
@@ -225,7 +225,7 @@ func TestArtifactStorageOnJobError(t *testing.T) {
 
 		// Start the job
 		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "test-tenant",
+			TenantId: "AR56al1yl0yzJyAEqN1IteLC5Vi",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"input": "data"}),
 		})

@@ -29,7 +29,7 @@ func TestJobsEventuallyComplete(t *testing.T) {
 	blobStoreURI, blobs := startChapterBlobStore(t)
 	defer blobs.Shutdown()
 
-	tenantID := "job-status-tenant"
+	tenantID := workflowProjectID(t, postgresDSN, "job-status-tenant")
 	engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
 		b.WithWorkerTenantId(tenantID).PlusWorkers(statusJobWorker{}, statusTaskWorker{})
 	})

@@ -21,7 +21,7 @@ func TestNativeLeaseSelection(t *testing.T) {
 			{"job-task", `{"source":"api"}`},
 		} {
 			if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-				TenantID: "tenant", JobID: item.id, WorkerID: "submitter",
+				TenantID: "c2", JobID: item.id, WorkerID: "submitter",
 				JobType: "collect", AppMetadata: json.RawMessage(item.metadata),
 			}); err != nil {
 				t.Fatalf("submit %s: %v", item.id, err)
@@ -31,14 +31,14 @@ func TestNativeLeaseSelection(t *testing.T) {
 			work_kind = 'TASK', task_type = 'download',
 			resume_job_type = 'collect', task_input_ordinal = 1,
 			task_output_ordinal = 2, task_input_hash = 'sha256:input'
-			WHERE tenant_id = 'tenant' AND job_id = 'job-task'`); err != nil {
+			WHERE tenant_id = 'c2' AND job_id = 'job-task'`); err != nil {
 			t.Fatalf("set task route: %v", err)
 		}
 
 		jobSelector := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}
 		batch, err := pgjobdb.GetWork(ctx, db, "worker-batch", jobSelector,
 			pgjobdb.GetWorkOptions{
-				TenantIDs:           []pgjobdb.TenantID{"tenant"},
+				TenantIDs:           []pgjobdb.TenantID{"c2"},
 				AppMetadataContains: json.RawMessage(`{"source":"batch"}`),
 				LeaseDuration:       5 * time.Second,
 			})
@@ -46,7 +46,7 @@ func TestNativeLeaseSelection(t *testing.T) {
 			batch.WorkKind != pgjobdb.WorkKindJob {
 			t.Fatalf("batch lease = %+v, %v", batch, err)
 		}
-		if unavailable, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job-batch",
+		if unavailable, err := pgjobdb.GetJobLease(ctx, db, "c2", "job-batch",
 			"worker-2", jobSelector, pgjobdb.GetJobLeaseOptions{}); err != nil || unavailable != nil {
 			t.Fatalf("active job should be unavailable: %+v, %v", unavailable, err)
 		}
@@ -55,7 +55,7 @@ func TestNativeLeaseSelection(t *testing.T) {
 			{JobType: "collect", TaskType: "download"},
 		}}
 		task, err := pgjobdb.GetWork(ctx, db, "worker-task", taskSelector,
-			pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}})
+			pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"c2"}})
 		if err != nil || task == nil || task.JobID != "job-task" ||
 			task.WorkKind != pgjobdb.WorkKindTask || task.Task == nil ||
 			task.Task.InputOrdinal != 1 || task.Task.OutputOrdinal != 2 ||
@@ -65,23 +65,23 @@ func TestNativeLeaseSelection(t *testing.T) {
 		if task.RouteJobType != "collect" || task.Task.TaskType != "download" {
 			t.Fatalf("task route = %+v", task)
 		}
-		if wrong, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job-api",
+		if wrong, err := pgjobdb.GetJobLease(ctx, db, "c2", "job-api",
 			"worker-task", taskSelector, pgjobdb.GetJobLeaseOptions{}); err != nil || wrong != nil {
 			t.Fatalf("wrong task selector claimed job: %+v, %v", wrong, err)
 		}
 
-		api, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job-api",
+		api, err := pgjobdb.GetJobLease(ctx, db, "c2", "job-api",
 			"worker-api", jobSelector, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || api == nil || api.JobID != "job-api" {
 			t.Fatalf("api lease = %+v, %v", api, err)
 		}
 		future := time.Now().UTC().Add(time.Hour)
 		for _, req := range []pgjobdb.SubmitJobRequest{
-			{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "job-future", WorkerID: "submitter",
+			{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: "job-future", WorkerID: "submitter",
 				JobType: "collect", AvailableAt: &future},
-			{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "job-waiting", WorkerID: "submitter",
+			{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: "job-waiting", WorkerID: "submitter",
 				JobType: "collect", WaitFor: []pgjobdb.JobID{"job-api"}},
-			{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "job-cancelled", WorkerID: "submitter",
+			{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: "job-cancelled", WorkerID: "submitter",
 				JobType: "collect"},
 		} {
 			if _, err := submitCellJob(ctx, db, req); err != nil {
@@ -90,11 +90,11 @@ func TestNativeLeaseSelection(t *testing.T) {
 		}
 		if _, err := db.ExecContext(ctx, `UPDATE pgjobdb.jobs
 			SET cancel_requested = TRUE
-			WHERE tenant_id = 'tenant' AND job_id = 'job-cancelled'`); err != nil {
+			WHERE tenant_id = 'c2' AND job_id = 'job-cancelled'`); err != nil {
 			t.Fatalf("cancel job: %v", err)
 		}
 		if none, err := pgjobdb.GetWork(ctx, db, "worker-extra", jobSelector,
-			pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}}); err != nil || none != nil {
+			pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"c2"}}); err != nil || none != nil {
 			t.Fatalf("expected no more job routes: %+v, %v", none, err)
 		}
 	})

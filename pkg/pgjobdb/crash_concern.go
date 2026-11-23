@@ -21,6 +21,9 @@ func ClearCrashConcern(ctx context.Context, db DB, req jobdb.ClearCrashConcernRe
 	if worker == "" {
 		worker = "jobdb"
 	}
+	if err := AdmitProjectWrite(ctx, db, req.JobKey.TenantId); err != nil {
+		return err
+	}
 	var result string
 	err := db.QueryRowContext(ctx, `WITH target AS MATERIALIZED (
     SELECT j.cancel_requested, j.lease_expires_at, j.consecutive_expirations, f.hidden_at

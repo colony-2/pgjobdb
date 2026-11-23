@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/integration/internal/jobdbtest"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -30,12 +31,14 @@ func TestStartOrAppendConformance(t *testing.T) {
 				rt, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
 				require.NoError(t, err)
 				defer rt.Close(ctx)
-				var client jobdb.ConsumerRuntime = rt
+				view := jobdbtest.NewProjectBackend(rt, "")
+				var client jobdb.ConsumerRuntime = view
 				if http {
 					server := httptest.NewServer(celltest.Handler(remote.NewConsumerServer(rt)))
 					defer server.Close()
-					client, err = remote.New(server.URL, server.Client())
-					require.NoError(t, err)
+					wire, e := remote.New(server.URL, server.Client())
+					require.NoError(t, e)
+					client = jobdbtest.NewProjectClient(wire, rt, "")
 				}
 				runtimetest.RunStartOrAppendConformance(t, runtimetest.Harness{Name: name, New: func(testing.TB) runtimetest.Fixture { return runtimetest.Fixture{Runtime: client} }})
 			})
@@ -48,10 +51,10 @@ func TestAppendClaimsPreserveSchedulerState(t *testing.T) {
 		rt, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
 		require.NoError(t, err)
 		defer rt.Close(ctx)
-		_, err = rt.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
+		_, err = rt.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: "c2", Name: "test", Repo: "example.test/test"})
 		require.NoError(t, err)
 		at := time.Now().Add(time.Hour)
-		h, err := rt.StartOrAppendJob(ctx, jobdb.StartOrAppendJobRequest{Job: jobdb.StartOrAppendJob{AppendKey: "claims", Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", JobType: "batch", Data: jobdb.NewTaskDataOrPanic(1), AvailableAt: &at}, Append: json.RawMessage(`1`)}})
+		h, err := rt.StartOrAppendJob(ctx, jobdb.StartOrAppendJobRequest{Job: jobdb.StartOrAppendJob{AppendKey: "claims", Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", JobType: "batch", Data: jobdb.NewTaskDataOrPanic(1), AvailableAt: &at}, Append: json.RawMessage(`1`)}})
 		require.NoError(t, err)
 		scheduler := runtimeadapter.Scheduler{DB: db}
 		var before string
@@ -84,14 +87,14 @@ func TestAppendListCursorBindsFilterKind(t *testing.T) {
 		rt, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
 		require.NoError(t, err)
 		defer rt.Close(ctx)
-		_, err = rt.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
+		_, err = rt.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: "c2", Name: "test", Repo: "example.test/test"})
 		require.NoError(t, err)
-		q := jobdb.StartOrAppendJobRequest{Job: jobdb.StartOrAppendJob{AppendKey: "same-filter-value", MaxInputs: 1, Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", JobType: "batch", Data: jobdb.NewTaskDataOrPanic(nil)}, Append: json.RawMessage(`null`)}}
+		q := jobdb.StartOrAppendJobRequest{Job: jobdb.StartOrAppendJob{AppendKey: "same-filter-value", MaxInputs: 1, Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", JobType: "batch", Data: jobdb.NewTaskDataOrPanic(nil)}, Append: json.RawMessage(`null`)}}
 		for i := 0; i < 2; i++ {
 			_, err = rt.StartOrAppendJob(ctx, q)
 			require.NoError(t, err)
 		}
-		query := jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, AppendKeys: []string{q.Job.AppendKey}, PageSize: 1}
+		query := jobdb.ListJobsRequest{TenantIds: []string{"c2"}, AppendKeys: []string{q.Job.AppendKey}, PageSize: 1}
 		page, err := rt.ListJobs(ctx, query)
 		require.NoError(t, err)
 		require.NotEmpty(t, page.NextPageToken)
@@ -107,7 +110,7 @@ func TestAppendInputAndReplay(t *testing.T) {
 		rt, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
 		require.NoError(t, err)
 		defer rt.Close(ctx)
-		source, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", CellRepo: "example.test/test", JobType: "source", Data: jobdb.NewTaskDataOrPanic(nil, jobdb.NewArtifactFromBytes("f.txt", []byte("content")))}})
+		source, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", CellRepo: "example.test/test", JobType: "source", Data: jobdb.NewTaskDataOrPanic(nil, jobdb.NewArtifactFromBytes("f.txt", []byte("content")))}})
 		require.NoError(t, err)
 		for _, overHTTP := range []bool{false, true} {
 			name := "direct"
@@ -115,14 +118,16 @@ func TestAppendInputAndReplay(t *testing.T) {
 				name = "remote"
 			}
 			t.Run(name, func(t *testing.T) {
-				var client jobdb.ConsumerRuntime = rt
+				view := jobdbtest.NewProjectBackend(rt, "")
+				var client jobdb.ConsumerRuntime = view
 				if overHTTP {
 					server := httptest.NewServer(celltest.Handler(remote.NewConsumerServer(rt)))
 					defer server.Close()
-					client, err = remote.New(server.URL, server.Client())
-					require.NoError(t, err)
+					wire, e := remote.New(server.URL, server.Client())
+					require.NoError(t, e)
+					client = jobdbtest.NewProjectClient(wire, rt, "")
 				}
-				q := jobdb.StartOrAppendJobRequest{Job: jobdb.StartOrAppendJob{AppendKey: name, Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", JobType: "batch", Data: jobdb.NewTaskDataOrPanic("start")}, Append: json.RawMessage(`null`), AppendArtifacts: []jobdb.ArtifactKey{{JobId: source.JobKey.JobId, TaskOrdinal: 0, Name: "f.txt", SizeBytes: 7}}}}
+				q := jobdb.StartOrAppendJobRequest{Job: jobdb.StartOrAppendJob{AppendKey: name, Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", JobType: "batch", Data: jobdb.NewTaskDataOrPanic("start")}, Append: json.RawMessage(`null`), AppendArtifacts: []jobdb.ArtifactKey{{JobId: source.JobKey.JobId, TaskOrdinal: 0, Name: "f.txt", SizeBytes: 7}}}}
 				a, err := client.StartOrAppendJob(ctx, q)
 				require.NoError(t, err)
 				_, err = client.StartOrAppendJob(ctx, q)
@@ -150,7 +155,7 @@ func TestAppendInputAndReplay(t *testing.T) {
 					out, err := runnable.Run(nil)
 					require.NoError(t, err)
 					require.Equal(t, workflow.JobRunCompleted, out.Status)
-					engine, err := workflow.NewEngineBuilder().WithRuntime(client).WithWorkerTenantId("tenant").PlusWorkers(worker).BuildEngine()
+					engine, err := workflow.NewEngineBuilder().WithRuntime(client).WithWorkerTenantId("c2").PlusWorkers(worker).BuildEngine()
 					require.NoError(t, err)
 					_, err = engine.ReplayJobRun(ctx, workflow.ReplayRunRequest{JobKey: key})
 					require.NoError(t, err)

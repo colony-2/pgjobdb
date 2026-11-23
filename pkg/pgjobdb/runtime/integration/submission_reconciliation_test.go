@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"io"
 	"testing"
 	"time"
@@ -22,14 +23,14 @@ func TestSubmissionAvailabilityStagedHistoryAndLostResponse(t *testing.T) {
 	source, err := f.backend.SubmitJob(f.ctx, availabilityRequest("source", nil))
 	require.NoError(t, err)
 	retireNativeMember(t, f.ctx, f.db, source.JobKey.JobId)
-	chapters, err := chapterpostgres.NewSQLDB(f.ctx, f.db, chapterpostgres.Config{BlobStoreURI: f.cfg.BlobStoreURI, MaxInlineArtifactBytes: 1})
+	chapters, err := chapterpostgres.NewSQLDB(f.ctx, f.db, chapterpostgres.Config{Projects: projectfixture.Control(f.db), BlobStoreURI: f.cfg.BlobStoreURI, MaxInlineArtifactBytes: 1})
 	require.NoError(t, err)
 	defer chapters.Close(f.ctx)
-	schemas, err := schemapostgres.NewSQLDB(f.ctx, f.db)
+	schemas, err := schemapostgres.NewSQLDB(f.ctx, f.db, projectfixture.Control(f.db))
 	require.NoError(t, err)
 	scheduler := &selectedFaultScheduler{Scheduler: runtimeadapter.Scheduler{DB: f.db}}
 	core := func() *runtimecore.Runtime {
-		r, err := runtimecore.NewRuntime(runtimecore.Config{Scheduler: scheduler, Chapters: chapters, Schemas: schemas, Configurations: newConfigurationStore(t, f.ctx, f.db)})
+		r, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(f.db), Scheduler: scheduler, Chapters: chapters, Schemas: schemas, Configurations: newConfigurationStore(t, f.ctx, f.db)})
 		require.NoError(t, err)
 		return r
 	}
@@ -49,10 +50,10 @@ func TestSubmissionAvailabilityStagedHistoryAndLostResponse(t *testing.T) {
 	_, err = core().SubmitJob(f.ctx, request("staged"))
 	require.ErrorContains(t, err, "submission availability")
 	f.noPublication("staged")
-	chapter, err := chapters.Get(f.ctx, runtimecore.ChapterLogKey{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "staged"}}, 0)
+	chapter, err := chapters.Get(f.ctx, runtimecore.ChapterLogKey{JobKey: jobdb.JobKey{TenantId: "c2", JobId: "staged"}}, 0)
 	require.NoError(t, err)
 	require.Len(t, chapter.Artifacts, 1)
-	reader, err := chapters.OpenArtifact(f.ctx, runtimecore.ArtifactLookup{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "staged"}, Ordinal: 0, Name: "input.txt", Digest: chapter.Artifacts[0].Digest})
+	reader, err := chapters.OpenArtifact(f.ctx, runtimecore.ArtifactLookup{JobKey: jobdb.JobKey{TenantId: "c2", JobId: "staged"}, Ordinal: 0, Name: "input.txt", Digest: chapter.Artifacts[0].Digest})
 	require.NoError(t, err)
 	stream, err := reader.Open()
 	require.NoError(t, err)
@@ -66,11 +67,11 @@ func TestSubmissionAvailabilityStagedHistoryAndLostResponse(t *testing.T) {
 	f.assertReads(h.JobKey, effectiveAvailability(at))
 	require.Contains(t, f.descriptor(h.JobKey), "2300-01-01T00:00:00.123456789Z")
 	// Drain this delayed attempt before publishing another member of its goal.
-	require.NoError(t, pgjobdb.CancelJob(f.ctx, f.db, pgjobdb.CancelJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID(h.JobKey.JobId), WorkerID: "fixture-drain"}))
+	require.NoError(t, pgjobdb.CancelJob(f.ctx, f.db, pgjobdb.CancelJobRequest{TenantID: "c2", JobID: pgjobdb.JobID(h.JobKey.JobId), WorkerID: "fixture-drain"}))
 	scheduler.after = func() error { return errors.New("injected committed response loss") }
 	_, err = core().SubmitJob(f.ctx, request("lost-response"))
 	require.ErrorContains(t, err, "injected committed response loss")
-	descriptor := f.descriptor(jobdb.JobKey{TenantId: "tenant", JobId: "lost-response"})
+	descriptor := f.descriptor(jobdb.JobKey{TenantId: "c2", JobId: "lost-response"})
 	scheduler.after = nil
 	first, err := core().SubmitJob(f.ctx, request("lost-response"))
 	require.NoError(t, err)

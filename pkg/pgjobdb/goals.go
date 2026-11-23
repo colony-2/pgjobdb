@@ -36,6 +36,7 @@ type PreparedJob struct {
 }
 
 func goalError(err error) error {
+	err = projectError(err)
 	var pg *pq.Error
 	if !errors.As(err, &pg) {
 		return err

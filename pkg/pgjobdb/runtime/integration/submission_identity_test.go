@@ -82,7 +82,7 @@ func TestSubmissionAvailabilitySelectedIdentity(t *testing.T) {
 			require.ErrorContains(t, err, "submission availability")
 			_, err = (runtimeadapter.Scheduler{DB: f.db}).PrepareJob(f.ctx, runtimecore.JobPreparation{Key: p.Key, Cell: p.Cell, CellRepo: p.CellRepo, SelectedGoalID: p.SelectedGoalID, Descriptor: p.Descriptor})
 			require.ErrorContains(t, err, "submission availability")
-			_, err = f.backend.DeleteJobs(f.ctx, jobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []string{h.JobKey.JobId}})
+			_, err = f.backend.DeleteJobs(f.ctx, jobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []string{h.JobKey.JobId}})
 			require.NoError(t, err)
 			f.reopen()
 			// Rebuild the submit closure against the reopened runtime while retaining
@@ -120,7 +120,7 @@ func TestSubmissionAvailabilityReconciliationGuards(t *testing.T) {
 	f := newAvailabilityFixture(t, newDSN(t))
 	scheduler := runtimeadapter.Scheduler{DB: f.db}
 	bad := time.Date(9999, 12, 31, 23, 59, 59, 999999001, time.UTC)
-	_, err := scheduler.CreateJob(f.ctx, runtimecore.CreateJobRequest{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "typed-reconcile"}, AvailableAt: &bad})
+	_, err := scheduler.CreateJob(f.ctx, runtimecore.CreateJobRequest{JobKey: jobdb.JobKey{TenantId: "c2", JobId: "typed-reconcile"}, AvailableAt: &bad})
 	require.ErrorContains(t, err, "submission availability")
 	f.noPublication("typed-reconcile")
 	h, err := f.backend.SubmitJob(f.ctx, availabilityRequest("ordinary", nil))
@@ -166,7 +166,7 @@ func TestSubmissionAvailabilityRuntimeUTCReads(t *testing.T) {
 			_, err = f.db.ExecContext(f.ctx, `UPDATE pgjobdb.jobs SET available_at=clock_timestamp()-interval '1 hour' WHERE job_id=$1`, h.JobKey.JobId)
 			require.NoError(t, err)
 
-			require.NoError(t, pgjobdb.CompleteUnheldJob(f.ctx, f.db, "tenant", pgjobdb.JobID(h.JobKey.JobId), "archiver", pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}))
+			require.NoError(t, pgjobdb.CompleteUnheldJob(f.ctx, f.db, "c2", pgjobdb.JobID(h.JobKey.JobId), "archiver", pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}))
 			archiveTime := effectiveAvailability(at)
 			_, err = f.db.ExecContext(f.ctx, `UPDATE pgjobdb.jobs_archive SET archived_at=$2,final_available_at=$2 WHERE job_id=$1`, h.JobKey.JobId, archiveTime)
 			require.NoError(t, err)

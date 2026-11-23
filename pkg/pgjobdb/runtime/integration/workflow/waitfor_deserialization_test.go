@@ -36,11 +36,11 @@ func TestWaitForDeserialization(t *testing.T) {
 	childJobID2 := "child-job-2"
 	parentJobID := "parent-job-1"
 
-	_, err = pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant-1", Name: "test", Repo: "example.test/test"})
+	_, err = pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "8lPYEAHqlujzxGxkZIIJJU7mygd", Name: "test", Repo: "example.test/test"})
 	require.NoError(t, err)
 	// Insert child jobs
 	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-		TenantID: "tenant-1", JobID: pgjobdb.JobID(childJobID1),
+		TenantID: "8lPYEAHqlujzxGxkZIIJJU7mygd", JobID: pgjobdb.JobID(childJobID1),
 		WorkerID: "submitter", JobType: "child-task",
 	})
 	if err != nil {
@@ -48,7 +48,7 @@ func TestWaitForDeserialization(t *testing.T) {
 	}
 
 	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-		TenantID: "tenant-1", JobID: pgjobdb.JobID(childJobID2),
+		TenantID: "8lPYEAHqlujzxGxkZIIJJU7mygd", JobID: pgjobdb.JobID(childJobID2),
 		WorkerID: "submitter", JobType: "child-task",
 	})
 	if err != nil {
@@ -57,7 +57,7 @@ func TestWaitForDeserialization(t *testing.T) {
 
 	// Insert parent job waiting for child jobs
 	_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-		TenantID: "tenant-1", JobID: pgjobdb.JobID(parentJobID),
+		TenantID: "8lPYEAHqlujzxGxkZIIJJU7mygd", JobID: pgjobdb.JobID(parentJobID),
 		WorkerID: "submitter", JobType: "parent-task",
 		WaitFor: []pgjobdb.JobID{pgjobdb.JobID(childJobID1), pgjobdb.JobID(childJobID2)},
 	})
@@ -67,7 +67,7 @@ func TestWaitForDeserialization(t *testing.T) {
 
 	// Lists and detail reads must both deserialize the stored prerequisite IDs.
 	resp, err := engine.ListJobs(ctx, jobdb.ListJobsRequest{
-		TenantIds: []string{"tenant-1"},
+		TenantIds: []string{"8lPYEAHqlujzxGxkZIIJJU7mygd"},
 	})
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)

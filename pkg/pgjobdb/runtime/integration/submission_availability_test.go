@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,7 +48,7 @@ func newAvailabilityFixture(t *testing.T, dsn string) *availabilityFixture {
 	require.NoError(t, err)
 	f.reopen()
 	t.Cleanup(func() { f.server.Close(); require.NoError(t, f.backend.Close(f.ctx)); require.NoError(t, f.db.Close()) })
-	_, err = f.backend.CreateCell(f.ctx, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
+	_, err = f.backend.CreateCell(f.ctx, jobdb.CreateCellRequest{TenantID: "c2", Name: "test", Repo: "example.test/test"})
 	require.NoError(t, err)
 	return f
 }
@@ -74,7 +75,7 @@ func (f *availabilityFixture) reopen() {
 }
 
 func availabilityRequest(id string, at *time.Time) jobdb.SubmitJobRequest {
-	return jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", CellRepo: "example.test/test", JobID: id, JobType: "child", Data: jobdb.NewTaskDataOrPanic(nil), AvailableAt: at}}
+	return jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", CellRepo: "example.test/test", JobID: id, JobType: "child", Data: jobdb.NewTaskDataOrPanic(nil), AvailableAt: at}}
 }
 func effectiveAvailability(at time.Time) time.Time {
 	v := at.UTC().Truncate(time.Microsecond)
@@ -157,7 +158,7 @@ func (f *availabilityFixture) submitter(route string) func(context.Context, jobd
 			require.ErrorIs(t, err, jobdb.ErrLeasePermissionDenied)
 			probe, err := f.backend.SubmitJob(f.ctx, availabilityRequest("prerequisite-read-probe", nil))
 			require.NoError(t, err)
-			read, err := http.NewRequest("GET", f.server.URL+"/v1/tenants/tenant/jobs/"+probe.JobKey.JobId, nil)
+			read, err := http.NewRequest("GET", f.server.URL+"/v1/tenants/c2/jobs/"+probe.JobKey.JobId, nil)
 			require.NoError(t, err)
 			read.Header.Set("X-JobDB-Lease-Token", token)
 			response, err := f.server.Client().Do(read)
@@ -187,11 +188,11 @@ func (f *availabilityFixture) noPublication(id string) {
 	f.t.Helper()
 	for _, table := range []string{"jobs", "job_facts", "dependency_waits"} {
 		var n int
-		require.NoError(f.t, f.db.QueryRowContext(f.ctx, `SELECT count(*) FROM pgjobdb.`+table+` WHERE tenant_id='tenant' AND job_id=$1`, id).Scan(&n))
+		require.NoError(f.t, f.db.QueryRowContext(f.ctx, `SELECT count(*) FROM pgjobdb.`+table+` WHERE tenant_id='c2' AND job_id=$1`, id).Scan(&n))
 		require.Zero(f.t, n, table)
 	}
 	var n int
-	require.NoError(f.t, f.db.QueryRowContext(f.ctx, `SELECT count(*) FROM pgjobdb.job_preparations WHERE tenant_id='tenant' AND job_id=$1 AND (published OR receipt IS NOT NULL)`, id).Scan(&n))
+	require.NoError(f.t, f.db.QueryRowContext(f.ctx, `SELECT count(*) FROM pgjobdb.job_preparations WHERE tenant_id='c2' AND job_id=$1 AND (published OR receipt IS NOT NULL)`, id).Scan(&n))
 	require.Zero(f.t, n)
 }
 
@@ -227,7 +228,7 @@ func TestSubmissionAvailabilityPublicationRoutes(t *testing.T) {
 					require.Contains(t, descriptor, "2300-01-01T00:00:00.123456789Z")
 				}
 				if strings.HasPrefix(route, "selected-") {
-					require.NoError(t, pgjobdb.CancelJob(f.ctx, f.db, pgjobdb.CancelJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID(h.JobKey.JobId), WorkerID: "fixture-drain"}))
+					require.NoError(t, pgjobdb.CancelJob(f.ctx, f.db, pgjobdb.CancelJobRequest{TenantID: "c2", JobID: pgjobdb.JobID(h.JobKey.JobId), WorkerID: "fixture-drain"}))
 				}
 			}
 			if strings.HasPrefix(route, "http-") {
@@ -237,7 +238,7 @@ func TestSubmissionAvailabilityPublicationRoutes(t *testing.T) {
 				if route == "http-post" {
 					verb = "POST"
 				}
-				require.Contains(t, strings.Join(f.methods, "\n"), verb+" /v1/tenants/tenant/jobs")
+				require.Contains(t, strings.Join(f.methods, "\n"), verb+" /v1/tenants/c2/jobs")
 			}
 		})
 	}
@@ -248,7 +249,7 @@ func (f *availabilityFixture) assertReads(key jobdb.JobKey, want time.Time) {
 	t.Helper()
 	native, err := pgjobdb.GetJob(f.ctx, f.db, pgjobdb.TenantID(key.TenantId), pgjobdb.JobID(key.JobId))
 	require.NoError(t, err)
-	full, err := pgjobdb.ListJobs(f.ctx, f.db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, JobKeys: []pgjobdb.JobKey{{TenantID: "tenant", JobID: pgjobdb.JobID(key.JobId)}}})
+	full, err := pgjobdb.ListJobs(f.ctx, f.db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, JobKeys: []pgjobdb.JobKey{{TenantID: "c2", JobID: pgjobdb.JobID(key.JobId)}}})
 	require.NoError(t, err)
 	require.Len(t, full.Jobs, 1)
 	for _, rt := range []jobdb.ConsumerRuntime{f.backend, f.client} {
@@ -258,7 +259,7 @@ func (f *availabilityFixture) assertReads(key jobdb.JobKey, want time.Time) {
 			require.NoError(t, err)
 			detailAt = detail.Job.AvailableAt
 		}
-		page, err := rt.ListJobs(f.ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, JobKeys: []jobdb.JobKey{key}})
+		page, err := rt.ListJobs(f.ctx, jobdb.ListJobsRequest{TenantIds: []string{"c2"}, JobKeys: []jobdb.JobKey{key}})
 		require.NoError(t, err)
 		require.Len(t, page.Jobs, 1)
 		for _, v := range []time.Time{native.AvailableAt, full.Jobs[0].AvailableAt, detailAt, page.Jobs[0].AvailableAt} {
@@ -283,17 +284,17 @@ func (f *availabilityFixture) descriptor(key jobdb.JobKey) string {
 // Native scheduler callers normally own history separately. Stage a real first
 // chapter for workflow settlement tests, then publish with the typed native API.
 func (f *availabilityFixture) stageNative(ctx context.Context, req jobdb.SubmitJobRequest, native *pgjobdb.SubmitJobRequest) {
-	chapters, err := chapterpostgres.NewSQLDB(ctx, f.db, chapterpostgres.Config{BlobStoreURI: f.cfg.BlobStoreURI})
+	chapters, err := chapterpostgres.NewSQLDB(ctx, f.db, chapterpostgres.Config{Projects: projectfixture.Control(f.db), BlobStoreURI: f.cfg.BlobStoreURI})
 	require.NoError(f.t, err)
 	defer chapters.Close(ctx)
-	schemas, err := schemapostgres.NewSQLDB(ctx, f.db)
+	schemas, err := schemapostgres.NewSQLDB(ctx, f.db, projectfixture.Control(f.db))
 	require.NoError(f.t, err)
 	var staged runtimecore.CreateJobRequest
 	scheduler := &selectedFaultScheduler{Scheduler: runtimeadapter.Scheduler{DB: f.db}, before: func(_ context.Context, r runtimecore.CreateJobRequest) error {
 		staged = r
 		return jobdb.ErrExecutionLeaseLost
 	}}
-	core, err := runtimecore.NewRuntime(runtimecore.Config{Scheduler: scheduler, Chapters: chapters, Schemas: schemas, Configurations: newConfigurationStore(f.t, ctx, f.db)})
+	core, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(f.db), Scheduler: scheduler, Chapters: chapters, Schemas: schemas, Configurations: newConfigurationStore(f.t, ctx, f.db)})
 	require.NoError(f.t, err)
 	_, err = core.SubmitJob(ctx, req)
 	require.ErrorIs(f.t, err, jobdb.ErrExecutionLeaseLost)

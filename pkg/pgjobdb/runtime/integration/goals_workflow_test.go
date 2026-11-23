@@ -62,7 +62,7 @@ func TestExecutionGoalWaitRecoveryAndReplay(t *testing.T) {
 				}
 				require.Equal(t, wf.JobRunSuspended, run().Status)
 				require.NoError(t, rt.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: first}))
-				replacementHandle, err := rt.SubmitJob(runtimetest.PrimaryGoalContext(ctx), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", CellRepo: "example.test/test", JobID: "recovery-producer", JobType: producer.Name(), GoalID: info.GoalID, Data: jobdb.NewTaskDataOrPanic(nil)}})
+				replacementHandle, err := rt.SubmitJob(runtimetest.PrimaryGoalContext(ctx), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", CellRepo: "example.test/test", JobID: "recovery-producer", JobType: producer.Name(), GoalID: info.GoalID, Data: jobdb.NewTaskDataOrPanic(nil)}})
 				replacement := replacementHandle.JobKey
 				require.NoError(t, err)
 				out, err := runGoalWorkflow(t, rt, replacement, producer)
@@ -87,16 +87,16 @@ func TestExecutionGoalFailureAdmissionAndReplay(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/submission=%v", backend, submission), func(t *testing.T) {
 				ctx := celltest.Context(context.Background())
 				rt := configurationTransport(t, conformanceRuntimeFactory(t)(t), backend)
-				a, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "producer", Data: jobdb.NewTaskDataOrPanic(nil)}})
+				a, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobType: "producer", Data: jobdb.NewTaskDataOrPanic(nil)}})
 				require.NoError(t, err)
-				goal := jobdb.GoalKey{TenantId: "tenant", GoalID: a.GoalID}
+				goal := jobdb.GoalKey{TenantId: "c2", GoalID: a.GoalID}
 				var calls atomic.Int32
 				consumer := wf.ExecutionWorker{JobType: "consumer", Execute: func(c wf.ExecutionContext, in jobdb.JobData) (jobdb.JobData, error) {
 					calls.Add(1)
 					_, err := c.AwaitGoals(goal.GoalID)
 					return nil, err
 				}}
-				request := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "consumer", Data: jobdb.NewTaskDataOrPanic(nil), RunPolicy: jobdb.RunPolicy{Retry: jobdb.RetryPolicy{MaximumAttempts: 3}}}}
+				request := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobType: "consumer", Data: jobdb.NewTaskDataOrPanic(nil), RunPolicy: jobdb.RunPolicy{Retry: jobdb.RetryPolicy{MaximumAttempts: 3}}}}
 				if submission {
 					request.Job.Dependencies = []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: goal.GoalID}, Condition: jobdb.JobPrereqSuccess}}
 				}
@@ -124,7 +124,7 @@ func TestExecutionGoalFailureAdmissionAndReplay(t *testing.T) {
 				require.NoError(t, err)
 				_, err = job.Data.GetData()
 				require.ErrorIs(t, err, jobdb.ErrGoalFailed)
-				own, err := rt.GetGoal(ctx, jobdb.GoalKey{TenantId: "tenant", GoalID: h.GoalID})
+				own, err := rt.GetGoal(ctx, jobdb.GoalKey{TenantId: "c2", GoalID: h.GoalID})
 				require.NoError(t, err)
 				require.Equal(t, jobdb.GoalOpen, own.State)
 			})
@@ -156,11 +156,11 @@ func TestExecutionRestartGoalAdmission(t *testing.T) {
 				}
 			}
 			require.NotEmpty(t, target)
-			upstream, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "upstream", Data: jobdb.NewTaskDataOrPanic(nil)}})
+			upstream, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobType: "upstream", Data: jobdb.NewTaskDataOrPanic(nil)}})
 			require.NoError(t, err)
 			restart, err := rt.SubmitRestartJob(ctx, jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{Cell: "test", PriorJobKey: source, ExecutionRestart: &jobdb.ExecutionRestart{ScopeID: target}, Dependencies: []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: upstream.GoalID}, Condition: jobdb.JobPrereqSuccess}}}})
 			require.NoError(t, err)
-			_, err = rt.FailGoal(ctx, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "tenant", GoalID: upstream.GoalID}, Message: "new dependency failed"})
+			_, err = rt.FailGoal(ctx, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "c2", GoalID: upstream.GoalID}, Message: "new dependency failed"})
 			require.NoError(t, err)
 			out, err = runGoalWorkflow(t, rt, restart.JobKey, worker, task)
 			require.NoError(t, err)
@@ -182,7 +182,7 @@ func runGoalWorkflow(t *testing.T, rt jobdb.ConsumerRuntime, key jobdb.JobKey, w
 }
 func replayGoalWorkflow(t *testing.T, rt jobdb.ConsumerRuntime, key jobdb.JobKey, worker wf.ExecutionWorker, tasks ...wf.TaskWorker) (jobdb.JobData, error) {
 	t.Helper()
-	builder := wf.NewEngineBuilder().WithRuntime(rt).WithWorkerTenantId("tenant").PlusWorkers(worker, tasks...)
+	builder := wf.NewEngineBuilder().WithRuntime(rt).WithWorkerTenantId("c2").PlusWorkers(worker, tasks...)
 	engine, err := builder.BuildEngine()
 	if err != nil {
 		return nil, err

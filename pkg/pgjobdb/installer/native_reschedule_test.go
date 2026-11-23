@@ -15,13 +15,13 @@ func TestNativeRescheduleTypedState(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, id := range []pgjobdb.JobID{"job", "blocker"} {
 			if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-				TenantID: "tenant", JobID: id, WorkerID: "submitter", JobType: "collect",
+				TenantID: "c2", JobID: id, WorkerID: "submitter", JobType: "collect",
 			}); err != nil {
 				t.Fatalf("submit %s: %v", id, err)
 			}
 		}
 		selector := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}
-		lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job", "worker",
+		lease, err := pgjobdb.GetJobLease(ctx, db, "c2", "job", "worker",
 			selector, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || lease == nil {
 			t.Fatalf("lease job = %+v, %v", lease, err)
@@ -52,7 +52,7 @@ func TestNativeRescheduleTypedState(t *testing.T) {
 		if err := db.QueryRowContext(ctx, `SELECT work_kind, task_type,
 			task_input_ordinal, task_output_ordinal, alternate_job_type,
 			alternate_after_seconds, (SELECT client_payload::text FROM pgjobdb.job_client_state c WHERE c.tenant_id=jobs.tenant_id AND c.job_id=jobs.job_id) FROM pgjobdb.jobs
-			WHERE tenant_id = 'tenant' AND job_id = 'job'`).Scan(
+			WHERE tenant_id = 'c2' AND job_id = 'job'`).Scan(
 			&workKind, &taskType, &input, &output, &alternate,
 			&alternateAfter, &payload,
 		); err != nil {
@@ -64,7 +64,7 @@ func TestNativeRescheduleTypedState(t *testing.T) {
 			t.Fatalf("task route = %q %q %d %d %q %d %q",
 				workKind, taskType, input, output, alternate, alternateAfter, payload)
 		}
-		taskLease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job",
+		taskLease, err := pgjobdb.GetJobLease(ctx, db, "c2", "job",
 			"task-worker", pgjobdb.WorkSelector{Tasks: []pgjobdb.TaskSelector{
 				{JobType: "collect", TaskType: "download"},
 			}}, pgjobdb.GetJobLeaseOptions{})
@@ -82,44 +82,44 @@ func TestNativeRescheduleTypedState(t *testing.T) {
 		}
 		var clearedAlt sql.NullString
 		if err := db.QueryRowContext(ctx, `SELECT alternate_job_type
-			FROM pgjobdb.jobs WHERE tenant_id = 'tenant' AND job_id = 'job'`).Scan(
+			FROM pgjobdb.jobs WHERE tenant_id = 'c2' AND job_id = 'job'`).Scan(
 			&clearedAlt,
 		); err != nil || clearedAlt.Valid {
 			t.Fatalf("alternate route not cleared: %+v, %v", clearedAlt, err)
 		}
-		if blocked, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job",
+		if blocked, err := pgjobdb.GetJobLease(ctx, db, "c2", "job",
 			"worker", selector, pgjobdb.GetJobLeaseOptions{}); err != nil || blocked != nil {
 			t.Fatalf("blocked job leased: %+v, %v", blocked, err)
 		}
-		if err := pgjobdb.CompleteUnheldJob(ctx, db, "tenant", "blocker",
+		if err := pgjobdb.CompleteUnheldJob(ctx, db, "c2", "blocker",
 			"worker", pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}); err != nil {
 			t.Fatalf("complete blocker: %v", err)
 		}
-		if blocked, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job",
+		if blocked, err := pgjobdb.GetJobLease(ctx, db, "c2", "job",
 			"worker", selector, pgjobdb.GetJobLeaseOptions{}); err != nil || blocked != nil {
 			t.Fatalf("time blocked job leased: %+v, %v", blocked, err)
 		}
 		if _, err := db.ExecContext(ctx, `UPDATE pgjobdb.jobs
 			SET available_at = clock_timestamp() - interval '1 second'
-			WHERE tenant_id = 'tenant' AND job_id = 'job'`); err != nil {
+			WHERE tenant_id = 'c2' AND job_id = 'job'`); err != nil {
 			t.Fatalf("release time blocker: %v", err)
 		}
-		ready, err := pgjobdb.GetJobLease(ctx, db, "tenant", "job",
+		ready, err := pgjobdb.GetJobLease(ctx, db, "c2", "job",
 			"worker", selector, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || ready == nil || ready.WorkKind != pgjobdb.WorkKindJob || ready.Task != nil {
 			t.Fatalf("ready job lease = %+v, %v", ready, err)
 		}
 		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-			TenantID: "tenant", JobID: "unheld", WorkerID: "submitter", JobType: "collect",
+			TenantID: "c2", JobID: "unheld", WorkerID: "submitter", JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit unheld job: %v", err)
 		}
 		taskRoute.ClientPayloadUpdate = nil
-		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "unheld",
+		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "unheld",
 			"worker", taskRoute); err != nil {
 			t.Fatalf("reschedule unheld job: %v", err)
 		}
-		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "tenant", "unheld",
+		if err := pgjobdb.RescheduleUnheldJob(ctx, db, "c2", "unheld",
 			"worker", pgjobdb.RescheduleRequest{
 				RouteJobType: "collect", WorkKind: pgjobdb.WorkKindJob,
 				WaitFor: []pgjobdb.JobID{"unheld"},

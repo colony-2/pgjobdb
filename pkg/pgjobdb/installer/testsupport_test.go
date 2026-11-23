@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/projects"
 	"math/rand"
 	"path/filepath"
 	"testing"
@@ -26,6 +28,12 @@ func runDatabaseTest(t *testing.T, fn func(context.Context, *sql.DB)) {
 		}
 		if err := installer.Verify(ctx); err != nil {
 			t.Fatalf("verify installer: %v", err)
+		}
+		if err := projects.PrepareShared(projectfixture.Context(ctx), db); err != nil {
+			t.Fatal(err)
+		}
+		if err := projectfixture.Adopt(ctx, db); err != nil {
+			t.Fatal(err)
 		}
 		fn(ctx, db)
 	})

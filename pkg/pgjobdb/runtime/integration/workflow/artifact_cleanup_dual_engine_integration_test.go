@@ -37,7 +37,7 @@ func TestArtifactCleanupAcrossEngines(t *testing.T) {
 		}
 		taskWorker := &artifactCleanupTask{dir: tempDir, fileNames: fileNames}
 		engine, cancel := buildToyEngine(t, func(b *workflow.EngineBuilder) {
-			b.WithWorkerTenantId("test-tenant").PlusWorkers(jobWorker, taskWorker)
+			b.WithWorkerTenantId("AR56al1yl0yzJyAEqN1IteLC5Vi").PlusWorkers(jobWorker, taskWorker)
 		})
 		defer cancel()
 		runArtifactCleanupScenario(t, ctx, engine, filePaths)
@@ -68,7 +68,7 @@ func TestArtifactCleanupAcrossEngines(t *testing.T) {
 		}
 		taskWorker := &artifactCleanupTask{dir: tempDir, fileNames: fileNames}
 		engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
-			b.WithWorkerTenantId("test-tenant").PlusWorkers(jobWorker, taskWorker)
+			b.WithWorkerTenantId("AR56al1yl0yzJyAEqN1IteLC5Vi").PlusWorkers(jobWorker, taskWorker)
 		})
 
 		go engine.Run(ctx)
@@ -195,7 +195,7 @@ func runArtifactCleanupScenario(t *testing.T, ctx context.Context, engine workfl
 	t.Helper()
 
 	jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-		TenantId: "test-tenant",
+		TenantId: "AR56al1yl0yzJyAEqN1IteLC5Vi",
 		JobType:  artifactCleanupJobName,
 		Data:     jobdb.NewTaskDataOrPanic(map[string]string{"hello": "world"}),
 	})

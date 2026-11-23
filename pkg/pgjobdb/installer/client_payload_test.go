@@ -40,11 +40,11 @@ func TestNativeClientJSONMatchesGo(t *testing.T) {
 		if _, err := db.ExecContext(ctx, `SELECT pgjobdb._client_update_value($1::json,'patch','{}'::json)`, string(large)); err == nil {
 			t.Fatal("SQL accepted oversized escaped patch result")
 		}
-		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "precise", JobType: "collect", WorkerID: "submitter", ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"huge":1e999999,"n":9007199254740993}`)}})
+		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: "precise", JobType: "collect", WorkerID: "submitter", ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"huge":1e999999,"n":9007199254740993}`)}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "precise", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}, pgjobdb.GetJobLeaseOptions{})
+		lease, err := pgjobdb.GetJobLease(ctx, db, "c2", "precise", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || lease == nil {
 			t.Fatalf("lease: %v", err)
 		}
@@ -56,7 +56,7 @@ func TestNativeClientJSONMatchesGo(t *testing.T) {
 		if err := lease.Reschedule(ctx, db, pgjobdb.RescheduleRequest{RouteJobType: "collect", WorkKind: pgjobdb.WorkKindJob, ClientPayloadUpdate: patch}); err != nil {
 			t.Fatal(err)
 		}
-		detail, err := pgjobdb.GetJob(ctx, db, "tenant", "precise")
+		detail, err := pgjobdb.GetJob(ctx, db, "c2", "precise")
 		if err != nil {
 			t.Fatal(err)
 		}

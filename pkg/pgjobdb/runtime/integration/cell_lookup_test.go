@@ -12,7 +12,7 @@ import (
 
 func TestCellLookupStorageAuthority(t *testing.T) {
 	runDatabaseTest(t, func(admin context.Context, db *sql.DB) {
-		const tenant = "lookup"
+		const tenant = "MYf3iIVoU1sG8DP9dPMk9r88ySq"
 		_, err := pgjobdb.CreateCell(admin, db, jobdb.CreateCellRequest{TenantID: tenant, Name: "A", Repo: "example.test/a"})
 		require.NoError(t, err)
 		b, err := pgjobdb.CreateCell(admin, db, jobdb.CreateCellRequest{TenantID: tenant, Name: "B", Repo: "example.test/b"})
@@ -39,7 +39,7 @@ func TestCellLookupStorageAuthority(t *testing.T) {
 			key           jobdb.JobKey
 			lease, worker string
 		}{
-			{jobdb.JobKey{TenantId: "other", JobId: key.JobId}, lease.LeaseID, "worker"},
+			{jobdb.JobKey{TenantId: "TqtggXyN1eGriOdDqH0R8ApQbbb", JobId: key.JobId}, lease.LeaseID, "worker"},
 			{jobdb.JobKey{TenantId: tenant, JobId: "other"}, lease.LeaseID, "worker"},
 			{key, "forged", "worker"},
 			{key, lease.LeaseID, "forged"},

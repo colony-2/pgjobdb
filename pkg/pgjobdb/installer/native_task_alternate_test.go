@@ -3,17 +3,23 @@ package installer_test
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
+	"github.com/segmentio/ksuid"
 	"github.com/stretchr/testify/require"
 )
 
 func alternateWaitingTask(t *testing.T, ctx context.Context, db *sql.DB, id string, after time.Duration) pgjobdb.ClaimTaskRequest {
 	t.Helper()
-	tenant := pgjobdb.TenantID(id)
-	_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: tenant, JobID: "job", WorkerID: "submitter", JobType: "collect"})
+	creation, err := projectfixture.Control(db).CreateProject(projectfixture.Context(ctx), jobdb.CreateProjectRequest{Name: "alternate-" + strings.ToLower(ksuid.New().String()), RequestID: ksuid.New().String()})
+	require.NoError(t, err)
+	tenant := pgjobdb.TenantID(creation.Project.ID)
+	_, err = submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: tenant, JobID: "job", WorkerID: "submitter", JobType: "collect"})
 	require.NoError(t, err)
 	task := pgjobdb.TaskWork{TaskType: "external", ResumeJobType: "collect", InputOrdinal: 1, OutputOrdinal: 2, InputHash: "hash"}
 	require.NoError(t, pgjobdb.RescheduleUnheldJob(ctx, db, tenant, "job", "submitter", pgjobdb.RescheduleRequest{RouteJobType: "collect", WorkKind: pgjobdb.WorkKindTask, Task: &task, Alternate: &pgjobdb.AlternateRoute{JobType: "collect", TaskType: "fallback", After: after}}))

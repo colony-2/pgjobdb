@@ -72,7 +72,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 	// either store. Include both pending waits and archived outcomes on each page.
 	for i := 0; i < 240; i++ {
 		id := pgjobdb.JobID(fmt.Sprintf("consumer-%03d", i))
-		req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: string(id), JobType: "consumer", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(nil), ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"secretDetail":true}`)}}}
+		req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: string(id), JobType: "consumer", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(nil), ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"secretDetail":true}`)}}}
 		if i%3 != 0 {
 			req.Job.Dependencies = []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: producer.GoalID}, Condition: jobdb.JobPrereqSuccess}}
 		}
@@ -82,11 +82,11 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 		_, err := backend.SubmitJob(runtimetest.PrimaryGoalContext(ctx), req)
 		require.NoError(t, err)
 		if i%3 == 0 {
-			require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "tenant", id, "test", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp, Detail: "full completion detail"}))
+			require.NoError(t, pgjobdb.CompleteUnheldJob(ctx, db, "c2", id, "test", pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp, Detail: "full completion detail"}))
 		}
 	}
 	d := &listQueryRecorder{DB: db}
-	_, err = pgjobdb.ListJobSummaries(ctx, d, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, JobTypes: []pgjobdb.JobType{"consumer"}, PageSize: 100})
+	_, err = pgjobdb.ListJobSummaries(ctx, d, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, JobTypes: []pgjobdb.JobType{"consumer"}, PageSize: 100})
 	require.NoError(t, err)
 	recordCompactListPlan(t, db, d, "mixed-active-archive")
 	forbidListDiagnostics(t, db)
@@ -95,7 +95,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 			rt := configurationTransport(t, backend, transport)
 			for _, size := range []int{1, 100, 200} {
 				t.Run(fmt.Sprint(size), func(t *testing.T) {
-					req := jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, JobTypes: []string{"consumer"}, PageSize: size}
+					req := jobdb.ListJobsRequest{TenantIds: []string{"c2"}, JobTypes: []string{"consumer"}, PageSize: size}
 					total, pending, archived := 0, 0, 0
 					for {
 						counted.queries.Store(0)
@@ -132,7 +132,7 @@ func TestCompactListRuntimeQueryCounts(t *testing.T) {
 				})
 			}
 			counted.queries.Store(0)
-			page, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, GoalIDs: []string{secondary.GoalID}, JobTypes: []string{"consumer"}})
+			page, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"c2"}, GoalIDs: []string{secondary.GoalID}, JobTypes: []string{"consumer"}})
 			require.NoError(t, err)
 			require.Len(t, page.Jobs, 4)
 			require.EqualValues(t, 2, counted.queries.Load())

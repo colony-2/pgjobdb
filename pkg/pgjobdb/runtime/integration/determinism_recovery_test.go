@@ -39,7 +39,7 @@ func TestPostgresLiveDeterminismMismatchPreservesJob(t *testing.T) {
 			}
 			engine, err := wf.NewEngineBuilder().WithRuntime(celltest.WithCells(rt)).BuildEngine()
 			require.NoError(t, err)
-			handle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: worker(1).Name(), Data: jobdb.NewTaskDataOrPanic("input")})
+			handle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobType: worker(1).Name(), Data: jobdb.NewTaskDataOrPanic("input")})
 			require.NoError(t, err)
 			require.NotEmpty(t, handle.GoalID)
 			key := handle.JobKey

@@ -38,7 +38,7 @@ func TestRetainedGoalConcurrentInitialHistory(t *testing.T) {
 		}
 		a, aPID := open()
 		b, bPID := open()
-		source, err := celltest.Submit(a, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: "origin", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
+		source, err := celltest.Submit(a, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", JobID: "origin", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 		require.NoError(t, err)
 		require.NoError(t, a.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: source.JobKey}))
 		_, err = db.ExecContext(ctx, `CREATE FUNCTION pgjobdb.test_initial_chapter_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -54,7 +54,7 @@ func TestRetainedGoalConcurrentInitialHistory(t *testing.T) {
 		defer barrier.Rollback()
 		_, err = barrier.ExecContext(ctx, `SELECT pg_advisory_xact_lock(68317491)`)
 		require.NoError(t, err)
-		request := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: "staged", GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic("same input")}}
+		request := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", JobID: "staged", GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic("same input")}}
 		type outcome struct {
 			handle jobdb.JobHandle
 			err    error
@@ -102,7 +102,7 @@ func TestRetainedGoalConcurrentInitialHistory(t *testing.T) {
 		chapters, err := a.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: x.handle.JobKey})
 		require.NoError(t, err)
 		require.Len(t, chapters, 1)
-		listing, err := a.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, GoalIDs: []string{source.GoalID}})
+		listing, err := a.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"c2"}, GoalIDs: []string{source.GoalID}})
 		require.NoError(t, err)
 		require.Len(t, listing.Jobs, 2, "origin plus one accepted selected identity")
 	})

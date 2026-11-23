@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"testing"
 	"time"
 
@@ -19,18 +20,18 @@ import (
 
 func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{
+		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: projectfixture.Control(db),
 			BlobStoreURI: "blobfs://" + t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = chapters.Close(ctx) }()
-		schemas, err := schemapostgres.NewSQLDB(ctx, db)
+		schemas, err := schemapostgres.NewSQLDB(ctx, db, projectfixture.Control(db))
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtime, err := runtimecore.NewRuntime(runtimecore.Config{
+		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(db),
 			Configurations: newConfigurationStore(t, ctx, db),
 			Scheduler:      runtimeadapter.Scheduler{DB: db}, Chapters: chapters,
 			Schemas: schemas,
@@ -43,7 +44,7 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 			t.Fatal(err)
 		}
 		root, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "tenant", JobID: "root", JobType: "collect", Data: data, RunPolicy: jobdb.RunPolicy{Retry: jobdb.RetryPolicy{MaximumAttempts: 3}},
+			TenantId: "c2", JobID: "root", JobType: "collect", Data: data, RunPolicy: jobdb.RunPolicy{Retry: jobdb.RetryPolicy{MaximumAttempts: 3}},
 		}})
 		if err != nil {
 			t.Fatal(err)
@@ -59,12 +60,12 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 		}
 
 		child, err := lease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "tenant", JobID: "child", JobType: "collect", Data: data,
+			TenantId: "c2", JobID: "child", JobType: "collect", Data: data,
 		}})
 		if err != nil || child.JobKey.JobId != "child" {
 			t.Fatalf("submit child = %+v, %v", child, err)
 		}
-		childRow, err := pgjobdb.GetJob(ctx, db, "tenant", "child")
+		childRow, err := pgjobdb.GetJob(ctx, db, "c2", "child")
 		if err != nil || childRow.ParentJobID != "root" {
 			t.Fatalf("child parent = %+v, %v", childRow, err)
 		}
@@ -112,12 +113,12 @@ func TestNativeRuntimeCoreLeaseRoutesAndCompletes(t *testing.T) {
 			t.Fatalf("completed output = %s, %v", output, err)
 		}
 		if _, err := jobLease.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "tenant", JobID: "late", JobType: "collect", Data: data,
+			TenantId: "c2", JobID: "late", JobType: "collect", Data: data,
 		}}); !errors.Is(err, jobdb.ErrExecutionLeaseLost) {
 			t.Fatalf("stale child submission = %v", err)
 		}
 		polled, err := runtime.PollWork(ctx, jobdb.PollWorkRequest{
-			TenantId: "tenant", WorkerID: "worker", Routes: []jobdb.Route{{JobType: "collect"}}, Limit: 2,
+			TenantId: "c2", WorkerID: "worker", Routes: []jobdb.Route{{JobType: "collect"}}, Limit: 2,
 		})
 		if err != nil || len(polled) != 1 || polled[0].Job().JobKey != child.JobKey {
 			t.Fatalf("poll remaining child work = %+v, %v", polled, err)

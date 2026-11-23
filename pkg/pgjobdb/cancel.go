@@ -19,6 +19,9 @@ func CancelJob(ctx context.Context, db DB, req CancelJobRequest) error {
 	if req.TenantID == "" || req.JobID == "" || req.WorkerID == "" {
 		return fmt.Errorf("pgjobdb: cancel requires tenant, job, and worker ids")
 	}
+	if err := AdmitProjectWrite(ctx, db, string(req.TenantID)); err != nil {
+		return err
+	}
 	var cancelled bool
 	if err := db.QueryRowContext(ctx, `SELECT pgjobdb.cancel_native_job(
 		$1, $2, $3, $4)`, string(req.TenantID), string(req.JobID),

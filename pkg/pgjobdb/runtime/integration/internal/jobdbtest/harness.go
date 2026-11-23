@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -332,22 +333,22 @@ func waitForStatus(t *testing.T, ctx context.Context, check func(context.Context
 
 func newToyHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
-	runtime := toyruntime.New()
+	runtime := toyruntime.New(toyruntime.WithProjects(celltest.UnrestrictedProjects{}))
 	return buildHarness(t, "toy", newNamespacedStorage(runtime, ""), true, func() {}, workers...)
 }
 
 func newDirectHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
-	embedded, err := directruntime.StartEmbeddedRuntime(celltest.Context(context.Background()))
+	embedded, err := directruntime.StartEmbeddedRuntime(celltest.Context(context.Background()), projectfixture.Prepare)
 	if err != nil {
 		t.Fatalf("start embedded direct runtime: %v", err)
 	}
-	return buildHarness(t, "direct", NewNamespacedBackend(embedded.Runtime, ""), true, embedded.Shutdown, workers...)
+	return buildHarness(t, "direct", NewProjectBackend(embedded.Runtime, ""), true, embedded.Shutdown, workers...)
 }
 
 func newSQLiteHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
-	embedded, err := sqliteruntime.StartEmbeddedRuntime(celltest.Context(context.Background()))
+	embedded, err := sqliteruntime.StartEmbeddedRuntime(celltest.Context(context.Background()), sqliteruntime.WithProjects(celltest.UnrestrictedProjects{}))
 	if err != nil {
 		t.Fatalf("start embedded sqlite runtime: %v", err)
 	}
@@ -356,7 +357,7 @@ func newSQLiteHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHa
 
 func newRemoteToyHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
-	underlying := toyruntime.New()
+	underlying := toyruntime.New(toyruntime.WithProjects(celltest.UnrestrictedProjects{}))
 	server := httptest.NewServer(celltest.Handler(remoteruntime.NewConsumerServer(newNamespacedStorage(underlying, ""))))
 	runtime, err := remoteruntime.New(server.URL, server.Client())
 	if err != nil {
@@ -368,11 +369,11 @@ func newRemoteToyHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntim
 
 func newRemoteDirectHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
-	embedded, err := directruntime.StartEmbeddedRuntime(celltest.Context(context.Background()))
+	embedded, err := directruntime.StartEmbeddedRuntime(celltest.Context(context.Background()), projectfixture.Prepare)
 	if err != nil {
 		t.Fatalf("start embedded direct runtime: %v", err)
 	}
-	server := httptest.NewServer(celltest.Handler(remoteruntime.NewConsumerServer(NewNamespacedBackend(embedded.Runtime, ""))))
+	server := httptest.NewServer(celltest.Handler(remoteruntime.NewConsumerServer(embedded.Runtime)))
 	runtime, err := remoteruntime.New(server.URL, server.Client())
 	if err != nil {
 		server.Close()
@@ -383,12 +384,12 @@ func newRemoteDirectHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRun
 		server.Close()
 		embedded.Shutdown()
 	}
-	return buildHarness(t, "remote-direct", NewNamespacedClient(runtime, ""), true, shutdown, workers...)
+	return buildHarness(t, "remote-direct", NewProjectClient(runtime, embedded.Runtime, ""), true, shutdown, workers...)
 }
 
 func newRemoteSQLiteHarness(t *testing.T, workers ...workflow.WorkSet) *BuiltRuntimeHarness {
 	t.Helper()
-	embedded, err := sqliteruntime.StartEmbeddedRuntime(celltest.Context(context.Background()))
+	embedded, err := sqliteruntime.StartEmbeddedRuntime(celltest.Context(context.Background()), sqliteruntime.WithProjects(celltest.UnrestrictedProjects{}))
 	if err != nil {
 		t.Fatalf("start embedded sqlite runtime: %v", err)
 	}

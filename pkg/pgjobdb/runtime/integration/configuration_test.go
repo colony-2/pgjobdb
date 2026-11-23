@@ -24,21 +24,21 @@ import (
 
 func configurationTransport(t *testing.T, rt *pgruntime.Runtime, transport string) jobdb.ConsumerRuntime {
 	t.Helper()
-	view := jobdbtest.NewNamespacedBackend(rt, "")
+	view := jobdbtest.NewProjectBackend(rt, "")
 	if transport == "embedded" {
 		return view
 	}
-	var handler http.Handler = remote.NewConsumerServer(view)
+	var handler http.Handler = remote.NewConsumerServer(rt)
 	if transport == "http-signed" {
 		var err error
-		handler, err = remote.NewConsumerServerWithOptions(view, remote.ServerOptions{LeaseTokenSigningKey: []byte("consumer-test-key-with-32-or-more-bytes"), LeaseTokenAudience: "pgjobdb-test"})
+		handler, err = remote.NewConsumerServerWithOptions(rt, remote.ServerOptions{LeaseTokenSigningKey: []byte("consumer-test-key-with-32-or-more-bytes"), LeaseTokenAudience: "pgjobdb-test"})
 		require.NoError(t, err)
 	}
 	server := httptest.NewServer(selectionTestHandler(handler))
 	t.Cleanup(server.Close)
 	client, err := remote.New(server.URL, server.Client())
 	require.NoError(t, err)
-	return client
+	return jobdbtest.NewProjectClient(client, rt, "")
 }
 
 func openConfigurationRuntime(t *testing.T, dsn string, cfg pgruntime.Config) *pgruntime.Runtime {
@@ -74,7 +74,7 @@ func TestTenantConfiguration(t *testing.T) {
 				for i := range 12 {
 					go func() {
 						<-start
-						_, err := admins[i%2].SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: fmt.Sprintf("key-%d", i), Value: json.RawMessage(`9007199254740993123456789`)})
+						_, err := admins[i%2].SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "c2", Name: fmt.Sprintf("key-%d", i), Value: json.RawMessage(`9007199254740993123456789`)})
 						results <- err
 					}()
 				}
@@ -82,7 +82,7 @@ func TestTenantConfiguration(t *testing.T) {
 				for range 12 {
 					require.NoError(t, <-results)
 				}
-				snapshot, err := admins[0].GetTenantConfiguration(ctx, "tenant")
+				snapshot, err := admins[0].GetTenantConfiguration(ctx, "c2")
 				require.NoError(t, err)
 				require.Len(t, snapshot.Values, 12)
 				for _, value := range snapshot.Values {
@@ -93,7 +93,7 @@ func TestTenantConfiguration(t *testing.T) {
 				for i := range 2 {
 					go func() {
 						<-start
-						_, err := admins[i].SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "winner", Value: json.RawMessage(fmt.Sprint(i)), ExpectedRevision: &snapshot.Revision})
+						_, err := admins[i].SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "c2", Name: "winner", Value: json.RawMessage(fmt.Sprint(i)), ExpectedRevision: &snapshot.Revision})
 						results <- err
 					}()
 				}
@@ -112,19 +112,19 @@ func TestTenantConfiguration(t *testing.T) {
 				}
 				require.Equal(t, 1, wins)
 				require.Equal(t, 1, conflicts)
-				before, err := admins[0].GetTenantConfiguration(ctx, "tenant")
+				before, err := admins[0].GetTenantConfiguration(ctx, "c2")
 				require.NoError(t, err)
-				_, err = admins[0].SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "removed", Name: "last", Value: json.RawMessage(`null`)})
+				_, err = admins[0].SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "6OEFoOR5M2YPEuYSQ5ly6aRtr2l", Name: "last", Value: json.RawMessage(`null`)})
 				require.NoError(t, err)
-				removedRevision, err := admins[0].RemoveTenantConfigurationValue(ctx, jobdb.RemoveTenantConfigurationValueRequest{TenantID: "removed", Name: "last"})
+				removedRevision, err := admins[0].RemoveTenantConfigurationValue(ctx, jobdb.RemoveTenantConfigurationValueRequest{TenantID: "6OEFoOR5M2YPEuYSQ5ly6aRtr2l", Name: "last"})
 				require.NoError(t, err)
 				require.NoError(t, first.Close(ctx))
 				require.NoError(t, second.Close(ctx))
 				reopened := configurationTransport(t, openConfigurationRuntime(t, dsn, cfg), transport).(jobdb.ConfigurationAdmin)
-				after, err := reopened.GetTenantConfiguration(ctx, "tenant")
+				after, err := reopened.GetTenantConfiguration(ctx, "c2")
 				require.NoError(t, err)
 				require.Equal(t, before, after)
-				removed, err := reopened.GetTenantConfiguration(ctx, "removed")
+				removed, err := reopened.GetTenantConfiguration(ctx, "6OEFoOR5M2YPEuYSQ5ly6aRtr2l")
 				require.NoError(t, err)
 				require.Empty(t, removed.Values)
 				require.Equal(t, removedRevision, removed.Revision)
@@ -133,16 +133,16 @@ func TestTenantConfiguration(t *testing.T) {
 				ctx := celltest.Context(context.Background())
 				backend := openConfigurationRuntime(t, newDSN(t), pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir(), ConfigurationLimits: jobdb.ConfigurationLimits{MaxEntries: 1, MaxValueBytes: 4}})
 				admin := configurationTransport(t, backend, transport).(jobdb.ConfigurationAdmin)
-				revision, err := admin.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "one", Value: json.RawMessage(`true`)})
+				revision, err := admin.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "c2", Name: "one", Value: json.RawMessage(`true`)})
 				require.NoError(t, err)
 				for _, req := range []jobdb.SetTenantConfigurationValueRequest{
-					{TenantID: "tenant", Name: "one", Value: json.RawMessage(`false`)},
-					{TenantID: "tenant", Name: "two", Value: json.RawMessage(`null`)},
+					{TenantID: "c2", Name: "one", Value: json.RawMessage(`false`)},
+					{TenantID: "c2", Name: "two", Value: json.RawMessage(`null`)},
 				} {
 					_, err := admin.SetTenantConfigurationValue(ctx, req)
 					require.ErrorIs(t, err, jobdb.ErrConfigurationTooLarge)
 				}
-				snapshot, err := admin.GetTenantConfiguration(ctx, "tenant")
+				snapshot, err := admin.GetTenantConfiguration(ctx, "c2")
 				require.NoError(t, err)
 				require.Equal(t, revision, snapshot.Revision)
 				require.Equal(t, map[string]json.RawMessage{"one": json.RawMessage(`true`)}, snapshot.Values)
@@ -151,10 +151,10 @@ func TestTenantConfiguration(t *testing.T) {
 				ctx := celltest.Context(context.Background())
 				rt := configurationTransport(t, openConfigurationRuntime(t, newDSN(t), pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()}), transport)
 				admin := rt.(jobdb.ConfigurationAdmin)
-				_, err := admin.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "setting", Value: json.RawMessage(`"initial"`)})
+				_, err := admin.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "c2", Name: "setting", Value: json.RawMessage(`"initial"`)})
 				require.NoError(t, err)
 				job := &configurationReadingJob{admin: admin}
-				handle, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: job.Name(), Data: jobdb.NewTaskDataOrPanic("input")}})
+				handle, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobType: job.Name(), Data: jobdb.NewTaskDataOrPanic("input")}})
 				require.NoError(t, err)
 				run, err := wf.GetJobForRun(ctx, rt, wf.GetJobForRunRequest{JobKey: handle.JobKey, JobWorker: job, WorkerID: "worker", LeaseDuration: time.Minute})
 				require.NoError(t, err)
@@ -181,7 +181,7 @@ func TestTenantConfiguration(t *testing.T) {
 		before, err := pgruntime.NewSQLDB(ctx, db, cfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = before.Close(ctx) })
-		job, err := celltest.Submit(before, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "existing", Data: jobdb.NewTaskDataOrPanic("existing-input")}})
+		job, err := celltest.Submit(before, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobType: "existing", Data: jobdb.NewTaskDataOrPanic("existing-input")}})
 		require.NoError(t, err)
 		require.NoError(t, before.Close(ctx))
 		require.NoError(t, db.PingContext(ctx), "NewSQLDB must not own the pool")
@@ -189,7 +189,7 @@ func TestTenantConfiguration(t *testing.T) {
 		after, err := pgruntime.NewSQLDB(ctx, db, cfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = after.Close(ctx) })
-		_, err = after.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "new", Value: json.RawMessage(`1`)})
+		_, err = after.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "c2", Name: "new", Value: json.RawMessage(`1`)})
 		require.NoError(t, err)
 		_, err = after.GetJob(ctx, job.JobKey)
 		require.NoError(t, err)
@@ -216,7 +216,7 @@ func (w *configurationReadingJob) Run(ctx wf.ExecutionContext, input jobdb.JobDa
 	if err != nil {
 		return nil, err
 	}
-	_, err = w.admin.SetTenantConfigurationValue(celltest.Context(context.Background()), jobdb.SetTenantConfigurationValueRequest{TenantID: "tenant", Name: "setting", Value: json.RawMessage(`"configuration-updated-value"`)})
+	_, err = w.admin.SetTenantConfigurationValue(celltest.Context(context.Background()), jobdb.SetTenantConfigurationValueRequest{TenantID: "c2", Name: "setting", Value: json.RawMessage(`"configuration-updated-value"`)})
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func (w *configurationReadingJob) Run(ctx wf.ExecutionContext, input jobdb.JobDa
 	if first.Revision != second.Revision || string(first.Values["setting"]) != string(second.Values["setting"]) {
 		return nil, fmt.Errorf("configuration snapshot changed within one attempt")
 	}
-	fresh, err := w.admin.GetTenantConfiguration(celltest.Context(context.Background()), "tenant")
+	fresh, err := w.admin.GetTenantConfiguration(celltest.Context(context.Background()), "c2")
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -16,7 +17,7 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	toyruntime "github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
 	"github.com/colony-2/jobdb/pkg/workflow"
-	"github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	directruntime "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime"
 	directtest "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/internal/testsupport"
 )
@@ -31,18 +32,32 @@ func startEmbeddedPostgres(t *testing.T) (string, func()) {
 	return dsn, stop
 }
 
-// installPgjobdb runs the native scheduler installer against the provided DSN.
+// installPgjobdb explicitly prepares an isolated catalog and resource fixture.
 func installPgjobdb(ctx context.Context, dsn string) error {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	inst := installer.Installer{DB: db}
-	if err := inst.Apply(ctx); err != nil {
-		return err
+	return projectfixture.Prepare(ctx, db)
+}
+
+// workflowProjectID explicitly creates a project in the isolated workflow database.
+// Return its immutable physical ID so native SQL assertions use the same JobKey.
+func workflowProjectID(t *testing.T, dsn, fixtureName string) string {
+	t.Helper()
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return inst.Verify(ctx)
+	defer db.Close()
+	digest := sha256.Sum256([]byte(fixtureName))
+	name := fmt.Sprintf("workflow-%x", digest[:16])
+	project, err := projectfixture.Control(db).CreateProject(projectfixture.Context(context.Background()), jobdb.CreateProjectRequest{Name: name, RequestID: name})
+	if err != nil {
+		t.Fatalf("create workflow project %q: %v", fixtureName, err)
+	}
+	return project.Project.ID
 }
 
 type chapterBlobHandle struct {
@@ -203,7 +218,7 @@ func buildDirectEngine(t *testing.T, postgresDSN, blobStoreURI string, configure
 
 func buildToyEngine(t *testing.T, configure func(*workflow.EngineBuilder), opts ...toyruntime.Option) (workflow.Engine, context.CancelFunc) {
 	t.Helper()
-	runtime := toyruntime.New(opts...)
+	runtime := toyruntime.New(append([]toyruntime.Option{toyruntime.WithProjects(celltest.UnrestrictedProjects{})}, opts...)...)
 	builder := workflow.NewEngineBuilder().WithRuntime(celltest.WithCells(runtime))
 	if configure != nil {
 		configure(builder)

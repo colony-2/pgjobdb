@@ -17,7 +17,7 @@ import (
 func TestNativeSchedulerAdapterLeasesTypedWork(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-			TenantID: "tenant", JobID: "job", WorkerID: "submitter", JobType: "collect",
+			TenantID: "c2", JobID: "job", WorkerID: "submitter", JobType: "collect",
 			ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{}`)},
 		})
 		if err != nil {
@@ -26,7 +26,7 @@ func TestNativeSchedulerAdapterLeasesTypedWork(t *testing.T) {
 		adapter := runtimeadapter.Scheduler{DB: db}
 		selector := runtimecore.WorkSelector{JobTypes: []string{"collect"}}
 		leased, err := adapter.AcquireWork(ctx, runtimecore.WorkRequest{
-			TenantId: "tenant", WorkerID: "worker", Selector: selector,
+			TenantId: "c2", WorkerID: "worker", Selector: selector,
 			Limit: 2, LeaseDuration: time.Minute,
 		})
 		if err != nil || len(leased) != 1 || leased[0].WorkKind != runtimecore.WorkKindJob ||

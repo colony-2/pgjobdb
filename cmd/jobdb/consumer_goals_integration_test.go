@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,13 +20,13 @@ import (
 )
 
 func TestPostgresConsumerGoalsCommands(t *testing.T) {
-	embedded, err := pgruntime.StartEmbeddedRuntime(celltest.Context(context.Background()))
+	embedded, err := pgruntime.StartEmbeddedRuntime(celltest.Context(context.Background()), projectfixture.Prepare)
 	require.NoError(t, err)
 	defer embedded.Shutdown()
 	rt := embedded.Runtime
 	ctx := runtimetest.PrimaryGoalContext(context.Background())
 	submit := func(id, goal string, deps ...jobdb.Dependency) jobdb.JobHandle {
-		h, e := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", Cell: "test", CellRepo: "example.test/test", JobID: id, GoalID: goal, JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil), Dependencies: deps}})
+		h, e := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", CellRepo: "example.test/test", JobID: id, GoalID: goal, JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil), Dependencies: deps}})
 		require.NoError(t, e)
 		return h
 	}
@@ -52,7 +53,7 @@ func TestPostgresConsumerGoalsCommands(t *testing.T) {
 				if r.URL.Path == "/v1/capabilities/job-goals" {
 					require.Equal(t, http.MethodGet, r.Method)
 				} else {
-					require.Contains(t, r.URL.Path, "/tenants/tenant/")
+					require.Contains(t, r.URL.Path, "/projects/c2/")
 				}
 				if r.Header.Get("Authorization") != "Bearer consumer-cli-token" {
 					http.Error(w, "denied", http.StatusForbidden)
@@ -64,7 +65,7 @@ func TestPostgresConsumerGoalsCommands(t *testing.T) {
 			run := func(args ...string) string {
 				t.Helper()
 				args = append([]string{"goals"}, args...)
-				args = append(args, "--tenant", "tenant", "--url", server.URL)
+				args = append(args, "--tenant", "c2", "--url", server.URL)
 				out, e := executeRoot(t, args...)
 				require.NoError(t, e, "%v: %s", args, out)
 				return out
@@ -101,43 +102,52 @@ func TestPostgresConsumerGoalsCommands(t *testing.T) {
 			failureMessage := "No acceptable solution — reviewed"
 			require.NoError(t, json.Unmarshal([]byte(run("fail", failedGoal.GoalID, "--message", failureMessage)), &goal))
 			require.Equal(t, failureMessage, goal.Failure.Message)
-			frozen, e := rt.GetGoal(ctx, jobdb.GoalKey{TenantId: "tenant", GoalID: failedGoal.GoalID})
+			frozen, e := rt.GetGoal(ctx, jobdb.GoalKey{TenantId: "c2", GoalID: failedGoal.GoalID})
 			require.NoError(t, e)
 			require.Equal(t, goal.Failure, frozen.Failure)
 			before := len(routes)
-			_, e = executeRoot(t, "goals", "fail", a.GoalID, "--message", " ", "--tenant", "tenant", "--url", server.URL)
+			_, e = executeRoot(t, "goals", "fail", a.GoalID, "--message", " ", "--tenant", "c2", "--url", server.URL)
 			require.Error(t, e)
 			require.Len(t, routes, before, "invalid message must fail locally")
 			t.Setenv("JOBDB_BEARER_TOKEN", "denied")
-			_, e = executeRoot(t, "goals", "get", a.GoalID, "--tenant", "tenant", "--url", server.URL)
+			_, e = executeRoot(t, "goals", "get", a.GoalID, "--tenant", "c2", "--url", server.URL)
 			require.Error(t, e)
-			_, e = executeRoot(t, "goals", "fail", failedGoal.GoalID, "--message", "denied mutation", "--tenant", "tenant", "--url", server.URL)
+			_, e = executeRoot(t, "goals", "fail", failedGoal.GoalID, "--message", "denied mutation", "--tenant", "c2", "--url", server.URL)
 			require.Error(t, e)
-			unchanged, e := rt.GetGoal(ctx, jobdb.GoalKey{TenantId: "tenant", GoalID: failedGoal.GoalID})
+			unchanged, e := rt.GetGoal(ctx, jobdb.GoalKey{TenantId: "c2", GoalID: failedGoal.GoalID})
 			require.NoError(t, e)
 			require.Equal(t, frozen, unchanged)
 			t.Setenv("JOBDB_BEARER_TOKEN", "consumer-cli-token")
 			hidden := submit(map[bool]string{false: "hidden-default", true: "hidden-signed"}[signed], "")
-			_, e = rt.DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []string{hidden.JobKey.JobId}})
+			_, e = rt.DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []string{hidden.JobKey.JobId}})
 			require.NoError(t, e)
 			require.NoError(t, json.Unmarshal([]byte(run("candidates", hidden.GoalID)), &jobs))
 			require.Empty(t, jobs.Jobs)
 			require.NoError(t, json.Unmarshal([]byte(run("candidates", hidden.GoalID, "--include-hidden")), &jobs))
 			require.Len(t, jobs.Jobs, 1)
-			require.Equal(t, hidden.JobKey, jobs.Jobs[0].JobKey)
-			require.Contains(t, routes, "GET /v1/tenants/tenant/goals/"+a.GoalID)
-			require.Contains(t, routes, "POST /v1/tenants/tenant/goals/"+failedGoal.GoalID+"/fail")
+			require.Equal(t, hidden.JobKey.JobId, jobs.Jobs[0].JobKey.JobId)
+			var wire struct {
+				Jobs []struct {
+					JobKey struct {
+						ProjectID string `json:"projectId"`
+					}
+				}
+			}
+			require.NoError(t, json.Unmarshal([]byte(run("candidates", hidden.GoalID, "--include-hidden")), &wire))
+			require.Equal(t, hidden.JobKey.TenantId, wire.Jobs[0].JobKey.ProjectID)
+			require.Contains(t, routes, "GET /v1/projects/c2/goals/"+a.GoalID)
+			require.Contains(t, routes, "POST /v1/projects/c2/goals/"+failedGoal.GoalID+"/fail")
 			current, e := rt.GetJob(ctx, c.JobKey)
 			require.NoError(t, e)
 			require.Equal(t, jobdb.JobStatusPendingJobs, current.Status)
 		})
 	}
 	// Failure transport through the same tree retains the frozen dependency result.
-	_, err = rt.FailGoal(ctx, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "tenant", GoalID: a.GoalID}, Message: "frozen failure"})
+	_, err = rt.FailGoal(ctx, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "c2", GoalID: a.GoalID}, Message: "frozen failure"})
 	require.NoError(t, err)
 	server := httptest.NewServer(administrativeCellIngress(remote.NewConsumerServer(rt)))
 	defer server.Close()
-	output, err := executeRoot(t, "goals", "waits", "--consumer-job", c.JobKey.JobId, "--state", "FAILED", "--tenant", "tenant", "--url", server.URL)
+	output, err := executeRoot(t, "goals", "waits", "--consumer-job", c.JobKey.JobId, "--state", "FAILED", "--tenant", "c2", "--url", server.URL)
 	require.NoError(t, err)
 	var waits jobdb.ListDependencyWaitsResponse
 	require.NoError(t, json.Unmarshal([]byte(output), &waits))

@@ -16,7 +16,7 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb/configuration"
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
 	schemapostgres "github.com/colony-2/jobdb/pkg/jobdb/schemastore/postgres"
-	"github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/projects"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/internal/runtimeadapter"
 	_ "github.com/lib/pq"
 	"gorm.io/gorm"
@@ -25,10 +25,15 @@ import (
 // Config selects Postgres and artifact storage for the runtime.
 type Config struct {
 	PostgresDSN string
-	// ConversionReportWriter exports the staged installer report before commit.
+	// CanDeleteProject must prove complete, stable participant/external-use absence. Nil denies deletion.
+	CanDeleteProject func(context.Context, string) error
+	// Deprecated: runtime opening never converts storage. Use installer.ApplyWithReport explicitly.
 	ConversionReportWriter io.Writer
 	// ConfigurationLimits bounds tenant configuration; zero fields use JobDB defaults.
 	ConfigurationLimits jobdb.ConfigurationLimits
+	// SecretProvider is caller-owned; core checks the project before provider effects.
+	SecretProvider jobdb.SecretProvider
+	SecretLimits   jobdb.SecretLimits
 	// BlobStoreURI is a blob bucket URL for large chapter artifacts.
 	// blobfs:// is supported by default. Other schemes require an explicit provider import.
 	BlobStoreURI           string
@@ -49,6 +54,7 @@ type Runtime struct {
 }
 
 // Native backend compatibility intentionally retains concrete core attachment.
+var _ jobdb.ProjectControl = (*Runtime)(nil)
 var _ jobdb.ConsumerRuntime = (*Runtime)(nil)
 var _ jobdb.ConsumerGoalRuntime = (*Runtime)(nil)
 var _ jobdb.WorkflowRuntime = (*Runtime)(nil)
@@ -74,8 +80,8 @@ func NewFromConfig(cfg Config) (*Runtime, error) {
 	return OpenDSN(context.Background(), cfg.PostgresDSN, cfg)
 }
 
-// NewSQLDB initializes a clean Postgres database or verifies an existing
-// pgjobdb installation, then composes JobDB's public runtime core.
+// NewSQLDB verifies an explicitly prepared PostgreSQL installation, then composes
+// JobDB's public runtime core. It never installs, converts or seeds projects.
 func NewSQLDB(ctx context.Context, db *sql.DB, cfg Config) (*Runtime, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("direct runtime: context is nil")
@@ -86,14 +92,11 @@ func NewSQLDB(ctx context.Context, db *sql.DB, cfg Config) (*Runtime, error) {
 	if cfg.BlobStoreURI == "" {
 		return nil, fmt.Errorf("direct runtime: blob store URI is required")
 	}
-	install := installer.Installer{DB: db, ReportWriter: cfg.ConversionReportWriter}
-	if err := install.Apply(ctx); err != nil {
-		return nil, fmt.Errorf("direct runtime: install scheduler: %w", err)
+	if err := projects.Verify(ctx, db); err != nil {
+		return nil, fmt.Errorf("direct runtime: verify project storage: %w", err)
 	}
-	if err := install.Verify(ctx); err != nil {
-		return nil, fmt.Errorf("direct runtime: verify scheduler: %w", err)
-	}
-	chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{
+	control := projects.NewControl(db, cfg.CanDeleteProject)
+	chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: control,
 		BlobStoreURI:           cfg.BlobStoreURI,
 		MaxInlineArtifactBytes: cfg.MaxInlineArtifactBytes,
 		Logger:                 cfg.Logger,
@@ -101,25 +104,26 @@ func NewSQLDB(ctx context.Context, db *sql.DB, cfg Config) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	schemas, err := schemapostgres.NewSQLDB(ctx, db)
+	schemas, err := schemapostgres.NewSQLDB(ctx, db, control)
 	if err != nil {
 		_ = chapters.Close(ctx)
 		return nil, err
 	}
-	configurations, err := configuration.NewSQLStore(ctx, db, configuration.Postgres)
+	configurations, err := configuration.NewSQLStore(ctx, db, configuration.Postgres, control)
 	if err != nil {
 		_ = chapters.Close(ctx)
 		return nil, err
 	}
-	core, err := runtimecore.NewRuntime(runtimecore.Config{
+	core, err := runtimecore.NewRuntime(runtimecore.Config{Projects: control,
 		Configurations: configurations, ConfigurationLimits: cfg.ConfigurationLimits,
+		SecretProvider: cfg.SecretProvider, SecretLimits: cfg.SecretLimits,
 		Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas,
 	})
 	if err != nil {
 		_ = chapters.Close(ctx)
 		return nil, err
 	}
-	registry, err := runtimecore.NewSchemaRegistry(runtimecore.SchemaRegistryConfig{Store: schemas})
+	registry, err := runtimecore.NewSchemaRegistry(runtimecore.SchemaRegistryConfig{Store: schemas, Projects: control})
 	if err != nil {
 		_ = chapters.Close(ctx)
 		return nil, err
@@ -176,4 +180,9 @@ func (r *Runtime) Close(ctx context.Context) error {
 		r.closeErr = errors.Join(errs...)
 	})
 	return r.closeErr
+}
+
+// AdmitWrite is the same durable control composed into every runtime writer.
+func (r *Runtime) AdmitWrite(ctx context.Context, id string) error {
+	return projects.NewControl(r.db, nil).AdmitWrite(ctx, id)
 }

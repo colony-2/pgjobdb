@@ -68,7 +68,7 @@ func TestPrerequisitesSuccessAndComplete(t *testing.T) {
 	blobStoreURI, blobs := startChapterBlobStore(t)
 	defer blobs.Shutdown()
 
-	tenantID := "prereq-tenant"
+	tenantID := workflowProjectID(t, postgresDSN, "prereq-tenant")
 	engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
 		b.WithWorkerTenantId(tenantID).
 			PlusWorkers(prereqSuccessWorker{}).
@@ -179,7 +179,7 @@ func TestRestartPrerequisitesCheckedAtExecutionBoundary(t *testing.T) {
 	blobStoreURI, blobs := startChapterBlobStore(t)
 	defer blobs.Shutdown()
 
-	tenantID := "restart-prereq-tenant"
+	tenantID := workflowProjectID(t, postgresDSN, "restart-prereq-tenant")
 	engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
 		b.WithWorkerTenantId(tenantID).
 			PlusWorkers(prereqSuccessWorker{}).

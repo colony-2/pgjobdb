@@ -13,9 +13,9 @@ import (
 func TestPrimaryGoalSelectionContract(t *testing.T) {
 	var capability jobdb.PrimaryGoalSelectionCapability = Scheduler{}
 	require.True(t, capability.SupportsPrimaryGoalSelection())
-	_, err := (Scheduler{}).PrepareJob(context.Background(), runtimecore.JobPreparation{Key: jobdb.JobKey{TenantId: "tenant"}, SelectedGoalID: "goal", Descriptor: "submit"})
+	_, err := (Scheduler{}).PrepareJob(context.Background(), runtimecore.JobPreparation{Key: jobdb.JobKey{TenantId: "c2"}, SelectedGoalID: "goal", Descriptor: "submit"})
 	require.ErrorIs(t, err, jobdb.ErrInvalidDependency)
-	h := jobdb.JobHandle{Cell: "original", CellID: "immutable", CellRepo: "example.test/original", GoalID: "goal", JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "job"}}
+	h := jobdb.JobHandle{Cell: "original", CellID: "immutable", CellRepo: "example.test/original", GoalID: "goal", JobKey: jobdb.JobKey{TenantId: "c2", JobId: "job"}}
 	p := runtimecore.PreparedJob{Key: h.JobKey, GoalID: h.GoalID, Receipt: &h, Published: true}
 	got, err := p.AcceptedHandle(true)
 	require.NoError(t, err)
@@ -40,13 +40,13 @@ func TestRetainedGoalIndependentGuarantees(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, caps, rt.JobGoalCapabilities())
 		if !caps.ImmutableMembership || !caps.AtomicAdmission {
-			_, err = rt.SubmitJob(context.Background(), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: "dest", GoalID: "goal", Cell: "work", CellRepo: "example.test/work", JobType: "work"}})
+			_, err = rt.SubmitJob(context.Background(), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", JobID: "dest", GoalID: "goal", Cell: "work", CellRepo: "example.test/work", JobType: "work"}})
 			require.ErrorIs(t, err, jobdb.ErrJobGoalSemanticsUnsupported)
-			_, err = rt.SubmitRestartJob(context.Background(), jobdb.SubmitRestartJobRequest{RequestID: "restart", Job: jobdb.SubmitRestartJob{PriorJobKey: jobdb.JobKey{TenantId: "tenant", JobId: "prior"}, ShareGoal: true}})
+			_, err = rt.SubmitRestartJob(context.Background(), jobdb.SubmitRestartJobRequest{RequestID: "restart", Job: jobdb.SubmitRestartJob{PriorJobKey: jobdb.JobKey{TenantId: "c2", JobId: "prior"}, ShareGoal: true}})
 			require.ErrorIs(t, err, jobdb.ErrJobGoalSemanticsUnsupported)
 		}
 		if !caps.TerminalFailureRecords {
-			_, err = rt.FailGoal(context.Background(), jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "tenant", GoalID: "goal"}, Message: "reason"})
+			_, err = rt.FailGoal(context.Background(), jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "c2", GoalID: "goal"}, Message: "reason"})
 			require.ErrorIs(t, err, jobdb.ErrJobGoalSemanticsUnsupported)
 		}
 	}

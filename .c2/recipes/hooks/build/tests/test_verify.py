@@ -17,7 +17,7 @@ spec = importlib.util.spec_from_file_location('verify', RUNNER)
 verify = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verify)
 
-PACKAGES = [verify.COMMAND, verify.INTEGRATION, verify.PREFIX+'pkg/pgjobdb/installer',
+PACKAGES = [verify.PROJECTS, verify.COMMAND, verify.INTEGRATION, verify.PREFIX+'pkg/pgjobdb/installer',
             verify.INTEGRATION+'/internal/jobdbtest', verify.INTEGRATION+'/internal/jobdbtest/engineconformance',
             verify.INTEGRATION+'/internal/jobdbtest/usageparity', verify.INTEGRATION+'/workflow']
 
@@ -65,7 +65,7 @@ class EvidenceTests(unittest.TestCase):
             elif argv[:3] == ['go', 'tool', 'test2json']:
                 kwargs['stdout'].write(json.dumps({'Test':'TestLocal', 'Action':'pass'})+'\n')
             elif '-test.list=.' in argv:
-                kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\n')
+                kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\n')
             elif argv[0] != 'python3':
                 observed.append(kwargs['env'])
             return 0
@@ -98,7 +98,7 @@ class EvidenceTests(unittest.TestCase):
                 elif argv[1:3] == ['tool', 'test2json']:
                     kwargs['stdout'].write(json.dumps({'Test':'TestRequired', 'Action':'skip'})+'\n')
             elif '-test.list=.' in argv:
-                kwargs['stdout'].write('TestRequired\nTestPostgresConsumerGoalsCommands\n')
+                kwargs['stdout'].write('TestRequired\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\n')
             elif argv[0] != 'python3':
                 kwargs['stdout'].write('--- SKIP: TestRequired (0.00s)\n')
             return 0
@@ -178,24 +178,25 @@ class EvidenceTests(unittest.TestCase):
 
 class SelectionTests(unittest.TestCase):
     def test_complete_disjoint_partitions_and_nested_packages(self):
-        names = ['TestLocal', 'TestConsumerGoalsRejectBeforeHTTP', 'TestPostgresConsumerGoalsCommands']
+        names = ['TestLocal', 'TestConsumerGoalsRejectBeforeHTTP', 'TestPostgresConsumerGoalsCommands', 'TestPostgresProjectCommands']
         free = verify.select_tests(verify.COMMAND, names, 'service_free')
         runtime = verify.select_tests(verify.COMMAND, names, 'runtime')
         self.assertEqual(set(free) | set(runtime), set(names))
         self.assertFalse(set(free) & set(runtime))
         names = ['TestPostgresRuntimeConformance', 'TestWorkflowRuntimeConformance',
-                 'TestStartOrAppendConformance', 'TestOther'] + sorted(verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS)
+                 'TestStartOrAppendConformance', 'TestOther'] + sorted(verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME)
         conf = verify.select_tests(verify.INTEGRATION, names, 'conformance')
         runtime = verify.select_tests(verify.INTEGRATION, names, 'runtime')
         self.assertEqual(set(conf) | set(runtime), set(names))
         self.assertFalse(set(conf) & set(runtime))
         selected = verify.select_packages(PACKAGES + [verify.INTEGRATION+'/future/nested'], 'runtime')
-        self.assertEqual(set(selected), set(PACKAGES)-{verify.PREFIX+'pkg/pgjobdb/installer'} | {verify.INTEGRATION+'/future/nested'})
+        self.assertEqual(set(selected), set(PACKAGES)-{verify.PROJECTS, verify.PREFIX+'pkg/pgjobdb/installer'} | {verify.INTEGRATION+'/future/nested'})
         self.assertIn(verify.COMMAND, verify.select_packages(PACKAGES, 'service_free'))
 
     def test_required_goal_and_conversion_outcomes(self):
-        for package, required in ((verify.INTEGRATION, verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS),
+        for package, required in ((verify.INTEGRATION, verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME),
                                   (verify.PREFIX+'pkg/pgjobdb/installer', verify.REQUIRED_INSTALLER),
+                                  (verify.PROJECTS, verify.REQUIRED_PROJECTS),
                                   (verify.ENGINE_CONFORMANCE_PACKAGE, verify.REQUIRED_RETRY_HISTORY)):
             for omitted in required:
                 with self.assertRaises(ValueError): verify.select_tests(package, sorted(required-{omitted}), 'runtime')
@@ -262,6 +263,51 @@ class SelectionTests(unittest.TestCase):
             self.assertEqual(outcomes[leaf], 'fail')
             with self.assertRaises(ValueError): verify.validate_outcomes(events, [leaf.split('/')[0]])
 
+    def test_history_deferral_does_not_accept_task_alternate_failure(self):
+        events = self.history_events()
+        alternate = 'TestPostgresTaskAlternates'
+        leaf = alternate + '/TestTaskAlternateLifecycle/remote-postgres/fallback'
+        events += [{'Test': leaf, 'Action': 'output', 'Output': 'Error: Should be true\nTest: ' + leaf + '\n'}]
+        events += [{'Test': name, 'Action': 'fail'} for name in (leaf, alternate + '/TestTaskAlternateLifecycle', alternate)]
+        accepted = verify.accepted_initial_history_failures(events, verify.INTEGRATION, True)
+        self.assertEqual(accepted, {'TestRetainedGoalConcurrentInitialHistory'})
+        with self.assertRaisesRegex(ValueError, 'TestPostgresTaskAlternates'):
+            verify.validate_outcomes(events, ['TestRetainedGoalConcurrentInitialHistory', alternate], accepted)
+
+    def test_local_history_sites_match_current_source_assertions(self):
+        assertions = {
+            'TestPostgresSelectedConcurrentRequests': 'require.NoError(t, r.err)',
+            'TestRetainedGoalConcurrentInitialHistory': 'require.NoError(t, y.err, "equivalent submission must await complete initial history")',
+        }
+        root = HERE.parents[4] / 'pkg/pgjobdb/runtime/integration'
+        for name, assertion in assertions.items():
+            with self.subTest(name=name):
+                filename, number = verify.INITIAL_HISTORY_SITES[name].rsplit(':', 1)
+                lines = (root / filename).read_text().splitlines()
+                start = next(i for i, line in enumerate(lines) if line.startswith('func ' + name + '('))
+                end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith('func ')), len(lines))
+                actual = [i + 1 for i in range(start, end) if lines[i].strip() == assertion]
+                self.assertEqual(actual, [int(number)], 'accepted failure site must track its exact source assertion')
+
+    def test_current_human_direction_is_bound_to_cancelled_consultation(self):
+        self.assertEqual(verify.INITIAL_HISTORY_OWNER_JOB, 'WTYBvQMGp87NeKRx1GATPEIBFXD')
+        self.assertEqual(verify.INITIAL_HISTORY_DIRECTION, "we don't want to address this bug at this time. please ignore it.")
+        self.assertEqual(verify.INITIAL_HISTORY_VERSION, 'v0.0.99-0.20261122051819-86f7ba9bc009')
+
+    def test_remote_history_symptom_requires_exact_captured_response(self):
+        leaf = 'TestPostgresPrimaryGoalSelection/remote'
+        events = self.history_events(leaf, 'primary goal selection is unsupported')
+        self.assertFalse(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True))
+        diagnostic = '    initial_history_http_test.go:22: ' + verify.INITIAL_HISTORY_HTTP_DIAGNOSTIC + '\n'
+        events[0]['Output'] = diagnostic + events[0]['Output']
+        self.assertEqual(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True), {leaf, leaf.split('/')[0]})
+        for wrong in (diagnostic.replace('status=404', 'status=501'), diagnostic.replace('chapter not found', 'route not found'), diagnostic.replace(':22:', ':24:')):
+            changed = [dict(e) for e in events]
+            changed[0]['Output'] = events[0]['Output'].replace(diagnostic, wrong)
+            self.assertFalse(verify.accepted_initial_history_failures(changed, verify.INTEGRATION, True))
+        events[0]['Output'] += '    initial_history_http_test.go:22: unrelated assertion\n'
+        self.assertFalse(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True))
+
     def test_human_exception_rejects_other_signature_package_or_dependency(self):
         events = self.history_events()
         self.assertFalse(verify.accepted_initial_history_failures(events, verify.COMMAND, True))
@@ -278,10 +324,11 @@ class SelectionTests(unittest.TestCase):
     def test_selected_concurrent_exception_requires_exact_assertion(self):
         leaf = 'TestPostgresSelectedConcurrentRequests'
         events = self.history_events(leaf)
-        events[0]['Output'] = '    primary_goal_selection_test.go:84: \n' + events[0]['Output']
+        events[0]['Output'] = '    primary_goal_selection_test.go:86: \n' + events[0]['Output']
         self.assertEqual(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True), {leaf})
         for label, output in (
-            ('other site', events[0]['Output'].replace(':84', ':88')),
+            ('other site', events[0]['Output'].replace(':86', ':88')),
+            ('stale site', events[0]['Output'].replace(':86', ':84')),
             ('other error', events[0]['Output'].replace(verify.INITIAL_HISTORY_ERROR, 'context deadline exceeded')),
             ('second testify assertion', events[0]['Output'] + 'Error: unrelated assertion\nTest: ' + leaf + '\n'),
             ('plain Go assertion', events[0]['Output'] + '    primary_goal_selection_test.go:88: handles differ\n'),
@@ -344,7 +391,8 @@ class SelectionTests(unittest.TestCase):
         for code, version, expected in ((1, verify.INITIAL_HISTORY_VERSION, 'passed'),
                                          (2, verify.INITIAL_HISTORY_VERSION, 'failed'),
                                          (0, verify.INITIAL_HISTORY_VERSION, 'failed'),
-                                         (1, 'v0.0.100', 'failed')):
+                                         (1, 'v0.0.100', 'failed'),
+                                         (1, 'v0.0.99-0.20261121034814-05238600e743', 'failed')):
             with self.subTest(code=code, version=version), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root/'go.mod').write_text('module fixture\nrequire (\n github.com/colony-2/jobdb ' + version + '\n)\n')
@@ -439,7 +487,7 @@ class SelectionTests(unittest.TestCase):
                 if argv[0] == 'python3': return 1
                 if argv[:2] == ['go','list']: kwargs['stdout'].write('\n'.join(PACKAGES)+'\n')
                 elif argv[:2] == ['go','test']: Path(argv[argv.index('-o')+1]).touch()
-                elif '-test.list=.' in argv: kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\n')
+                elif '-test.list=.' in argv: kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\n')
                 elif argv[:3] == ['go','tool','test2json']: kwargs['stdout'].write(json.dumps({'Test':'TestLocal','Action':'pass'})+'\n')
                 return 0
             with patch.dict(os.environ, ROOT=tmp, OUTBOX=tmp), patch.object(verify,'execute',side_effect=command):
@@ -459,7 +507,7 @@ class SelectionTests(unittest.TestCase):
                     elif argv[:2]==['go','test']:
                         if phase=='compile': return 1
                         Path(argv[argv.index('-o')+1]).touch()
-                    elif '-test.list=.' in argv: kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\n')
+                    elif '-test.list=.' in argv: kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\n')
                     elif argv[:3]==['go','tool','test2json']: kwargs['stdout'].write(json.dumps({'Test':'TestLocal','Action':'fail'})+'\n')
                     elif phase=='launch': raise OSError('forced launch failure')
                     else: log.write('database startup failed\n'); return 1

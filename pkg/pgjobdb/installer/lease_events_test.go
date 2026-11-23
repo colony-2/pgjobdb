@@ -19,15 +19,15 @@ import (
 
 func eventJob(t *testing.T, ctx context.Context, db *sql.DB, id string) {
 	t.Helper()
-	_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: pgjobdb.JobID(id), WorkerID: "submitter", JobType: "collect"})
+	_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: pgjobdb.JobID(id), WorkerID: "submitter", JobType: "collect"})
 	require.NoError(t, err)
 }
 func eventClaim(ctx context.Context, db pgjobdb.DB, id string) (*pgjobdb.JobLease, error) {
-	return pgjobdb.GetJobLease(ctx, db, "tenant", pgjobdb.JobID(id), "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}, pgjobdb.GetJobLeaseOptions{})
+	return pgjobdb.GetJobLease(ctx, db, "c2", pgjobdb.JobID(id), "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}, pgjobdb.GetJobLeaseOptions{})
 }
 func eventList(t *testing.T, ctx context.Context, db pgjobdb.DB) []jobdb.LeaseEvent {
 	t.Helper()
-	v, e := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", IncludeHidden: true})
+	v, e := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", IncludeHidden: true})
 	require.NoError(t, e)
 	return v.Events
 }
@@ -95,7 +95,7 @@ func TestLeaseEventsAtomicNative(t *testing.T) {
 		muted, err := eventClaim(ctx, db, "muted")
 		require.NoError(t, err)
 		require.NotNil(t, muted)
-		mutedPage, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", JobIDs: []string{"muted"}})
+		mutedPage, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", JobIDs: []string{"muted"}})
 		require.NoError(t, err)
 		require.Len(t, mutedPage.Events, 1)
 		require.Equal(t, jobdb.LeaseEventAcquired, mutedPage.Events[0].EventType)
@@ -133,7 +133,7 @@ func TestLeaseEventsPrecisionBudgetPlans(t *testing.T) {
 		// Representative renewal-heavy, mixed-tenant history uses typed fixtures to
 		// keep this query test independent of scheduler throughput.
 		_, err = db.ExecContext(ctx, `INSERT INTO pgjobdb.lease_events(event_type,occurred_at,tenant_id,job_id,cell_id,cell_name,cell_repo,goal_id,job_type,route_job_type,lease_id,worker_id,lease_expires_at,previous_lease_expires_at)
-  SELECT 'lease_renewed','2026-01-01'::timestamptz + (n%1000)*interval '1 microsecond',CASE WHEN n%2=0 THEN 'tenant' ELSE 'other' END,'fixture-'||(n%500),cell_id,cell_name,cell_repo,goal_id,job_type,route_job_type,'fixture-lease-'||(n%500),'fixture-worker-'||(n%100),'2027-01-01','2027-01-01' FROM pgjobdb.lease_events CROSS JOIN generate_series(1,20000) n WHERE event_id=1;
+  SELECT 'lease_renewed','2026-01-01'::timestamptz + (n%1000)*interval '1 microsecond',CASE WHEN n%2=0 THEN 'c2' ELSE 'TqtggXyN1eGriOdDqH0R8ApQbbb' END,'fixture-'||(n%500),cell_id,cell_name,cell_repo,goal_id,job_type,route_job_type,'fixture-lease-'||(n%500),'fixture-worker-'||(n%100),'2027-01-01','2027-01-01' FROM pgjobdb.lease_events CROSS JOIN generate_series(1,20000) n WHERE event_id=1;
   ANALYZE pgjobdb.lease_events`)
 		require.NoError(t, err)
 		for _, size := range []int{1, 100, 200} {
@@ -144,7 +144,7 @@ func TestLeaseEventsPrecisionBudgetPlans(t *testing.T) {
 						values = append(values, fmt.Sprintf("fixture-worker-%d", i))
 					}
 					counter := &eventCountingDB{DB: db}
-					req := jobdb.ListLeaseEventsRequest{TenantID: "tenant", PageSize: size, WorkerIDs: values}
+					req := jobdb.ListLeaseEventsRequest{TenantID: "c2", PageSize: size, WorkerIDs: values}
 					page, err := pgjobdb.ListLeaseEvents(ctx, counter, req)
 					require.NoError(t, err)
 					require.Equal(t, 2, counter.reads)
@@ -168,21 +168,21 @@ func TestLeaseEventsPrecisionBudgetPlans(t *testing.T) {
 		_, err = db.ExecContext(ctx, `UPDATE pgjobdb.lease_events SET occurred_at=$1 WHERE event_id=1`, instant)
 		require.NoError(t, err)
 		sub := instant.Add(time.Nanosecond)
-		page, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", JobIDs: []string{"job"}, OccurredAfter: &sub})
+		page, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", JobIDs: []string{"job"}, OccurredAfter: &sub})
 		require.NoError(t, err)
 		require.Empty(t, page.Events)
-		page, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", JobIDs: []string{"job"}, OccurredBefore: &sub})
+		page, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", JobIDs: []string{"job"}, OccurredBefore: &sub})
 		require.NoError(t, err)
 		require.Len(t, page.Events, 1)
-		page, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", JobIDs: []string{"job"}, OccurredAfter: &instant})
+		page, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", JobIDs: []string{"job"}, OccurredAfter: &instant})
 		require.NoError(t, err)
 		require.Len(t, page.Events, 1)
-		page, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", JobIDs: []string{"job"}, OccurredBefore: &instant})
+		page, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", JobIDs: []string{"job"}, OccurredBefore: &instant})
 		require.NoError(t, err)
 		require.Empty(t, page.Events)
 		// Tied timestamps traverse by numeric ID once; reopening a connection keeps
 		// the same persisted signing key.
-		req := jobdb.ListLeaseEventsRequest{TenantID: "tenant", PageSize: 200}
+		req := jobdb.ListLeaseEventsRequest{TenantID: "c2", PageSize: 200}
 		seen := map[string]bool{}
 		count := 0
 		for {
@@ -199,7 +199,7 @@ func TestLeaseEventsPrecisionBudgetPlans(t *testing.T) {
 			req.PageToken = page.NextPageToken
 		}
 		require.Equal(t, 10001, count)
-		_, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", PageToken: "bad"})
+		_, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", PageToken: "bad"})
 		require.ErrorIs(t, err, jobdb.ErrInvalidLeaseEventPageToken)
 	})
 }
@@ -277,18 +277,18 @@ func TestLeaseEventsInternalClaimsAndRaces(t *testing.T) {
 					var err error
 					switch kind {
 					case "cancel":
-						err = pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "tenant", JobID: pgjobdb.JobID(kind), WorkerID: "canceller"})
+						err = pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "c2", JobID: pgjobdb.JobID(kind), WorkerID: "canceller"})
 					case "delete":
-						_, err = pgjobdb.DeleteJobs(ctx, db, pgjobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []pgjobdb.JobID{pgjobdb.JobID(kind)}})
+						_, err = pgjobdb.DeleteJobs(ctx, db, pgjobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []pgjobdb.JobID{pgjobdb.JobID(kind)}})
 					case "expire":
-						_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id='tenant' AND job_id=$1`, kind)
+						_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id='c2' AND job_id=$1`, kind)
 					}
 					changed <- err
 				}()
 				close(start)
 				renewalErr := <-renewed
 				require.NoError(t, <-changed)
-				page, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", JobIDs: []string{kind}, IncludeHidden: true})
+				page, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", JobIDs: []string{kind}, IncludeHidden: true})
 				require.NoError(t, err)
 				want := 1
 				if renewalErr == nil {
@@ -298,7 +298,7 @@ func TestLeaseEventsInternalClaimsAndRaces(t *testing.T) {
 				// A completed cancellation/deletion/expiry rejects later renewal and adds none.
 				_, err = pgjobdb.KeepAliveLease(ctx, db, lease.Identity(), time.Minute)
 				require.Error(t, err)
-				again, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", JobIDs: []string{kind}, IncludeHidden: true})
+				again, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", JobIDs: []string{kind}, IncludeHidden: true})
 				require.NoError(t, err)
 				require.Equal(t, page, again)
 			})
@@ -312,10 +312,10 @@ func TestLeaseEventsAttributionAndGoalIsolation(t *testing.T) {
 		lease, err := eventClaim(ctx, db, "same")
 		require.NoError(t, err)
 		original := eventList(t, ctx, db)[0]
-		cell, err := pgjobdb.GetCell(ctx, db, jobdb.CellKey{TenantID: "tenant", CellID: original.CellID})
+		cell, err := pgjobdb.GetCell(ctx, db, jobdb.CellKey{TenantID: "c2", CellID: original.CellID})
 		require.NoError(t, err)
 		name, repo := "renamed", "example.test/changed"
-		_, err = pgjobdb.UpdateCell(ctx, db, jobdb.UpdateCellRequest{CellKey: jobdb.CellKey{TenantID: "tenant", CellID: cell.ID}, IfMatch: fmt.Sprintf("%q", cell.Revision), Name: &name, Repo: &repo})
+		_, err = pgjobdb.UpdateCell(ctx, db, jobdb.UpdateCellRequest{CellKey: jobdb.CellKey{TenantID: "c2", CellID: cell.ID}, IfMatch: fmt.Sprintf("%q", cell.Revision), Name: &name, Repo: &repo})
 		require.NoError(t, err)
 		_, err = pgjobdb.KeepAliveLease(ctx, db, lease.Identity(), time.Minute)
 		require.NoError(t, err)
@@ -324,27 +324,27 @@ func TestLeaseEventsAttributionAndGoalIsolation(t *testing.T) {
 		require.Equal(t, name, events[0].Cell)
 		require.Equal(t, repo, events[0].CellRepo)
 		for _, name := range []string{"test", "renamed"} {
-			page, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", CellNames: []string{name}})
+			page, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", CellNames: []string{name}})
 			require.NoError(t, err)
 			require.Len(t, page.Events, 2)
 		}
 		// Same tenant-local job identity in a different tenant with an additional goal.
-		_, err = submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "other", JobID: "same", WorkerID: "submitter", JobType: "collect"})
+		_, err = submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "TqtggXyN1eGriOdDqH0R8ApQbbb", JobID: "same", WorkerID: "submitter", JobType: "collect"})
 		require.NoError(t, err)
-		_, err = submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "other", JobID: "goal-owner", WorkerID: "submitter", JobType: "collect"})
+		_, err = submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "TqtggXyN1eGriOdDqH0R8ApQbbb", JobID: "goal-owner", WorkerID: "submitter", JobType: "collect"})
 		require.NoError(t, err)
 		var otherGoal string
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT goal_id FROM pgjobdb.job_facts WHERE tenant_id='other' AND job_id='goal-owner'`).Scan(&otherGoal))
-		page, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", GoalIDs: []string{otherGoal}})
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT goal_id FROM pgjobdb.job_facts WHERE tenant_id='TqtggXyN1eGriOdDqH0R8ApQbbb' AND job_id='goal-owner'`).Scan(&otherGoal))
+		page, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", GoalIDs: []string{otherGoal}})
 		require.NoError(t, err)
 		require.Empty(t, page.Events)
 		// Duplicate memberships are deduplicated before the event join. New current
 		// memberships find both historical snapshots without rewriting primary goal.
-		_, err = submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "renamed", CellRepo: repo, TenantID: "tenant", JobID: "goal-owner", WorkerID: "submitter", JobType: "collect"})
+		_, err = submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "renamed", CellRepo: repo, TenantID: "c2", JobID: "goal-owner", WorkerID: "submitter", JobType: "collect"})
 		require.NoError(t, err)
 		var extra string
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT goal_id FROM pgjobdb.job_facts WHERE tenant_id='tenant' AND job_id='goal-owner'`).Scan(&extra))
-		page, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant", GoalIDs: []string{extra, original.GoalID}})
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT goal_id FROM pgjobdb.job_facts WHERE tenant_id='c2' AND job_id='goal-owner'`).Scan(&extra))
+		page, err = pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2", GoalIDs: []string{extra, original.GoalID}})
 		require.NoError(t, err)
 		require.Len(t, page.Events, 2)
 		for _, event := range page.Events {
@@ -374,7 +374,7 @@ func TestLeaseEventsScopeAndCursorSecurity(t *testing.T) {
 		require.NoError(t, err)
 		_, err = eventClaim(ctx, db, "two")
 		require.NoError(t, err)
-		req := jobdb.ListLeaseEventsRequest{TenantID: "tenant", PageSize: 1}
+		req := jobdb.ListLeaseEventsRequest{TenantID: "c2", PageSize: 1}
 		page, err = pgjobdb.ListLeaseEvents(ctx, db, req)
 		require.NoError(t, err)
 		require.NotEmpty(t, page.NextPageToken)
@@ -391,7 +391,7 @@ func TestLeaseEventsScopeAndCursorSecurity(t *testing.T) {
 		altered.TenantID = "uncatalogued"
 		_, err = pgjobdb.ListLeaseEvents(ctx, db, altered)
 		require.ErrorIs(t, err, jobdb.ErrInvalidLeaseEventPageToken)
-		authority := jobdb.CellAuthority{Principal: "reader", TenantID: "tenant", Permissions: map[string]bool{"jobs.list": true}, Cells: map[string]bool{}}
+		authority := jobdb.CellAuthority{Principal: "reader", TenantID: "c2", Permissions: map[string]bool{"jobs.list": true}, Cells: map[string]bool{}}
 		denied := jobdb.WithCellAuthority(ctx, authority)
 		_, err = pgjobdb.ListLeaseEvents(denied, db, req)
 		require.ErrorIs(t, err, jobdb.ErrInvalidLeaseEventPageToken)
@@ -403,7 +403,7 @@ func TestLeaseEventsScopeAndCursorSecurity(t *testing.T) {
 		altered.CellIDs = []string{page.Events[0].CellID}
 		_, err = pgjobdb.ListLeaseEvents(denied, db, altered)
 		require.ErrorIs(t, err, jobdb.ErrCellNotFound)
-		_, err = pgjobdb.ListLeaseEvents(context.Background(), db, jobdb.ListLeaseEventsRequest{TenantID: "tenant"})
+		_, err = pgjobdb.ListLeaseEvents(context.Background(), db, jobdb.ListLeaseEventsRequest{TenantID: "c2"})
 		require.ErrorIs(t, err, jobdb.ErrCellForbidden)
 	})
 }
@@ -432,19 +432,19 @@ func TestLeaseEventsVisibilityAndNoOps(t *testing.T) {
 		require.Equal(t, history, eventList(t, ctx, db))
 
 		// Clearing crash concern after expiry changes eligibility, not history.
-		_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 second',consecutive_expirations=3 WHERE tenant_id='tenant' AND job_id='job'`)
+		_, err = db.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 second',consecutive_expirations=3 WHERE tenant_id='c2' AND job_id='job'`)
 		require.NoError(t, err)
 		_, err = pgjobdb.KeepAliveLease(ctx, db, lease.Identity(), time.Minute)
 		require.Error(t, err)
-		clear := jobdb.ClearCrashConcernRequest{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "job"}, WorkerID: "operator", Reason: "fixture"}
+		clear := jobdb.ClearCrashConcernRequest{JobKey: jobdb.JobKey{TenantId: "c2", JobId: "job"}, WorkerID: "operator", Reason: "fixture"}
 		require.NoError(t, pgjobdb.ClearCrashConcern(ctx, db, clear))
 		require.NoError(t, pgjobdb.ClearCrashConcern(ctx, db, clear))
 		require.Equal(t, history, eventList(t, ctx, db))
-		other, err = pgjobdb.GetJobLease(ctx, db, "tenant", "job", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"wrong-route"}}, pgjobdb.GetJobLeaseOptions{})
+		other, err = pgjobdb.GetJobLease(ctx, db, "c2", "job", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"wrong-route"}}, pgjobdb.GetJobLeaseOptions{})
 		require.NoError(t, err)
 		require.Nil(t, other)
 		require.Equal(t, history, eventList(t, ctx, db))
-		require.NoError(t, pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "tenant", JobID: "job", WorkerID: "operator"}))
+		require.NoError(t, pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{TenantID: "c2", JobID: "job", WorkerID: "operator"}))
 		other, err = eventClaim(ctx, db, "job")
 		require.NoError(t, err)
 		require.Nil(t, other)
@@ -452,9 +452,9 @@ func TestLeaseEventsVisibilityAndNoOps(t *testing.T) {
 
 		// Deletion hides retained history by default, while explicit inclusion
 		// keeps the immutable snapshots. Hidden jobs cannot be acquired.
-		_, err = pgjobdb.DeleteJobs(ctx, db, pgjobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []pgjobdb.JobID{"job"}})
+		_, err = pgjobdb.DeleteJobs(ctx, db, pgjobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []pgjobdb.JobID{"job"}})
 		require.NoError(t, err)
-		visible, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "tenant"})
+		visible, err := pgjobdb.ListLeaseEvents(ctx, db, jobdb.ListLeaseEventsRequest{TenantID: "c2"})
 		require.NoError(t, err)
 		require.Empty(t, visible.Events)
 		require.Equal(t, history, eventList(t, ctx, db))
@@ -464,15 +464,15 @@ func TestLeaseEventsVisibilityAndNoOps(t *testing.T) {
 		require.Equal(t, history, eventList(t, ctx, db))
 
 		// Retiring the cell does not remove its retained identity from event scope.
-		_, err = pgjobdb.FailGoal(ctx, db, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "tenant", GoalID: history[0].GoalID}, Message: "fixture finished"})
+		_, err = pgjobdb.FailGoal(ctx, db, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "c2", GoalID: history[0].GoalID}, Message: "fixture finished"})
 		require.NoError(t, err)
-		cell, err := pgjobdb.GetCell(ctx, db, jobdb.CellKey{TenantID: "tenant", CellID: history[0].CellID})
+		cell, err := pgjobdb.GetCell(ctx, db, jobdb.CellKey{TenantID: "c2", CellID: history[0].CellID})
 		require.NoError(t, err)
-		_, err = pgjobdb.RetireCell(ctx, db, jobdb.RetireCellRequest{CellKey: jobdb.CellKey{TenantID: "tenant", CellID: cell.ID}, IfMatch: fmt.Sprintf("%q", cell.Revision)})
+		_, err = pgjobdb.RetireCell(ctx, db, jobdb.RetireCellRequest{CellKey: jobdb.CellKey{TenantID: "c2", CellID: cell.ID}, IfMatch: fmt.Sprintf("%q", cell.Revision)})
 		require.NoError(t, err)
 		for _, req := range []jobdb.ListLeaseEventsRequest{
-			{TenantID: "tenant", IncludeHidden: true, CellIDs: []string{cell.ID}},
-			{TenantID: "tenant", IncludeHidden: true, CellNames: []string{cell.Name}},
+			{TenantID: "c2", IncludeHidden: true, CellIDs: []string{cell.ID}},
+			{TenantID: "c2", IncludeHidden: true, CellNames: []string{cell.Name}},
 		} {
 			page, err := pgjobdb.ListLeaseEvents(ctx, db, req)
 			require.NoError(t, err)

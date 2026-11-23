@@ -9,13 +9,13 @@ workflow runtime on Postgres. Its `NewSQLDB(ctx, db, cfg)` constructor wraps a
 caller-owned `*sql.DB`; `OpenDSN(ctx, dsn, cfg)` owns the connection. Both
 require a `BlobStoreURI` for chapter artifacts. Call `Close` when finished.
 
-The first deployment requires a brand-new empty Postgres database. Startup
-creates the `pgjobdb` schema and the JobDB chapter and schema tables. Later
-starts convert supported formats 9–12 transactionally to format 13.
-Recurring schedules and their storage are no longer part of the API.
-Startup also rejects old `pgwf` databases, other configured scheduler schemas, and a fresh database
-that already contains user tables. Formats 1–8, unmarked, corrupt and incomplete installations are rejected unchanged.
-See [retained goals and conversion](docs/retained-goals.md) for reports and writer exclusion.
+Prepare storage explicitly before opening a runtime. Constructors and server
+startup verify scheduler format 13 and project installation protocol 1; they never
+install, convert or seed projects. Every writer requires a real catalog project
+ID. See [PostgreSQL projects](docs/projects.md) for fresh installation, historical
+adoption, inventory/fencing obligations, administration and durable first-use
+admission. Supported scheduler formats 9–12 require explicit conversion; see
+[retained goals and conversion](docs/retained-goals.md).
 
 The `github.com/colony-2/pgjobdb/pkg/pgjobdb` package exposes typed scheduler
 operations. Its `installer` subpackage installs and verifies the embedded
@@ -43,8 +43,8 @@ Delegated leases require a `cells.create` name selector. Creation is restricted 
 the lease's tenant and does not expand its job-submission scope.
 
 ```sh
-jobdb cell create --tenant acme --name root --repo github.com/acme/root --url http://localhost:8080
-jobdb cell create --tenant acme --name payments --repo github.com/acme/payments --url http://localhost:8080
+jobdb cell create --tenant "$PROJECT_ID" --name root --repo github.com/acme/root --url http://localhost:8080
+jobdb cell create --tenant "$PROJECT_ID" --name payments --repo github.com/acme/payments --url http://localhost:8080
 ```
 
 See [cells](docs/cells.md) for API, authorization, transaction guarantees, and the
@@ -53,7 +53,7 @@ rename restrictions. The `create-root` command has been removed.
 
 ## JobDB consumer API
 
-The current dependency is JobDB `v0.0.99-0.20261121034814-05238600e743`.
+The current dependency is JobDB `v0.0.99-0.20261122051819-86f7ba9bc009`.
 The PostgreSQL HTTP server uses the consumer API: candidate PUT is unregistered,
 and this executable no longer registers `goals add-candidate`. Choose primary goal
 membership at submission with an explicit destination job ID, or use a shared-goal

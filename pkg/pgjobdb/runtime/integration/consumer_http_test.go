@@ -52,7 +52,7 @@ func schedulerSnapshot(t *testing.T, ctx context.Context, db *sql.DB) map[string
 }
 
 func TestConsumerHTTPRetiresAttachment(t *testing.T) {
-	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
+	withPreparedDatabase(t, func(ctx context.Context, db *sql.DB) {
 		rt, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
 		require.NoError(t, err)
 		defer rt.Close(ctx)
@@ -73,7 +73,7 @@ func TestConsumerHTTPRetiresAttachment(t *testing.T) {
 				before := schedulerSnapshot(t, ctx, db)
 				probe.mutations.Store(0)
 				probe.attachments.Store(0)
-				request := httptest.NewRequest(http.MethodPut, "/v1/tenants/tenant/goals/"+a.GoalID+"/candidates/"+b.JobKey.JobId, nil)
+				request := httptest.NewRequest(http.MethodPut, "/v1/tenants/c2/goals/"+a.GoalID+"/candidates/"+b.JobKey.JobId, nil)
 				response := httptest.NewRecorder()
 				celltest.Handler(handler).ServeHTTP(response, request)
 				require.Equal(t, http.StatusNotFound, response.Code)
@@ -115,7 +115,7 @@ func TestConsumerSignedLeaseAuthority(t *testing.T) {
 		t.Run(variant.name, func(t *testing.T) {
 			handler, err := remote.NewConsumerServerWithOptions(jobdbtest.NewNamespacedBackend(rt, ""), variant.options)
 			require.NoError(t, err)
-			request := httptest.NewRequest(http.MethodPost, "/v1/tenants/tenant/jobs/"+h.JobKey.JobId+"/leases/"+lease.LeaseID()+"/keepalive", nil)
+			request := httptest.NewRequest(http.MethodPost, "/v1/tenants/c2/jobs/"+h.JobKey.JobId+"/leases/"+lease.LeaseID()+"/keepalive", nil)
 			request.Header.Set("X-JobDB-Lease-Token", variant.token)
 			before, err := rt.GetJob(ctx, h.JobKey)
 			require.NoError(t, err)

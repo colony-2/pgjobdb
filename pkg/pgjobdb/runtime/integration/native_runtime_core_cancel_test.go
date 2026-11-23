@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"testing"
 
 	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
@@ -16,18 +17,18 @@ import (
 
 func TestNativeRuntimeCoreCancelsJob(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{
+		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: projectfixture.Control(db),
 			BlobStoreURI: "blobfs://" + t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = chapters.Close(ctx) }()
-		schemas, err := schemapostgres.NewSQLDB(ctx, db)
+		schemas, err := schemapostgres.NewSQLDB(ctx, db, projectfixture.Control(db))
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtime, err := runtimecore.NewRuntime(runtimecore.Config{
+		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(db),
 			Configurations: newConfigurationStore(t, ctx, db),
 			Scheduler:      runtimeadapter.Scheduler{DB: db}, Chapters: chapters,
 			Schemas: schemas,
@@ -40,7 +41,7 @@ func TestNativeRuntimeCoreCancelsJob(t *testing.T) {
 			t.Fatal(err)
 		}
 		handle, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "tenant", JobID: "cancelled", JobType: "collect", Data: data,
+			TenantId: "c2", JobID: "cancelled", JobType: "collect", Data: data,
 		}})
 		if err != nil {
 			t.Fatal(err)

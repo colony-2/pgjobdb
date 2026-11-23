@@ -89,7 +89,7 @@ sequence:
 outputs:
   api_version: c2.build-hook/v1
   status: ${{ sequence.report.outputs.stdout }}
-  summary: Native retained-goal schema protections, conversion/report, independent-session, public conformance and runtime/command checks completed, with only the human-accepted pinned initial-history race eligible for an explicit exception; inspect verification.md and per-test outcomes in behavior logs and JSON.
+  summary: Native project installation, catalog receipts, writer admission, administration, runtime/HTTP/CLI composition, retained-goal preservation and regression checks completed; inspect verification.md and per-test outcomes in behavior logs and JSON.
   artifact_refs:
     service_free.json: ${{ sequence.service_free.artifacts['service_free.json'] }}
     service_free.log: ${{ sequence.service_free.artifacts['service_free.log'] }}

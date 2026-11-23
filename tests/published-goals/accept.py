@@ -15,9 +15,9 @@ import tempfile
 
 PG = 'github.com/colony-2/pgjobdb'
 JOB = 'github.com/colony-2/jobdb'
-JOB_VERSION = 'v0.0.99-0.20261121034814-05238600e743'
-JOB_HASH = '05238600e743697cb902630ad9dfc6e1728ba744'
-JOB_SUM = 'h1:P9SJxki3Y0V0WzZbaSB7AXXDEDwREcYjaOlAw/oIWLM='
+JOB_VERSION = 'v0.0.99-0.20261122051819-86f7ba9bc009'
+JOB_HASH = '86f7ba9bc009ca5dc851a7e8a0057c63d788bc8b'
+JOB_SUM = 'h1:LzkQjvmEG/kmRtrIuOjCQBp9EU1iSPySD3reXRgQrRg='
 JOB_MODSUM = 'h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek='
 
 
@@ -60,9 +60,32 @@ def check_behavior(raw, exit_code):
         required.add('TestPublishedGoals/'+name+'/admission')
         required.add('TestPublishedGoals/'+name+'/protected')
         required.add('TestPublishedGoals/migrated/'+name)
+    required.update({'TestPublishedProject'+name for name in (
+        'FreshInstallationAndReopen','CatalogReceiptsAndDeletion','AdministrationAndFirstUse',
+        'GuardsAndBorrowedTransactions','HistoricalAdoptionPreservesResources',
+        'InstallationRollbackAndInventoryFailures','DamagedGuardsAndResolution',
+        'LargeNumericCatalogMetadata','OpaqueCatalogStrings','AdmissionProjectionIntegrity','InstallationConflictsAndExternalInventory',
+        'WriterExclusionAndUnknownParticipants','SQLNoopAdmissionAndCopy',
+        'SealSurvivesDownstreamFailureAndRelaxedCommit','RefusesIncompleteSharedSchema',
+        'RejectsUncommittedSeal','PartialAndFutureInstallations','CommittedSealSurvivesVacuum','CommittedCatalogNewerThanWriter','ConcurrentRetainedCreationAndDeletion','Commands')})
     passed=set(re.findall(r'^\s*--- PASS: (\S+)',raw,re.M))
     if exit_code or failures or not required.issubset(passed):
         raise RuntimeError(f'published acceptance failed, exit={exit_code}, failed/skipped={failures}, missing={sorted(required-passed)}')
+
+
+def prepare_harness(source, destination):
+    """Copy consumer-only fixtures; production is always linked from the module graph."""
+    destination.mkdir(parents=True, exist_ok=True)
+    root = source.parents[1]
+    shutil.copyfile(source/'goal_publication_test.go', destination/'goal_publication_test.go')
+    helper = root/'pkg/pgjobdb/runtime/integration/internal/jobdbtest'
+    for name in ('namespaced_runtime', 'namespaced_capabilities'):
+        raw = (helper/(name+'.go')).read_text().replace('package jobdbtest', 'package publishedgoals_test', 1)
+        (destination/(name+'_test.go')).write_text('//go:build published_goals\n\n'+raw)
+    raw = (root/'pkg/pgjobdb/projects/projects_test.go').read_text().replace('//go:build integration', '//go:build published_goals', 1).replace('package projects_test', 'package publishedgoals_test', 1).replace('func TestProject', 'func TestPublishedProject')
+    (destination/'project_publication_test.go').write_text(raw)
+    raw = (root/'cmd/jobdb/projects_integration_test.go').read_text().replace('//go:build integration', '//go:build published_goals', 1).replace('package main', 'package publishedgoals_test', 1).replace('"github.com/colony-2/pgjobdb/internal/projectfixture"', '').replace('projectfixture.Participants','participants').replace('func TestPostgresProjectCommands','func TestPublishedProjectCommands')
+    (destination/'project_commands_test.go').write_text(raw)
 
 
 def run(args):
@@ -75,7 +98,7 @@ def run(args):
     (out/'acceptance.json').unlink(missing_ok=True)
     # Keep the actual harness and receipts with logs; caches remain disposable.
     source = Path(__file__).resolve().parent
-    shutil.copyfile(source/'goal_publication_test.go', out/'goal_publication_test.go')
+    prepare_harness(source, out)
     shutil.copytree(source/'cmd', out/'cmd', dirs_exist_ok=True)
     history=out/'history';history.mkdir(exist_ok=True)
     shutil.copyfile(source.parents[1]/'pkg/pgjobdb/installer/testdata/format11.sql',history/'format11.sql')
@@ -85,7 +108,8 @@ def run(args):
         consumer = scratch/'consumer'
         shutil.copytree(out/'cmd', consumer/'cmd')
         shutil.copytree(history,consumer/'history')
-        shutil.copyfile(out/'goal_publication_test.go', consumer/'goal_publication_test.go')
+        for path in out.glob('*_test.go'):
+            shutil.copyfile(path, consumer/path.name)
         (consumer/'go.mod').write_text(f'module example.test/pgjobdb-published-acceptance\n\ngo 1.25.5\n\nrequire (\n {PG} {args.version}\n {JOB} {JOB_VERSION}\n github.com/fergusstrange/embedded-postgres v1.32.0\n github.com/lib/pq v1.10.9\n)\n')
         env = dict(os.environ, GOWORK='off', GOFLAGS='', GOTOOLCHAIN='local',
                    GOPROXY='direct', GOPRIVATE='github.com/colony-2/*',
@@ -114,6 +138,7 @@ def run(args):
             command(['go','build','-tags=published_goals','-o',str(scratch/'identity'),'./cmd/identity'])
             identity=json.loads(command([str(scratch/'identity')],'linked-identity.json'))
             check_modules(identity.get('Deps', []),expected)
+            command(['go','build','-o',str(scratch/'pgjobdb-cli'),PG+'/cmd/jobdb'])
             command(['go','test','-tags=published_goals','-c','-o',str(scratch/'accept.test'),'.'])
             shutil.copyfile(consumer/'go.mod',out/'go.mod')
             shutil.copyfile(consumer/'go.sum',out/'go.sum')
@@ -123,7 +148,7 @@ def run(args):
             gid=65534 if os.geteuid()==0 else os.getegid()
             home=scratch/'test-home';home.mkdir();os.chown(home,uid,gid)
             testenv={k:v for k,v in env.items() if k in ('PATH','SSL_CERT_FILE','SSL_CERT_DIR')}
-            testenv.update(HOME=str(home),TMPDIR=str(home),LANG='C.UTF-8',LC_ALL='C.UTF-8',GOALS_HISTORY_FIXTURE=str(consumer/'history/format11.sql'))
+            testenv.update(HOME=str(home),TMPDIR=str(home),LANG='C.UTF-8',LC_ALL='C.UTF-8',GOALS_HISTORY_FIXTURE=str(consumer/'history/format11.sql'),PGJOBDB_TEST_CLI=str(scratch/'pgjobdb-cli'))
             drop={'user':uid,'group':gid,'extra_groups':[]} if os.geteuid()==0 else {}
             with (out/'behavior.log').open('w') as behavior:
                 done=subprocess.run([str(scratch/'accept.test'),'-test.v','-test.timeout=20m'],cwd=home,env=testenv,stdout=behavior,**drop,stderr=behavior,timeout=1230)

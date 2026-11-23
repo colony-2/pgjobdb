@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -108,24 +109,24 @@ func TestTaskCompletionRecoveryWithIndependentChapterDatabase(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer chapterDB.Close()
-				cfg := chapterpostgres.Config{BlobStoreURI: "blobfs://" + t.TempDir(), MaxInlineArtifactBytes: 1}
+				cfg := chapterpostgres.Config{Projects: projectfixture.Control(db), BlobStoreURI: "blobfs://" + t.TempDir(), MaxInlineArtifactBytes: 1}
 				chapters, err := chapterpostgres.NewSQLDB(ctx, chapterDB, cfg)
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer chapters.Close(ctx)
-				schemas, err := schemapostgres.NewSQLDB(ctx, db)
+				schemas, err := schemapostgres.NewSQLDB(ctx, db, projectfixture.Control(db))
 				if err != nil {
 					t.Fatal(err)
 				}
 				scheduler := &completionFaultScheduler{Scheduler: runtimeadapter.Scheduler{DB: db}}
 				chapterPort := &completionFaultChapters{ChapterLog: chapters}
-				runtime, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, db), Scheduler: scheduler, Chapters: chapterPort, Schemas: schemas})
+				runtime, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(db), Configurations: newConfigurationStore(t, ctx, db), Scheduler: scheduler, Chapters: chapterPort, Schemas: schemas})
 				if err != nil {
 					t.Fatal(err)
 				}
 				handle, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-					TenantId: "tenant", JobID: "recovery", JobType: "recover", Data: jobdb.NewTaskDataOrPanic(1),
+					TenantId: "c2", JobID: "recovery", JobType: "recover", Data: jobdb.NewTaskDataOrPanic(1),
 					ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"keep":true}`)},
 				}})
 				if err != nil {
@@ -213,20 +214,21 @@ func TestTaskCompletionRecoveryWithIndependentChapterDatabase(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer reopenedChaptersDB.Close()
+				cfg.Projects = projectfixture.Control(reopenedDB)
 				reopenedChapters, err := chapterpostgres.NewSQLDB(ctx, reopenedChaptersDB, cfg)
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer reopenedChapters.Close(ctx)
-				reopenedSchemas, err := schemapostgres.NewSQLDB(ctx, reopenedDB)
+				reopenedSchemas, err := schemapostgres.NewSQLDB(ctx, reopenedDB, projectfixture.Control(reopenedDB))
 				if err != nil {
 					t.Fatal(err)
 				}
-				recovered, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, reopenedDB), Scheduler: runtimeadapter.Scheduler{DB: reopenedDB}, Chapters: reopenedChapters, Schemas: reopenedSchemas})
+				recovered, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(reopenedDB), Configurations: newConfigurationStore(t, ctx, reopenedDB), Scheduler: runtimeadapter.Scheduler{DB: reopenedDB}, Chapters: reopenedChapters, Schemas: reopenedSchemas})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := reopenedDB.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id='tenant' AND job_id='recovery'`); err != nil {
+				if _, err := reopenedDB.ExecContext(ctx, `UPDATE pgjobdb.jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id='c2' AND job_id='recovery'`); err != nil {
 					t.Fatal(err)
 				}
 				taskLease, err := recovered.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: handle.JobKey, WorkerID: "task", Routes: []jobdb.Route{req.Route}})
@@ -263,22 +265,22 @@ func TestTaskCompletionRecoveryWithIndependentChapterDatabase(t *testing.T) {
 
 func TestTaskCompletionHTTPRejectsRemovedPayload(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
+		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: projectfixture.Control(db), BlobStoreURI: "blobfs://" + t.TempDir()})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer chapters.Close(ctx)
-		schemas, err := schemapostgres.NewSQLDB(ctx, db)
+		schemas, err := schemapostgres.NewSQLDB(ctx, db, projectfixture.Control(db))
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, db), Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas})
+		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(db), Configurations: newConfigurationStore(t, ctx, db), Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas})
 		if err != nil {
 			t.Fatal(err)
 		}
 		server := remoteruntime.NewConsumerServer(runtime)
 		for _, update := range []string{`null`, `{}`, `{"mode":"reset","expectedRevision":"0","value":{}}`} {
-			req := httptest.NewRequest(http.MethodPost, "/v1/tenants/tenant/jobs/job/chapters/1/commit-if-waiting", strings.NewReader(`{"route":{"jobType":"job","taskType":"external"},"data":{"data":2,"artifacts":[]},"clientPayloadUpdate":`+update+`}`))
+			req := httptest.NewRequest(http.MethodPost, "/v1/tenants/c2/jobs/job/chapters/1/commit-if-waiting", strings.NewReader(`{"route":{"jobType":"job","taskType":"external"},"data":{"data":2,"artifacts":[]},"clientPayloadUpdate":`+update+`}`))
 			req.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			server.ServeHTTP(response, req)
@@ -291,24 +293,24 @@ func TestTaskCompletionHTTPRejectsRemovedPayload(t *testing.T) {
 
 func TestTaskCompletionClaimsBeforeAppending(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
+		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: projectfixture.Control(db), BlobStoreURI: "blobfs://" + t.TempDir()})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer chapters.Close(ctx)
-		schemas, err := schemapostgres.NewSQLDB(ctx, db)
+		schemas, err := schemapostgres.NewSQLDB(ctx, db, projectfixture.Control(db))
 		if err != nil {
 			t.Fatal(err)
 		}
 		scheduler := &completionFaultScheduler{Scheduler: runtimeadapter.Scheduler{DB: db}}
 		port := &completionFaultChapters{ChapterLog: chapters}
-		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Configurations: newConfigurationStore(t, ctx, db), Scheduler: scheduler, Chapters: port, Schemas: schemas})
+		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(db), Configurations: newConfigurationStore(t, ctx, db), Scheduler: scheduler, Chapters: port, Schemas: schemas})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, scenario := range []string{"changed_slot", "unavailable", "cancelled", "concurrent"} {
 			t.Run(scenario, func(t *testing.T) {
-				handle, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: scenario, JobType: "recover", Data: jobdb.NewTaskDataOrPanic(1)}})
+				handle, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: scenario, JobType: "recover", Data: jobdb.NewTaskDataOrPanic(1)}})
 				if err != nil {
 					t.Fatal(err)
 				}

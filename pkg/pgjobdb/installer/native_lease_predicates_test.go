@@ -21,7 +21,7 @@ func TestNativeLeaseMetadataPredicates(t *testing.T) {
 			{"beta", `{"source":"api","team":"beta"}`},
 		} {
 			if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-				TenantID: "tenant", JobID: item.id, WorkerID: "submitter",
+				TenantID: "c2", JobID: item.id, WorkerID: "submitter",
 				JobType: "collect", AppMetadata: json.RawMessage(item.metadata),
 			}); err != nil {
 				t.Fatalf("submit %s: %v", item.id, err)
@@ -33,13 +33,13 @@ func TestNativeLeaseMetadataPredicates(t *testing.T) {
 				json.RawMessage(`"api"`), json.RawMessage(`"batch"`),
 			},
 		}}
-		if wrong, err := pgjobdb.GetJobLease(ctx, db, "tenant", "other", "worker",
+		if wrong, err := pgjobdb.GetJobLease(ctx, db, "c2", "other", "worker",
 			selector, pgjobdb.GetJobLeaseOptions{
 				MetadataPredicates: predicates,
 			}); err != nil || wrong != nil {
 			t.Fatalf("targeted predicate mismatch = %+v, %v", wrong, err)
 		}
-		opts := pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"},
+		opts := pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"c2"},
 			AppMetadataContains: json.RawMessage(`{"team":"alpha"}`),
 			MetadataPredicates:  predicates,
 		}

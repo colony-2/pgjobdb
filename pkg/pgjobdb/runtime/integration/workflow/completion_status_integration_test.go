@@ -63,7 +63,7 @@ func TestCompletionStatusAndDetail(t *testing.T) {
 	blobStoreURI, blobs := startChapterBlobStore(t)
 	defer blobs.Shutdown()
 
-	tenantID := "completion-status-tenant"
+	tenantID := workflowProjectID(t, postgresDSN, "completion-status-tenant")
 	engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
 		b.WithWorkerTenantId(tenantID).
 			PlusWorkers(completionSuccessWorker{}).

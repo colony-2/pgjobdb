@@ -13,18 +13,18 @@ import (
 func TestNativeAvailableRoutesAtTime(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		expiry := time.Now().Add(3 * time.Hour)
-		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: "task", WorkerID: "submit", JobType: "recipe", ExpiresAt: &expiry})
+		_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: "task", WorkerID: "submit", JobType: "recipe", ExpiresAt: &expiry})
 		require.NoError(t, err)
-		lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "task", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetJobLeaseOptions{})
+		lease, err := pgjobdb.GetJobLease(ctx, db, "c2", "task", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetJobLeaseOptions{})
 		require.NoError(t, err)
 		require.NotNil(t, lease)
 		task := pgjobdb.TaskWork{TaskType: "input", ResumeJobType: "recipe", InputOrdinal: 0, OutputOrdinal: 1, InputHash: "input"}
 		require.NoError(t, lease.Reschedule(ctx, db, pgjobdb.RescheduleRequest{RouteJobType: "recipe", WorkKind: pgjobdb.WorkKindTask, Task: &task, Alternate: &pgjobdb.AlternateRoute{JobType: "resume", After: time.Hour}}))
-		before, err := pgjobdb.GetJob(ctx, db, "tenant", "task")
+		before, err := pgjobdb.GetJob(ctx, db, "c2", "task")
 		require.NoError(t, err)
 		require.NotNil(t, before.AlternateAt)
 		list := func(at time.Time, route pgjobdb.Route, expected int) {
-			page, err := pgjobdb.ListJobs(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, AvailableRoutes: []pgjobdb.Route{route}, Now: at, Statuses: []pgjobdb.JobStatus{pgjobdb.JobStatusReady}})
+			page, err := pgjobdb.ListJobs(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, AvailableRoutes: []pgjobdb.Route{route}, Now: at, Statuses: []pgjobdb.JobStatus{pgjobdb.JobStatusReady}})
 			require.NoError(t, err)
 			require.Len(t, page.Jobs, expected)
 			if expected > 0 {
@@ -39,7 +39,7 @@ func TestNativeAvailableRoutesAtTime(t *testing.T) {
 		list(*before.AlternateAt, primary, 0)
 		list(*before.AlternateAt, alternate, 1)
 		list(expiry.Add(time.Second), alternate, 0)
-		after, err := pgjobdb.GetJob(ctx, db, "tenant", "task")
+		after, err := pgjobdb.GetJob(ctx, db, "c2", "task")
 		require.NoError(t, err)
 		require.Equal(t, before, after, "listing must not promote the alternate or acquire a lease")
 	})
@@ -48,10 +48,10 @@ func TestNativeAvailableRoutesAtTime(t *testing.T) {
 func TestNativeAvailableRouteCursor(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, id := range []pgjobdb.JobID{"one", "two"} {
-			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: pgjobdb.JobType(id)})
+			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: id, WorkerID: "submit", JobType: pgjobdb.JobType(id)})
 			require.NoError(t, err)
 		}
-		opts := pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, AvailableRoutes: []pgjobdb.Route{{JobType: "one"}, {JobType: "two"}}, PageSize: 1}
+		opts := pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, AvailableRoutes: []pgjobdb.Route{{JobType: "one"}, {JobType: "two"}}, PageSize: 1}
 		first, err := pgjobdb.ListJobs(ctx, db, opts)
 		require.NoError(t, err)
 		require.Len(t, first.Jobs, 1)

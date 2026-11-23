@@ -34,7 +34,7 @@ func runScoped(t *testing.T, rt jobdb.ConsumerRuntime, key jobdb.JobKey, w wf.Ex
 }
 func submitScoped(t *testing.T, rt jobdb.ConsumerRuntime, name string) jobdb.JobKey {
 	t.Helper()
-	h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: name, Data: jobdb.NewTaskDataOrPanic("input")}})
+	h, err := celltest.Submit(rt, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobType: name, Data: jobdb.NewTaskDataOrPanic("input")}})
 	require.NoError(t, err)
 	return h.JobKey
 }
@@ -74,7 +74,7 @@ func TestPostgresExecutionScopes(t *testing.T) {
 				require.Equal(t, "header", history.Execution[0].Record.Kind)
 				before, err := rt.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: key})
 				require.NoError(t, err)
-				engine, err := wf.NewEngineBuilder().WithRuntime(rt).WithWorkerTenantId("tenant").PlusWorkers(worker, task).BuildEngine()
+				engine, err := wf.NewEngineBuilder().WithRuntime(rt).WithWorkerTenantId("c2").PlusWorkers(worker, task).BuildEngine()
 				require.NoError(t, err)
 				replay, err := engine.ReplayJobRun(ctx, wf.ReplayRunRequest{JobKey: key})
 				require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestPostgresExecutionScopes(t *testing.T) {
 				}}
 				key := submitScoped(t, rt, worker.Name())
 				require.Equal(t, wf.JobRunSuspended, runScoped(t, rt, key, worker).Status)
-				engine, err := wf.NewEngineBuilder().WithRuntime(rt).WithWorkerTenantId("tenant").PlusWorkers(worker).BuildEngine()
+				engine, err := wf.NewEngineBuilder().WithRuntime(rt).WithWorkerTenantId("c2").PlusWorkers(worker).BuildEngine()
 				require.NoError(t, err)
 				handle, err := engine.GetWaitingTask(ctx, key)
 				require.NoError(t, err)
@@ -152,7 +152,7 @@ func TestPostgresExecutionScopes(t *testing.T) {
 				require.NoError(t, err)
 				require.JSONEq(t, `"patched"`, string(raw))
 				require.EqualValues(t, 3, runs.Load())
-				engine, err := wf.NewEngineBuilder().WithRuntime(rt).WithWorkerTenantId("tenant").PlusWorkers(worker, task).BuildEngine()
+				engine, err := wf.NewEngineBuilder().WithRuntime(rt).WithWorkerTenantId("c2").PlusWorkers(worker, task).BuildEngine()
 				require.NoError(t, err)
 				_, err = engine.ReplayJobRun(ctx, wf.ReplayRunRequest{JobKey: restarted.JobKey})
 				require.NoError(t, err)

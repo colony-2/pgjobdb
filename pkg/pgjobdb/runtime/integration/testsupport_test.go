@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"math/rand"
 	"path/filepath"
 	"testing"
@@ -14,25 +15,14 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb/configuration"
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	_ "github.com/lib/pq"
-
-	pgjobdbinstaller "github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
 )
 
 func runDatabaseTest(t *testing.T, fn func(context.Context, *sql.DB)) {
 	t.Helper()
-	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
-		installer := pgjobdbinstaller.Installer{DB: db}
-		if err := installer.Apply(ctx); err != nil {
-			t.Fatalf("apply installer: %v", err)
-		}
-		if err := installer.Verify(ctx); err != nil {
-			t.Fatalf("verify installer: %v", err)
-		}
-		fn(ctx, db)
-	})
+	withPreparedDatabase(t, fn)
 }
 
-func withBareDatabase(t *testing.T, fn func(context.Context, *sql.DB)) {
+func withPreparedDatabase(t *testing.T, fn func(context.Context, *sql.DB)) {
 	t.Helper()
 	port := uint32(6000 + rand.Intn(1000))
 	tempDir := t.TempDir()
@@ -56,12 +46,15 @@ func withBareDatabase(t *testing.T, fn func(context.Context, *sql.DB)) {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), time.Minute)
 	t.Cleanup(cancel)
+	if err := projectfixture.Prepare(ctx, sqlDB); err != nil {
+		t.Fatal(err)
+	}
 	fn(ctx, sqlDB)
 }
 
 func newConfigurationStore(t *testing.T, ctx context.Context, db *sql.DB) configuration.Store {
 	t.Helper()
-	store, err := configuration.NewSQLStore(ctx, db, configuration.Postgres)
+	store, err := configuration.NewSQLStore(ctx, db, configuration.Postgres, projectfixture.Control(db))
 	if err != nil {
 		t.Fatal(err)
 	}

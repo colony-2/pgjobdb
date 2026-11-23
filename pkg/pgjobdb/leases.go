@@ -99,6 +99,11 @@ func getWork(ctx context.Context, db DB, worker WorkerID, selector WorkSelector,
 	if len(opts.TenantIDs) == 0 {
 		return nil, fmt.Errorf("pgjobdb: tenant ids are required")
 	}
+	for _, id := range tenantIDs {
+		if err := AdmitProjectWrite(ctx, db, id); err != nil {
+			return nil, err
+		}
+	}
 	row := db.QueryRowContext(ctx, `SELECT * FROM pgjobdb.get_native_work(
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, string(worker),
 		pq.Array(tenantIDs), pq.Array(jobTypes), string(tasks), string(metadata),
@@ -198,6 +203,9 @@ func KeepAliveLease(ctx context.Context, db DB, identity LeaseIdentity,
 	// returning an error even though the mutation and canonical event persisted.
 	// The lateral argument depends on the materialized renewal result, so the
 	// validating function runs after the mutation while its row lock is held.
+	if err := AdmitProjectWrite(ctx, db, string(identity.TenantID)); err != nil {
+		return nil, err
+	}
 	row := db.QueryRowContext(ctx, `WITH renewed AS MATERIALIZED (
       SELECT pgjobdb.renew_native_lease($1,$2,$3,$4,$5) AS expiry
     ) SELECT v.* FROM renewed r CROSS JOIN LATERAL pgjobdb.validate_native_lease(

@@ -3,6 +3,7 @@ package jobdbtest
 import (
 	"context"
 	"encoding/json"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -48,10 +49,10 @@ func TestPostgresTaskDelegation(t *testing.T) {
 		for _, path := range []string{"raw-runner", "namespaced-runner", "harness-engine"} {
 			t.Run(transport+"/"+path, func(t *testing.T) {
 				ctx := celltest.Context(context.Background())
-				embedded, err := pgruntime.StartEmbeddedRuntime(ctx)
+				embedded, err := pgruntime.StartEmbeddedRuntime(ctx, projectfixture.Prepare)
 				require.NoError(t, err) // Required PostgreSQL failures must fail, never skip.
 				t.Cleanup(embedded.Shutdown)
-				backend := NewNamespacedBackend(embedded.Runtime, "")
+				backend := embedded.Runtime
 				handler := remote.NewConsumerServer(backend)
 				if transport == "signed" {
 					handler, err = remote.NewConsumerServerWithOptions(backend, remote.ServerOptions{
@@ -65,7 +66,7 @@ func TestPostgresTaskDelegation(t *testing.T) {
 				require.NoError(t, err)
 				var rt jobdb.ConsumerRuntime = client
 				if path != "raw-runner" {
-					rt = NewNamespacedClient(client, "client-")
+					rt = NewProjectClient(client, embedded.Runtime, "client-")
 					assertConsumerOnly(t, rt)
 				}
 				var factory func(workflow.WorkSet) *BuiltRuntimeHarness
@@ -102,7 +103,7 @@ func runTaskDelegation(t *testing.T, rt jobdb.ConsumerRuntime, factory func(work
 			shutdown()
 		}
 	}()
-	q := jobdb.SubmitJob{TenantId: "tenant", Cell: "test", CellRepo: "example.test/test", JobType: worker.Name(), Data: jobdb.NewTaskDataOrPanic(nil), Schema: &jobdb.JobSchemaSelector{Schema: json.RawMessage(`{"chapterShape":{"type":"object"}}`)}}
+	q := jobdb.SubmitJob{TenantId: "c2", Cell: "test", CellRepo: "example.test/test", JobType: worker.Name(), Data: jobdb.NewTaskDataOrPanic(nil), Schema: &jobdb.JobSchemaSelector{Schema: json.RawMessage(`{"chapterShape":{"type":"object"}}`)}}
 	if factory != nil {
 		h := factory(MustWorkSet(t, worker, task))
 		rt = h.Runtime

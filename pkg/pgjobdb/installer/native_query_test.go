@@ -15,25 +15,25 @@ func TestNativeGetJobKeepsArchivedFields(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		future := time.Now().UTC().Add(time.Hour)
 		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-			TenantID: "tenant", JobID: "future", WorkerID: "submitter",
+			TenantID: "c2", JobID: "future", WorkerID: "submitter",
 			JobType: "collect", AvailableAt: &future,
 			AppMetadata: json.RawMessage(`{"source":"api"}`),
 		}); err != nil {
 			t.Fatalf("submit future: %v", err)
 		}
-		active, err := pgjobdb.GetJob(ctx, db, "tenant", "future")
+		active, err := pgjobdb.GetJob(ctx, db, "c2", "future")
 		if err != nil || active.Status != pgjobdb.JobStatusAwaitingFuture ||
 			active.Store != pgjobdb.JobStoreActive || active.ExpiresAt != nil ||
 			active.RouteJobType != "collect" || active.WorkKind != pgjobdb.WorkKindJob ||
 			string(active.AppMetadata) != `{"source": "api"}` {
 			t.Fatalf("active detail = %+v, %v", active, err)
 		}
-		if _, err := pgjobdb.GetJob(ctx, db, "tenant", "missing"); !errors.Is(err, pgjobdb.ErrJobNotFound) {
+		if _, err := pgjobdb.GetJob(ctx, db, "c2", "missing"); !errors.Is(err, pgjobdb.ErrJobNotFound) {
 			t.Fatalf("missing job error = %v", err)
 		}
 
 		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-			TenantID: "tenant", JobID: "task", WorkerID: "submitter",
+			TenantID: "c2", JobID: "task", WorkerID: "submitter",
 			JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit task: %v", err)
@@ -42,7 +42,7 @@ func TestNativeGetJobKeepsArchivedFields(t *testing.T) {
 			TaskType: "download", ResumeJobType: "collect",
 			InputOrdinal: 7, OutputOrdinal: 8, InputHash: "sha256:task",
 		}
-		owner, err := pgjobdb.GetJobLease(ctx, db, "tenant", "task", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}, pgjobdb.GetJobLeaseOptions{})
+		owner, err := pgjobdb.GetJobLease(ctx, db, "c2", "task", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}, pgjobdb.GetJobLeaseOptions{})
 		if err != nil || owner == nil {
 			t.Fatalf("lease: %v", err)
 		}
@@ -56,17 +56,17 @@ func TestNativeGetJobKeepsArchivedFields(t *testing.T) {
 			}); err != nil {
 			t.Fatalf("route task: %v", err)
 		}
-		current, err := pgjobdb.GetJob(ctx, db, "tenant", "task")
+		current, err := pgjobdb.GetJob(ctx, db, "c2", "task")
 		if err != nil || current.WorkKind != pgjobdb.WorkKindTask ||
 			current.TaskInputOrdinal == nil || *current.TaskInputOrdinal != 7 {
 			t.Fatalf("current task detail = %+v, %v", current, err)
 		}
-		if err := pgjobdb.CompleteUnheldJob(ctx, db, "tenant", "task", "worker",
+		if err := pgjobdb.CompleteUnheldJob(ctx, db, "c2", "task", "worker",
 			pgjobdb.Completion{Status: pgjobdb.CompletionFailedApp,
 				Detail: "download failed", ErrorKind: "DownloadError"}); err != nil {
 			t.Fatalf("complete task: %v", err)
 		}
-		archived, err := pgjobdb.GetJob(ctx, db, "tenant", "task")
+		archived, err := pgjobdb.GetJob(ctx, db, "c2", "task")
 		if err != nil || archived.Store != pgjobdb.JobStoreArchived ||
 			archived.Status != pgjobdb.JobStatusCompleted || archived.ArchivedAt == nil ||
 			archived.WorkKind != pgjobdb.WorkKindTask ||
@@ -85,7 +85,7 @@ func TestNativeGetJobKeepsArchivedFields(t *testing.T) {
 			*archived.CompletionErrorKind != "DownloadError" {
 			t.Fatalf("archived detail = %+v, %v", archived, err)
 		}
-		status, err := pgjobdb.GetJobStatus(ctx, db, "tenant", "task")
+		status, err := pgjobdb.GetJobStatus(ctx, db, "c2", "task")
 		if err != nil || status.Status != pgjobdb.JobStatusCompleted ||
 			status.Store != pgjobdb.JobStoreArchived || status.ArchivedAt == nil {
 			t.Fatalf("archived status = %+v, %v", status, err)

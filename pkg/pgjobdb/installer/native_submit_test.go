@@ -14,7 +14,7 @@ func TestNativeSubmitJob(t *testing.T) {
 
 		timeout := int64(30000)
 		req := pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-			TenantID: "tenant", JobID: "job-1", WorkerID: "submitter", JobType: "collect",
+			TenantID: "c2", JobID: "job-1", WorkerID: "submitter", JobType: "collect",
 			RunPolicy:   pgjobdb.RunPolicy{InvocationTimeoutMillis: &timeout},
 			AppMetadata: json.RawMessage(`{"source":"api"}`),
 			Runtime: pgjobdb.RuntimeMetadata{
@@ -33,7 +33,7 @@ func TestNativeSubmitJob(t *testing.T) {
 			f.run_policy::text, f.app_metadata::text,
 			(SELECT c.client_payload::text FROM pgjobdb.job_client_state c WHERE c.tenant_id=j.tenant_id AND c.job_id=j.job_id)
 			FROM pgjobdb.job_facts f JOIN pgjobdb.jobs j USING (tenant_id, job_id)
-			WHERE f.tenant_id = 'tenant' AND f.job_id = 'job-1'`).Scan(
+			WHERE f.tenant_id = 'c2' AND f.job_id = 'job-1'`).Scan(
 			&jobType, &route, &workKind, &schemaHash, &parentID,
 			&policy, &metadata, &leasePayload,
 		); err != nil {
@@ -71,7 +71,7 @@ func TestNativeSubmitJob(t *testing.T) {
 		}
 		var waitingFor string
 		if err := db.QueryRowContext(ctx, `SELECT wait_for[1] FROM pgjobdb.jobs
-			WHERE tenant_id = 'tenant' AND job_id = 'job-2'`).Scan(&waitingFor); err != nil {
+			WHERE tenant_id = 'c2' AND job_id = 'job-2'`).Scan(&waitingFor); err != nil {
 			t.Fatal(err)
 		}
 		if waitingFor != "job-1" {
@@ -85,7 +85,7 @@ func TestNativeSubmitJob(t *testing.T) {
 		}
 		var factCount int
 		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.job_facts
-			WHERE tenant_id = 'tenant' AND job_id = 'job-3'`).Scan(&factCount); err != nil {
+			WHERE tenant_id = 'c2' AND job_id = 'job-3'`).Scan(&factCount); err != nil {
 			t.Fatal(err)
 		}
 		if factCount != 0 {

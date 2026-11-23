@@ -157,8 +157,16 @@ func (i Installer) ApplyWithReport(ctx context.Context, destination io.Writer) (
 			return CommitConfirmation{}, err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, pgsql.TransactionSQL); err != nil {
-		return CommitConfirmation{}, fmt.Errorf("pgjobdb: transactional conversion: %w", err)
+	var projectsInstalled bool
+	if version == 13 {
+		if err = tx.QueryRowContext(ctx, `SELECT to_regclass('pgjobdb.project_installation') IS NOT NULL`).Scan(&projectsInstalled); err != nil {
+			return CommitConfirmation{}, err
+		}
+	}
+	if !projectsInstalled {
+		if _, err = tx.ExecContext(ctx, pgsql.TransactionSQL); err != nil {
+			return CommitConfirmation{}, fmt.Errorf("pgjobdb: transactional conversion: %w", err)
+		}
 	}
 	if err = validateInput(ctx, tx, 13); err != nil {
 		return CommitConfirmation{}, fmt.Errorf("pgjobdb: validate converted contract: %w", err)

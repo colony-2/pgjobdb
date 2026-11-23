@@ -57,7 +57,7 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 		metadata := json.RawMessage(`{"team":"blue","nested":{"large":"` + strings.Repeat("m", 4096) + `"}}`)
 		for i := 0; i < 240; i++ {
 			id := pgjobdb.JobID(fmt.Sprintf("consumer-%03d", i))
-			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "test", JobType: "consumer", AppMetadata: metadata, Dependencies: []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: producer.GoalID}, Condition: jobdb.JobPrereqSuccess}}, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"large":"` + strings.Repeat("p", 32768) + `"}`)}})
+			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: id, WorkerID: "test", JobType: "consumer", AppMetadata: metadata, Dependencies: []jobdb.Dependency{{Target: jobdb.DependencyTarget{GoalID: producer.GoalID}, Condition: jobdb.JobPrereqSuccess}}, ClientPayloadUpdate: &pgjobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"large":"` + strings.Repeat("p", 32768) + `"}`)}})
 			require.NoError(t, err)
 
 		}
@@ -70,7 +70,7 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 		for _, size := range []int{1, 100, 200} {
 			t.Run(fmt.Sprint(size), func(t *testing.T) {
 				d := &listQueryRecorder{DB: db}
-				opts := pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, JobTypes: []pgjobdb.JobType{"consumer"}, PageSize: size}
+				opts := pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, JobTypes: []pgjobdb.JobType{"consumer"}, PageSize: size}
 				seen := map[pgjobdb.JobID]bool{}
 				var previous pgjobdb.JobID
 				for {
@@ -105,7 +105,7 @@ func TestCompactListStoragePagesAndPlans(t *testing.T) {
 			})
 		}
 		d := &listQueryRecorder{DB: db}
-		page, err := pgjobdb.ListJobSummaries(ctx, d, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, GoalIDs: []string{secondary.GoalID}, JobTypes: []pgjobdb.JobType{"consumer"}, MetadataPredicates: []pgjobdb.MetadataPredicate{{Path: []string{"team"}, Values: []json.RawMessage{json.RawMessage(`"blue"`)}}}, PageSize: 100})
+		page, err := pgjobdb.ListJobSummaries(ctx, d, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, GoalIDs: []string{secondary.GoalID}, JobTypes: []pgjobdb.JobType{"consumer"}, MetadataPredicates: []pgjobdb.MetadataPredicate{{Path: []string{"team"}, Values: []json.RawMessage{json.RawMessage(`"blue"`)}}}, PageSize: 100})
 		require.NoError(t, err)
 		require.Empty(t, page.Jobs)
 		require.Equal(t, 2, d.queries)
@@ -158,7 +158,7 @@ func TestCompactListWaitObservationAndRoutes(t *testing.T) {
 		wait.Deadline = &deadline
 		require.NoError(t, lease.Reschedule(ctx, db, pgjobdb.RescheduleRequest{RouteJobType: "work", WorkKind: pgjobdb.WorkKindJob, DependencyWait: wait}))
 		for _, at := range []time.Time{deadline.Add(-time.Microsecond), deadline, deadline.Add(time.Microsecond)} {
-			page, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, JobKeys: []pgjobdb.JobKey{{TenantID: "tenant", JobID: "consumer"}}, Now: at})
+			page, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, JobKeys: []pgjobdb.JobKey{{TenantID: "c2", JobID: "consumer"}}, Now: at})
 			require.NoError(t, err)
 			require.Len(t, page.Jobs, 1)
 			if at.Before(deadline) {
@@ -175,18 +175,18 @@ func TestCompactListWaitObservationAndRoutes(t *testing.T) {
 		// Stored terminal waits must not be re-evaluated or presented as blocking.
 		_, err := db.Exec(`UPDATE pgjobdb.dependency_waits SET state='SATISFIED' WHERE job_id='consumer'`)
 		require.NoError(t, err)
-		page, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, JobKeys: []pgjobdb.JobKey{{TenantID: "tenant", JobID: "consumer"}}, Now: deadline.Add(-time.Minute)})
+		page, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, JobKeys: []pgjobdb.JobKey{{TenantID: "c2", JobID: "consumer"}}, Now: deadline.Add(-time.Minute)})
 		require.NoError(t, err)
 		require.Nil(t, page.Jobs[0].BlockingWaitSummary)
 		require.Equal(t, pgjobdb.JobStatusReady, page.Jobs[0].Status)
 		nativeGoalJob(t, ctx, db, "task")
 		l := nativeGoalLease(t, ctx, db, "task")
 		require.NoError(t, l.Reschedule(ctx, db, pgjobdb.RescheduleRequest{RouteJobType: "work", WorkKind: pgjobdb.WorkKindTask, Task: &pgjobdb.TaskWork{TaskType: "input", ResumeJobType: "work", InputOrdinal: 1, OutputOrdinal: 2, InputHash: "hash"}, Alternate: &pgjobdb.AlternateRoute{JobType: "alternate", After: time.Hour}}))
-		detail, err := pgjobdb.GetJob(ctx, db, "tenant", "task")
+		detail, err := pgjobdb.GetJob(ctx, db, "c2", "task")
 		require.NoError(t, err)
 		for _, at := range []time.Time{detail.AlternateAt.Add(-time.Microsecond), *detail.AlternateAt} {
 			for _, route := range []pgjobdb.Route{{JobType: "work", TaskType: "input"}, {JobType: "alternate"}} {
-				page, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, AvailableRoutes: []pgjobdb.Route{route}, Now: at})
+				page, err := pgjobdb.ListJobSummaries(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, AvailableRoutes: []pgjobdb.Route{route}, Now: at})
 				require.NoError(t, err)
 				if (route.JobType == "work") == at.Before(*detail.AlternateAt) {
 					require.Len(t, page.Jobs, 1)

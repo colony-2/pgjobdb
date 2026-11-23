@@ -16,13 +16,16 @@ type configurationAdapter struct {
 }
 
 func (a configurationAdapter) GetTenantConfiguration(ctx context.Context, tenant string) (jobdb.ConfigurationSnapshot, error) {
+	ctx = a.ns.prefixContext(ctx)
 	return a.port.GetTenantConfiguration(ctx, a.ns.prefixTenant(tenant))
 }
 func (a configurationAdapter) SetTenantConfigurationValue(ctx context.Context, q jobdb.SetTenantConfigurationValueRequest) (string, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.TenantID = a.ns.prefixTenant(q.TenantID)
 	return a.port.SetTenantConfigurationValue(ctx, q)
 }
 func (a configurationAdapter) RemoveTenantConfigurationValue(ctx context.Context, q jobdb.RemoveTenantConfigurationValueRequest) (string, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.TenantID = a.ns.prefixTenant(q.TenantID)
 	return a.port.RemoveTenantConfigurationValue(ctx, q)
 }
@@ -33,24 +36,28 @@ type schemaAdapter struct {
 }
 
 func (a schemaAdapter) RegisterJobSchema(ctx context.Context, q jobdb.RegisterJobSchemaRequest) (jobdb.JobSchemaInfo, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.TenantId = a.ns.prefixTenant(q.TenantId)
 	v, e := a.port.RegisterJobSchema(ctx, q)
 	v.TenantId = a.ns.stripTenant(v.TenantId)
 	return v, e
 }
 func (a schemaAdapter) GetJobSchema(ctx context.Context, q jobdb.JobSchemaKey) (jobdb.JobSchemaInfo, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.TenantId = a.ns.prefixTenant(q.TenantId)
 	v, e := a.port.GetJobSchema(ctx, q)
 	v.TenantId = a.ns.stripTenant(v.TenantId)
 	return v, e
 }
 func (a schemaAdapter) ArchiveJobSchema(ctx context.Context, q jobdb.JobSchemaKey) (jobdb.JobSchemaInfo, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.TenantId = a.ns.prefixTenant(q.TenantId)
 	v, e := a.port.ArchiveJobSchema(ctx, q)
 	v.TenantId = a.ns.stripTenant(v.TenantId)
 	return v, e
 }
 func (a schemaAdapter) ListJobSchemas(ctx context.Context, q jobdb.ListJobSchemasRequest) (jobdb.ListJobSchemasResponse, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.TenantId = a.ns.prefixTenant(q.TenantId)
 	v, e := a.port.ListJobSchemas(ctx, q)
 	v.Schemas = slices.Clone(v.Schemas)
@@ -66,6 +73,7 @@ type deletionAdapter struct {
 }
 
 func (a deletionAdapter) DeleteJobs(ctx context.Context, q jobdb.DeleteJobsRequest) (jobdb.DeleteJobsResponse, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.TenantID = a.ns.prefixTenant(q.TenantID)
 	return a.port.DeleteJobs(ctx, q)
 }
@@ -150,6 +158,13 @@ func NewNamespacedClient(rt clientPorts, prefix string) jobdb.ConsumerRuntime {
 	return &namespacedClient{ns, configurationAdapter{ns, rt}, schemaAdapter{ns, rt}, deletionAdapter{ns, rt}, delegationAdapter{ns, rt}}
 }
 
+// NewProjectClient maps symbolic conformance identities before HTTP signs or
+// validates lease credentials. The production server always sees real IDs.
+func NewProjectClient(rt clientPorts, catalog jobdb.ProjectCatalog, prefix string) jobdb.ConsumerRuntime {
+	ns := &tenantNamespacedRuntime{runtime: rt, prefix: prefix, projects: catalog, projectIDs: map[string]string{}, projectNames: map[string]string{}}
+	return &namespacedClient{ns, configurationAdapter{ns, rt}, schemaAdapter{ns, rt}, deletionAdapter{ns, rt}, delegationAdapter{ns, rt}}
+}
+
 type LeaseTransport interface {
 	RenewExecutionLeaseByID(context.Context, jobdb.JobKey, string, string, time.Duration) (jobdb.RenewableExecutionLease, error)
 	KeepAliveLeaseByID(context.Context, jobdb.JobKey, string, string, time.Duration) error
@@ -205,48 +220,59 @@ func (r *namespacedBackend) SecretResolutionLimits() jobdb.SecretLimits {
 	return r.limits.SecretResolutionLimits()
 }
 func (a transportAdapter) KeepAliveLeaseByID(ctx context.Context, k jobdb.JobKey, l, w string, d time.Duration) error {
+	ctx = a.ns.prefixContext(ctx)
 	return a.port.KeepAliveLeaseByID(ctx, a.ns.prefixJobKey(k), l, w, d)
 }
 func (a transportAdapter) KeepAliveLeaseByIDWithExpiry(ctx context.Context, k jobdb.JobKey, l, w string, d time.Duration) (time.Time, error) {
+	ctx = a.ns.prefixContext(ctx)
 	return a.port.KeepAliveLeaseByIDWithExpiry(ctx, a.ns.prefixJobKey(k), l, w, d)
 }
 func (a transportAdapter) ValidateExecutionLeaseByID(ctx context.Context, k jobdb.JobKey, l, w string) (jobdb.LeaseValidity, error) {
+	ctx = a.ns.prefixContext(ctx)
 	return a.port.ValidateExecutionLeaseByID(ctx, a.ns.prefixJobKey(k), l, w)
 }
 func (a transportAdapter) CompleteJobWithLeaseByID(ctx context.Context, k jobdb.JobKey, l, w string, q jobdb.CompleteExecutionRequest) error {
+	ctx = a.ns.prefixContext(ctx)
 	return a.port.CompleteJobWithLeaseByID(ctx, a.ns.prefixJobKey(k), l, w, q)
 }
 func (a transportAdapter) RescheduleJobWithLeaseByID(ctx context.Context, k jobdb.JobKey, l, w string, q jobdb.RescheduleExecutionRequest) error {
+	ctx = a.ns.prefixContext(ctx)
 	return a.port.RescheduleJobWithLeaseByID(ctx, a.ns.prefixJobKey(k), l, w, q)
 }
 func (a transportAdapter) SubmitJobWithLeaseByID(ctx context.Context, k jobdb.JobKey, l, w string, q jobdb.SubmitJobRequest) (jobdb.JobHandle, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.Job.TenantId = a.ns.prefixTenant(q.Job.TenantId)
 	v, e := a.port.SubmitJobWithLeaseByID(ctx, a.ns.prefixJobKey(k), l, w, q)
 	v.JobKey = a.ns.stripJobKey(v.JobKey)
 	return v, e
 }
 func (a transportAdapter) SubmitRestartJobWithLeaseByID(ctx context.Context, k jobdb.JobKey, l, w string, q jobdb.SubmitRestartJobRequest) (jobdb.JobHandle, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.Job.PriorJobKey = a.ns.prefixJobKey(q.Job.PriorJobKey)
 	v, e := a.port.SubmitRestartJobWithLeaseByID(ctx, a.ns.prefixJobKey(k), l, w, q)
 	v.JobKey = a.ns.stripJobKey(v.JobKey)
 	return v, e
 }
 func (a transportAdapter) StartOrAppendJobWithLeaseByID(ctx context.Context, k jobdb.JobKey, l, w string, q jobdb.StartOrAppendJobRequest) (jobdb.JobHandle, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.Job.Job.TenantId = a.ns.prefixTenant(q.Job.Job.TenantId)
 	v, e := a.port.StartOrAppendJobWithLeaseByID(ctx, a.ns.prefixJobKey(k), l, w, q)
 	v.JobKey = a.ns.stripJobKey(v.JobKey)
 	return v, e
 }
 func (a transportAdapter) CreateCellWithLeaseByID(ctx context.Context, k jobdb.JobKey, l, w string, q jobdb.CreateCellRequest) (jobdb.Cell, error) {
+	ctx = a.ns.prefixContext(ctx)
 	q.TenantID = a.ns.prefixTenant(q.TenantID)
 	v, e := a.port.CreateCellWithLeaseByID(ctx, a.ns.prefixJobKey(k), l, w, q)
 	v.TenantID = a.ns.stripTenant(v.TenantID)
 	return v, e
 }
 func (a transportAdapter) LookupCellWithLeaseByID(ctx context.Context, k jobdb.JobKey, l, w, n string) (jobdb.ResolvedCell, error) {
+	ctx = a.ns.prefixContext(ctx)
 	return a.port.LookupCellWithLeaseByID(ctx, a.ns.prefixJobKey(k), l, w, n)
 }
 func (a transportAdapter) ResolveCellWithLeaseByID(ctx context.Context, k jobdb.JobKey, l, w, n string) (jobdb.ResolvedCell, error) {
+	ctx = a.ns.prefixContext(ctx)
 	return a.port.ResolveCellWithLeaseByID(ctx, a.ns.prefixJobKey(k), l, w, n)
 }
 
@@ -267,6 +293,7 @@ func (a developmentAdapter) RemoveDevSecret(ctx context.Context, t, n string) er
 }
 
 func (a transportAdapter) RenewExecutionLeaseByID(ctx context.Context, k jobdb.JobKey, l, w string, d time.Duration) (jobdb.RenewableExecutionLease, error) {
+	ctx = a.ns.prefixContext(ctx)
 	lease, err := a.port.RenewExecutionLeaseByID(ctx, a.ns.prefixJobKey(k), l, w, d)
 	if err != nil {
 		return nil, err
@@ -330,4 +357,15 @@ func (r *namespacedBackend) JobGoalCapabilities() jobdb.JobGoalCapabilities {
 }
 func (r *namespacedStorage) JobGoalCapabilities() jobdb.JobGoalCapabilities {
 	return r.limits.JobGoalCapabilities()
+}
+
+// NewProjectBackend explicitly creates/maps real catalog identities for upstream
+// conformance cases that fix symbolic tenant names. Production never uses this
+// adapter; project acceptance tests call the actual PostgreSQL runtime directly.
+func NewProjectBackend(rt interface {
+	backendPorts
+	jobdb.ProjectCatalog
+}, prefix string) jobdb.ConsumerRuntime {
+	ns := &tenantNamespacedRuntime{runtime: rt, prefix: prefix, projects: rt, projectIDs: map[string]string{}, projectNames: map[string]string{}}
+	return &namespacedBackend{ns, configurationAdapter{ns, rt}, schemaAdapter{ns, rt}, deletionAdapter{ns, rt}, transportAdapter{ns, rt}, rt, rt}
 }

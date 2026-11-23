@@ -13,13 +13,13 @@ import (
 func TestNativeLeaseControls(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-			TenantID: "tenant", JobID: "job", WorkerID: "submitter", JobType: "collect",
+			TenantID: "c2", JobID: "job", WorkerID: "submitter", JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit: %v", err)
 		}
 		selector := pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}
 		lease, err := pgjobdb.GetWork(ctx, db, "worker", selector,
-			pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}, LeaseDuration: 5 * time.Second})
+			pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"c2"}, LeaseDuration: 5 * time.Second})
 		if err != nil || lease == nil {
 			t.Fatalf("get work = %+v, %v", lease, err)
 		}
@@ -46,7 +46,7 @@ func TestNativeLeaseControls(t *testing.T) {
 			t.Fatal("expected wrong worker renewal to fail")
 		}
 		if err := pgjobdb.CancelJob(ctx, db, pgjobdb.CancelJobRequest{
-			TenantID: "tenant", JobID: "job", WorkerID: "operator", Reason: "stop",
+			TenantID: "c2", JobID: "job", WorkerID: "operator", Reason: "stop",
 		}); err != nil {
 			t.Fatalf("cancel job: %v", err)
 		}
@@ -62,18 +62,18 @@ func TestNativeLeaseControls(t *testing.T) {
 		}
 
 		if _, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test",
-			TenantID: "tenant", JobID: "expired", WorkerID: "submitter", JobType: "collect",
+			TenantID: "c2", JobID: "expired", WorkerID: "submitter", JobType: "collect",
 		}); err != nil {
 			t.Fatalf("submit expired test job: %v", err)
 		}
 		expiring, err := pgjobdb.GetWork(ctx, db, "worker", selector,
-			pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}})
+			pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"c2"}})
 		if err != nil || expiring == nil {
 			t.Fatalf("lease expiring job = %+v, %v", expiring, err)
 		}
 		if _, err := db.ExecContext(ctx, `UPDATE pgjobdb.jobs
 			SET lease_expires_at = clock_timestamp() - interval '1 second'
-			WHERE tenant_id = 'tenant' AND job_id = 'expired'`); err != nil {
+			WHERE tenant_id = 'c2' AND job_id = 'expired'`); err != nil {
 			t.Fatalf("expire lease: %v", err)
 		}
 		if _, err := pgjobdb.ValidateLease(ctx, db, expiring.Identity()); !errors.Is(err, pgjobdb.ErrLeaseLost) {

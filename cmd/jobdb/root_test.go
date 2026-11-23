@@ -21,7 +21,7 @@ func TestAdministrativeIngressAuthorizesPrimarySelection(t *testing.T) {
 		authority, ok := jobdb.CellAuthorityFromContext(ctx)
 		require.True(t, ok)
 		require.True(t, authority.Permissions["goals.select-primary"])
-		require.NoError(t, jobdb.AuthorizePrimaryGoalSelection(ctx, jobdb.GoalKey{TenantId: "tenant", GoalID: "goal"}, jobdb.ResolvedCell{CellID: "cell", Cell: "test", CellRepo: "example.test/test"}))
+		require.NoError(t, jobdb.AuthorizePrimaryGoalSelection(ctx, jobdb.GoalKey{TenantId: "c2", GoalID: "goal"}, jobdb.ResolvedCell{CellID: "cell", Cell: "test", CellRepo: "example.test/test"}))
 	}))
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", nil))
 	require.True(t, called)
@@ -29,7 +29,7 @@ func TestAdministrativeIngressAuthorizesPrimarySelection(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/", nil)
 	request.Header.Set("goals.select-primary", "true")
 	require.False(t, jobdb.HasPrimaryGoalSelectionAuthorizer(request.Context()))
-	require.ErrorIs(t, jobdb.AuthorizePrimaryGoalSelection(request.Context(), jobdb.GoalKey{TenantId: "tenant", GoalID: "goal"}, jobdb.ResolvedCell{CellID: "cell"}), jobdb.ErrPrimaryGoalSelectionForbidden)
+	require.ErrorIs(t, jobdb.AuthorizePrimaryGoalSelection(request.Context(), jobdb.GoalKey{TenantId: "c2", GoalID: "goal"}, jobdb.ResolvedCell{CellID: "cell"}), jobdb.ErrPrimaryGoalSelectionForbidden)
 }
 
 // Execute fresh trees so command flags and environment never leak between cases.
@@ -76,8 +76,8 @@ func TestConsumerGoalsRejectBeforeHTTP(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(500) }))
 	defer server.Close()
 	for _, args := range [][]string{
-		{"goals", "add-candidate", "goal", "job", "--tenant", "tenant", "--url", server.URL},
-		{"goals", "unknown", "--tenant", "tenant", "--url", server.URL},
+		{"goals", "add-candidate", "goal", "job", "--tenant", "c2", "--url", server.URL},
+		{"goals", "unknown", "--tenant", "c2", "--url", server.URL},
 	} {
 		output, err := executeRoot(t, args...)
 		require.ErrorContains(t, err, "unknown command")
@@ -86,13 +86,13 @@ func TestConsumerGoalsRejectBeforeHTTP(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"goals", "get"}, {"goals", "get", "one", "two"}, {"goals", "get", "goal", "--url", server.URL},
-		{"goals", "list", "extra", "--tenant", "tenant", "--url", server.URL},
-		{"goals", "candidates", "--tenant", "tenant", "--url", server.URL},
-		{"goals", "waits", "extra", "--tenant", "tenant", "--url", server.URL},
-		{"goals", "fail", "--tenant", "tenant", "--url", server.URL},
-		{"goals", "get", "goal", "--tenant", "tenant", "--url", "file:///tmp/runtime"},
-		{"goals", "list", "--tenant", "tenant", "--url", server.URL, "--created-after", "invalid"},
-		{"goals", "waits", "--tenant", "tenant", "--url", server.URL, "--target-job", "a", "--target-goal", "g"},
+		{"goals", "list", "extra", "--tenant", "c2", "--url", server.URL},
+		{"goals", "candidates", "--tenant", "c2", "--url", server.URL},
+		{"goals", "waits", "extra", "--tenant", "c2", "--url", server.URL},
+		{"goals", "fail", "--tenant", "c2", "--url", server.URL},
+		{"goals", "get", "goal", "--tenant", "c2", "--url", "file:///tmp/runtime"},
+		{"goals", "list", "--tenant", "c2", "--url", server.URL, "--created-after", "invalid"},
+		{"goals", "waits", "--tenant", "c2", "--url", server.URL, "--target-job", "a", "--target-goal", "g"},
 	} {
 		_, err := executeRoot(t, args...)
 		require.Error(t, err, "%v", args)

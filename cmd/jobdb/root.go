@@ -54,6 +54,11 @@ func newRootCmd() *cobra.Command {
 		goals.Args = cobra.NoArgs
 		goals.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 	}
+	for _, command := range root.Commands() {
+		if command.Name() == "project" {
+			command.AddCommand(newPostgresProjectsCmd())
+		}
+	}
 	root.AddCommand(newDirectCmd(), newServeCmd())
 	return root
 }

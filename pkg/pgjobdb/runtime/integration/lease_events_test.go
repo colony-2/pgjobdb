@@ -35,21 +35,21 @@ func TestLeaseEventRuntimeDriverQueryCounts(t *testing.T) {
 	// 100 cells and 240 jobs, with multiple renewals for each lease. Every call
 	// goes through the real scheduler; chapter/payload data is irrelevant to reads.
 	for i := 0; i < 100; i++ {
-		c, err := backend.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: "tenant", Name: fmt.Sprintf("cell%d", i), Repo: fmt.Sprintf("example.test/cell%d", i)})
+		c, err := backend.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: "c2", Name: fmt.Sprintf("cell%d", i), Repo: fmt.Sprintf("example.test/cell%d", i)})
 		require.NoError(t, err)
 		ids = append(ids, c.ID)
 	}
 	for i := 0; i < 240; i++ {
 		c := i % 100
-		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: fmt.Sprintf("cell%d", c), CellRepo: fmt.Sprintf("example.test/cell%d", c), TenantID: "tenant", JobID: pgjobdb.JobID(fmt.Sprintf("job%d", i)), WorkerID: "submitter", JobType: "collect"})
+		_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: fmt.Sprintf("cell%d", c), CellRepo: fmt.Sprintf("example.test/cell%d", c), TenantID: "c2", JobID: pgjobdb.JobID(fmt.Sprintf("job%d", i)), WorkerID: "submitter", JobType: "collect"})
 		require.NoError(t, err)
 		if i < 100 {
 			var goal string
-			require.NoError(t, db.QueryRowContext(ctx, `SELECT goal_id FROM pgjobdb.job_facts WHERE tenant_id='tenant' AND job_id=$1`, fmt.Sprintf("job%d", i)).Scan(&goal))
+			require.NoError(t, db.QueryRowContext(ctx, `SELECT goal_id FROM pgjobdb.job_facts WHERE tenant_id='c2' AND job_id=$1`, fmt.Sprintf("job%d", i)).Scan(&goal))
 			goals = append(goals, goal)
 		}
 		worker := fmt.Sprintf("worker%d", c)
-		lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", pgjobdb.JobID(fmt.Sprintf("job%d", i)), pgjobdb.WorkerID(worker), pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}, pgjobdb.GetJobLeaseOptions{})
+		lease, err := pgjobdb.GetJobLease(ctx, db, "c2", pgjobdb.JobID(fmt.Sprintf("job%d", i)), pgjobdb.WorkerID(worker), pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}}, pgjobdb.GetJobLeaseOptions{})
 		require.NoError(t, err)
 		require.NotNil(t, lease, "targeted fixture claim job%d", i)
 		if i < 100 {
@@ -67,13 +67,13 @@ func TestLeaseEventRuntimeDriverQueryCounts(t *testing.T) {
 	// additional-goal relation and tenant-qualified joins.
 	recorder := &listQueryRecorder{DB: db}
 	for _, n := range []int{1, 100} {
-		_, err = pgjobdb.ListLeaseEvents(ctx, recorder, jobdb.ListLeaseEventsRequest{TenantID: "tenant", PageSize: 100, CellIDs: ids[:n], GoalIDs: goals[:n]})
+		_, err = pgjobdb.ListLeaseEvents(ctx, recorder, jobdb.ListLeaseEventsRequest{TenantID: "c2", PageSize: 100, CellIDs: ids[:n], GoalIDs: goals[:n]})
 		require.NoError(t, err)
 		recordLeaseEventPlan(t, db, recorder, fmt.Sprintf("lease-events-goals-%d", n))
 	}
 
 	// A second runtime/connection accepts a cursor signed by the first instance.
-	cursorReq := jobdb.ListLeaseEventsRequest{TenantID: "tenant", PageSize: 1}
+	cursorReq := jobdb.ListLeaseEventsRequest{TenantID: "c2", PageSize: 1}
 	first, err := backend.ListLeaseEvents(ctx, cursorReq)
 	require.NoError(t, err)
 	require.NotEmpty(t, first.NextPageToken)
@@ -92,7 +92,7 @@ func TestLeaseEventRuntimeDriverQueryCounts(t *testing.T) {
 			for _, size := range []int{1, 100, 200} {
 				for _, n := range []int{1, 100} {
 					t.Run(fmt.Sprintf("size%d-cardinality%d", size, n), func(t *testing.T) {
-						req := jobdb.ListLeaseEventsRequest{TenantID: "tenant", PageSize: size, CellIDs: ids[:n], GoalIDs: goals[:n], JobIDs: jobs[:n], WorkerIDs: workers[:n], LeaseIDs: leases[:n]}
+						req := jobdb.ListLeaseEventsRequest{TenantID: "c2", PageSize: size, CellIDs: ids[:n], GoalIDs: goals[:n], JobIDs: jobs[:n], WorkerIDs: workers[:n], LeaseIDs: leases[:n]}
 						counted.queries.Store(0)
 						page, err := rt.ListLeaseEvents(ctx, req)
 						require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestLeaseEventRenewableAndKeepAlive(t *testing.T) {
 	factory := conformanceRuntimeFactory(t)
 	rt := factory(t)
 	ctx := celltest.Context(context.Background())
-	result, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: "job", Cell: "test", CellRepo: "example.test/test", JobType: "collect", Data: jobdb.NewTaskDataOrPanic(1)}})
+	result, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", JobID: "job", Cell: "test", CellRepo: "example.test/test", JobType: "collect", Data: jobdb.NewTaskDataOrPanic(1)}})
 	require.NoError(t, err)
 	lease, err := rt.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: result.JobKey, WorkerID: "worker", Routes: []jobdb.Route{{JobType: "collect"}}, LeaseDuration: 2 * time.Second})
 	require.NoError(t, err)
@@ -127,14 +127,14 @@ func TestLeaseEventRenewableAndKeepAlive(t *testing.T) {
 	lease, err = renewable.Renew(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, lease)
-	page, err := rt.ListLeaseEvents(ctx, jobdb.ListLeaseEventsRequest{TenantID: "tenant"})
+	page, err := rt.ListLeaseEvents(ctx, jobdb.ListLeaseEventsRequest{TenantID: "c2"})
 	require.NoError(t, err)
 	require.Len(t, page.Events, 2)
 	require.NoError(t, lease.KeepAlive(ctx))
 	defer lease.StopKeepAlive()
 	// KeepAlive starts the existing timed loop; it is not a synchronous renewal.
 	require.Eventually(t, func() bool {
-		page, e := rt.ListLeaseEvents(ctx, jobdb.ListLeaseEventsRequest{TenantID: "tenant"})
+		page, e := rt.ListLeaseEvents(ctx, jobdb.ListLeaseEventsRequest{TenantID: "c2"})
 		return e == nil && len(page.Events) >= 3
 	}, 3*time.Second, 20*time.Millisecond)
 }

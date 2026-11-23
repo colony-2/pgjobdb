@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
-	"errors"
 	"testing"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
@@ -22,8 +21,8 @@ func TestPriorPrimaryGoalPreparationsPreserved(t *testing.T) {
 		require.NoError(t, err)
 		historicalEventJob(t, ctx, db, "source")
 		requests := []pgjobdb.JobPreparation{
-			{Key: jobdb.JobKey{TenantId: "tenant", JobId: "ordinary"}, Cell: "test", CellRepo: "example.test/test", Descriptor: "ordinary descriptor"},
-			{Key: jobdb.JobKey{TenantId: "tenant", JobId: "restart"}, Cell: "test", CellRepo: "example.test/test", Descriptor: "restart descriptor", PriorJobID: "source", ShareGoal: true},
+			{Key: jobdb.JobKey{TenantId: "c2", JobId: "ordinary"}, Cell: "test", CellRepo: "example.test/test", Descriptor: "ordinary descriptor"},
+			{Key: jobdb.JobKey{TenantId: "c2", JobId: "restart"}, Cell: "test", CellRepo: "example.test/test", Descriptor: "restart descriptor", PriorJobID: "source", ShareGoal: true},
 		}
 		for _, req := range requests {
 			_, err := db.ExecContext(ctx, `SELECT pgjobdb.prepare_job($1,$2,NULL,$3,$4,$5,'[]', $6,$7,c.cell_id,c.name,c.repo,'') FROM pgjobdb.cells c WHERE tenant_id=$1 AND name=$6`, req.Key.TenantId, req.Key.JobId, nullablePrior(req.PriorJobID), req.ShareGoal, req.Descriptor, req.Cell, req.CellRepo)
@@ -59,10 +58,8 @@ func nullablePrior(s string) any {
 // submission code which deliberately requires the current selection schema.
 func historicalEventJob(t *testing.T, ctx context.Context, db *sql.DB, id string) {
 	t.Helper()
-	_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "tenant", Name: "test", Repo: "example.test/test"})
-	if !errors.Is(err, jobdb.ErrCellConflict) {
-		require.NoError(t, err)
-	}
-	_, err = db.ExecContext(ctx, `SELECT pgjobdb.submit_native_job('tenant',$1,'submitter','collect','{}','{}',NULL,NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,NULL,FALSE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo)) FROM pgjobdb.cells WHERE tenant_id='tenant' AND name='test'`, id)
+	_, err := db.ExecContext(ctx, `INSERT INTO pgjobdb.cells(tenant_id,cell_id,name,repo,state,description,metadata,revision,created_at_ns,updated_at_ns) VALUES('c2','historical-cell','test','example.test/test','ACTIVE','','{}','historical-revision',0,0) ON CONFLICT DO NOTHING; INSERT INTO pgjobdb.cell_names VALUES('c2','test','historical-cell') ON CONFLICT DO NOTHING`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `SELECT pgjobdb.submit_native_job('c2',$1,'submitter','collect','{}','{}',NULL,NULL,NULL,ARRAY[]::TEXT[],NULL,NULL,NULL,NULL,NULL,FALSE,'[]',jsonb_build_object('cellId',cell_id,'cell',name,'cellRepo',repo)) FROM pgjobdb.cells WHERE tenant_id='c2' AND name='test'`, id)
 	require.NoError(t, err)
 }

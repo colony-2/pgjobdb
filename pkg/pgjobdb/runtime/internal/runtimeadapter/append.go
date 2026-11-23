@@ -55,6 +55,9 @@ func (s Scheduler) ClaimAppend(ctx context.Context, q runtimecore.ClaimAppendReq
 			return runtimecore.LeaseIdentity{}, err
 		}
 	}
+	if err := pgjobdb.AdmitProjectWrite(ctx, s.DB, q.JobKey.TenantId); err != nil {
+		return runtimecore.LeaseIdentity{}, err
+	}
 	out := runtimecore.LeaseIdentity{JobKey: q.JobKey, LeaseID: ksuid.New().String(), WorkerID: q.WorkerID}
 	var expires sql.NullTime
 	err := s.DB.QueryRowContext(ctx, `SELECT pgjobdb.claim_append($1,$2,$3,$4,$5)`, q.JobKey.TenantId, q.JobKey.JobId, out.LeaseID, q.WorkerID, q.Duration.Seconds()).Scan(&expires)
@@ -68,6 +71,9 @@ func (s Scheduler) ClaimAppend(ctx context.Context, q runtimecore.ClaimAppendReq
 	return out, nil
 }
 func (s Scheduler) ReleaseAppend(ctx context.Context, q runtimecore.LeaseIdentity) error {
+	if err := pgjobdb.AdmitProjectWrite(ctx, s.DB, q.JobKey.TenantId); err != nil {
+		return err
+	}
 	_, err := s.DB.ExecContext(ctx, `SELECT pgjobdb.release_append($1,$2,$3)`, q.JobKey.TenantId, q.JobKey.JobId, q.LeaseID)
 	return err
 }

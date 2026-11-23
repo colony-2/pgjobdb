@@ -31,7 +31,7 @@ func (f *availabilityFixture) deny(key jobdb.JobKey) {
 		l, err := f.backend.GetJobLease(f.ctx, jobdb.GetJobLeaseRequest{JobKey: key, WorkerID: "early", Routes: []jobdb.Route{{JobType: "child"}}})
 		require.NoError(t, err)
 		require.Nil(t, l, "targeted acquisition at %s", before)
-		leases, err := f.client.PollWork(f.ctx, jobdb.PollWorkRequest{TenantId: "tenant", WorkerID: "early", Routes: []jobdb.Route{{JobType: "child"}}, Limit: 1, MetadataEquals: []jobdb.MetadataPredicate{{Path: []string{"consumer"}, Values: []any{"consumer"}}}})
+		leases, err := f.client.PollWork(f.ctx, jobdb.PollWorkRequest{TenantId: "c2", WorkerID: "early", Routes: []jobdb.Route{{JobType: "child"}}, Limit: 1, MetadataEquals: []jobdb.MetadataPredicate{{Path: []string{"consumer"}, Values: []any{"consumer"}}}})
 		require.NoError(t, err)
 		require.Empty(t, leases, "poll at %s", before)
 	}
@@ -164,7 +164,7 @@ func TestSubmissionAvailabilityGateMatrix(t *testing.T) {
 					// Winning recovery bindings survive reopen and independent completion.
 					if kind == "goal-success" || kind == "mixed" {
 						p := producers[len(producers)-1]
-						goal, err := f.backend.GetGoal(f.ctx, jobdb.GoalKey{TenantId: "tenant", GoalID: p.GoalID})
+						goal, err := f.backend.GetGoal(f.ctx, jobdb.GoalKey{TenantId: "c2", GoalID: p.GoalID})
 						require.NoError(t, err)
 						require.NotEmpty(t, goal.SuccessfulJobID)
 						require.Equal(t, p.JobKey.JobId, goal.SuccessfulJobID)
@@ -172,7 +172,7 @@ func TestSubmissionAvailabilityGateMatrix(t *testing.T) {
 						f.complete(later.JobKey, true)
 						f.reopen()
 						require.Equal(t, before, f.goalBinding(h.JobKey, p.JobKey.JobId))
-						goal, err = f.backend.GetGoal(f.ctx, jobdb.GoalKey{TenantId: "tenant", GoalID: p.GoalID})
+						goal, err = f.backend.GetGoal(f.ctx, jobdb.GoalKey{TenantId: "c2", GoalID: p.GoalID})
 						require.NoError(t, err)
 						require.Equal(t, p.JobKey.JobId, goal.SuccessfulJobID)
 					}
@@ -184,7 +184,7 @@ func TestSubmissionAvailabilityGateMatrix(t *testing.T) {
 						return consumer != nil
 					}, 5*time.Second, 10*time.Millisecond)
 					require.Equal(t, h, consumer.Job())
-					polls, err := f.client.PollWork(f.ctx, jobdb.PollWorkRequest{TenantId: "tenant", WorkerID: "poll-consumer", Routes: []jobdb.Route{{JobType: "child"}}, Limit: 1, MetadataEquals: []jobdb.MetadataPredicate{{Path: []string{"consumer"}, Values: []any{"consumer"}}}})
+					polls, err := f.client.PollWork(f.ctx, jobdb.PollWorkRequest{TenantId: "c2", WorkerID: "poll-consumer", Routes: []jobdb.Route{{JobType: "child"}}, Limit: 1, MetadataEquals: []jobdb.MetadataPredicate{{Path: []string{"consumer"}, Values: []any{"consumer"}}}})
 					require.NoError(t, err)
 					require.Len(t, polls, 1)
 					require.Equal(t, pollHandle, polls[0].Job())
@@ -236,7 +236,7 @@ func TestSubmissionAvailabilityFailedDependencies(t *testing.T) {
 					if kind == "goal-success" {
 						// Failure of a candidate alone cannot close its open goal.
 						f.deny(h.JobKey)
-						_, err = f.backend.FailGoal(f.ctx, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "tenant", GoalID: p.GoalID}, Message: "explicitly failed"})
+						_, err = f.backend.FailGoal(f.ctx, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "c2", GoalID: p.GoalID}, Message: "explicitly failed"})
 						require.NoError(t, err)
 					}
 					f.reopen()
@@ -271,7 +271,7 @@ func TestSubmissionAvailabilityFailedDependencies(t *testing.T) {
 						require.NoError(t, err)
 						require.Equal(t, wf.JobRunFailed, outcome.Status)
 						require.Zero(t, calls)
-						row, err := pgjobdb.GetJob(f.ctx, f.db, "tenant", pgjobdb.JobID(h.JobKey.JobId))
+						row, err := pgjobdb.GetJob(f.ctx, f.db, "c2", pgjobdb.JobID(h.JobKey.JobId))
 						require.NoError(t, err)
 						require.Equal(t, pgjobdb.JobStoreArchived, row.Store)
 						require.NotNil(t, row.CompletionStatus)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -36,7 +37,8 @@ func TestPostgresRuntimeConformance(t *testing.T) {
 			Name: "postgres", Capabilities: routes,
 			New: func(tb testing.TB) runtimetest.Fixture {
 				runtime := newRuntime(tb)
-				return runtimetest.Fixture{Runtime: jobdbtest.NewNamespacedBackend(runtime, ""), SchemaRegistry: runtime, Cleanup: runtime.Close}
+				view := jobdbtest.NewProjectBackend(runtime, "")
+				return runtimetest.Fixture{Runtime: view, SchemaRegistry: view.(jobdb.JobSchemaRegistry), Cleanup: runtime.Close}
 			},
 		},
 	}
@@ -47,11 +49,10 @@ func TestPostgresRuntimeConformance(t *testing.T) {
 		}
 		harnesses = append(harnesses, runtimetest.Harness{Name: name, Capabilities: routes, New: func(tb testing.TB) runtimetest.Fixture {
 			runtime := newRuntime(tb)
-			view := jobdbtest.NewNamespacedBackend(runtime, "")
-			var handler http.Handler = remoteruntime.NewConsumerServer(view)
+			var handler http.Handler = remoteruntime.NewConsumerServer(runtime)
 			if signed {
 				var err error
-				handler, err = remoteruntime.NewConsumerServerWithOptions(view, remoteruntime.ServerOptions{LeaseTokenSigningKey: []byte("postgres-conformance-signing-key-32-bytes"), LeaseTokenAudience: "pg-conformance"})
+				handler, err = remoteruntime.NewConsumerServerWithOptions(runtime, remoteruntime.ServerOptions{LeaseTokenSigningKey: []byte("postgres-conformance-signing-key-32-bytes"), LeaseTokenAudience: "pg-conformance"})
 				if err != nil {
 					tb.Fatal(err)
 				}
@@ -62,7 +63,9 @@ func TestPostgresRuntimeConformance(t *testing.T) {
 			if err != nil {
 				tb.Fatal(err)
 			}
-			return runtimetest.Fixture{Runtime: remote, SchemaRegistry: remote, LeaseEventLeaseValidity: runtime.ValidateExecutionLeaseByID, Cleanup: func(ctx context.Context) error { server.Close(); return runtime.Close(ctx) }}
+			view := jobdbtest.NewProjectClient(remote, runtime, "")
+			backend := jobdbtest.NewProjectBackend(runtime, "").(jobdbtest.LeaseTransport)
+			return runtimetest.Fixture{Runtime: view, SchemaRegistry: view.(jobdb.JobSchemaRegistry), LeaseEventLeaseValidity: backend.ValidateExecutionLeaseByID, Cleanup: func(ctx context.Context) error { server.Close(); return runtime.Close(ctx) }}
 		}})
 	}
 
@@ -120,6 +123,15 @@ func conformanceDSNFactory(t *testing.T) func(testing.TB) string {
 			tb.Fatal(err)
 		}
 		uri.Path = "/" + database
+		fixtureDB, err := sql.Open("postgres", uri.String())
+		if err != nil {
+			tb.Fatal(err)
+		}
+		if err = projectfixture.Prepare(ctx, fixtureDB); err != nil {
+			fixtureDB.Close()
+			tb.Fatal(err)
+		}
+		fixtureDB.Close()
 		return uri.String()
 	}
 }
@@ -128,7 +140,7 @@ func TestConformanceFixturesAreIsolated(t *testing.T) {
 	newRuntime := conformanceRuntimeFactory(t)
 	first, second := newRuntime(t), newRuntime(t)
 	ctx := celltest.Context(context.Background())
-	req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "same-id", JobType: "job", Data: jobdb.NewTaskDataOrPanic(1)}}
+	req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "same-id", JobType: "job", Data: jobdb.NewTaskDataOrPanic(1)}}
 	handle, err := celltest.Submit(first, ctx, req)
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +165,7 @@ func TestConformanceFixturesAreIsolated(t *testing.T) {
 
 func TestPostgresCellConformance(t *testing.T) {
 	factory := conformanceRuntimeFactory(t)
-	t.Run("direct", func(t *testing.T) { runtimetest.RunCellConformance(t, factory(t)) })
+	t.Run("direct", func(t *testing.T) { runtimetest.RunCellConformance(t, jobdbtest.NewProjectBackend(factory(t), "")) })
 	t.Run("remote", func(t *testing.T) {
 		rt := factory(t)
 		server := httptest.NewServer(celltest.Handler(remoteruntime.NewConsumerServer(rt)))
@@ -162,6 +174,6 @@ func TestPostgresCellConformance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtimetest.RunCellConformance(t, remote)
+		runtimetest.RunCellConformance(t, jobdbtest.NewProjectClient(remote, rt, ""))
 	})
 }

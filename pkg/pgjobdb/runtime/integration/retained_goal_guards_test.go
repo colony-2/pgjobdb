@@ -54,7 +54,7 @@ func TestRetainedGoalFailureCurrentAuthority(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		source := nativeGoalJob(t, ctx, db, "authority-origin")
 		req := jobdb.FailGoalRequest{GoalKey: nativeGoalKey(source), Message: "exact reason"}
-		denied := jobdb.WithCellAuthority(ctx, jobdb.CellAuthority{Principal: "reader", TenantID: "tenant", Permissions: map[string]bool{"goals.get": true}})
+		denied := jobdb.WithCellAuthority(ctx, jobdb.CellAuthority{Principal: "reader", TenantID: "c2", Permissions: map[string]bool{"goals.get": true}})
 		for _, replay := range []bool{false, true} {
 			if replay {
 				_, err := pgjobdb.FailGoal(ctx, db, req)
@@ -113,7 +113,7 @@ func TestRetainedGoalLostHTTPFailureResponse(t *testing.T) {
 				require.True(t, dropped.Load())
 				saved, err := backend.GetGoal(ctx, request.GoalKey)
 				require.NoError(t, err)
-				_, err = backend.DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []string{saved.FailureJobID}})
+				_, err = backend.DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []string{saved.FailureJobID}})
 				require.NoError(t, err)
 				server.Close()
 				require.NoError(t, backend.Close(ctx))
@@ -127,7 +127,7 @@ func TestRetainedGoalLostHTTPFailureResponse(t *testing.T) {
 				replay, err := client.FailGoal(ctx, request)
 				require.NoError(t, err)
 				require.Equal(t, saved, replay)
-				jobs, err := client.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, GoalIDs: []string{source.GoalID}, IncludeHidden: true})
+				jobs, err := client.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"c2"}, GoalIDs: []string{source.GoalID}, IncludeHidden: true})
 				require.NoError(t, err)
 				require.Len(t, jobs.Jobs, 2)
 				t.Logf("%v HTTP response lost after commit, hidden record %s retained after runtime reopen", signed, replay.FailureJobID)
@@ -140,11 +140,11 @@ func TestRetainedGoalDiscoveryAndRetirement(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		source := nativeGoalJob(t, ctx, db, "discovery-origin")
 		var cell jobdb.Cell
-		cells, err := pgjobdb.ListCells(ctx, db, jobdb.ListCellsRequest{TenantID: "tenant", Name: "test"})
+		cells, err := pgjobdb.ListCells(ctx, db, jobdb.ListCellsRequest{TenantID: "c2", Name: "test"})
 		cell = cells.Cells[0]
 		require.NoError(t, err)
 		retire := func() error {
-			_, err := pgjobdb.RetireCell(ctx, db, jobdb.RetireCellRequest{CellKey: jobdb.CellKey{TenantID: "tenant", CellID: cell.ID}, IfMatch: `"` + cell.Revision + `"`})
+			_, err := pgjobdb.RetireCell(ctx, db, jobdb.RetireCellRequest{CellKey: jobdb.CellKey{TenantID: "c2", CellID: cell.ID}, IfMatch: `"` + cell.Revision + `"`})
 			return err
 		}
 		_, err = db.ExecContext(ctx, `UPDATE pgjobdb.job_facts SET hidden_at=clock_timestamp() WHERE job_id='discovery-origin'`)
@@ -156,7 +156,7 @@ func TestRetainedGoalDiscoveryAndRetirement(t *testing.T) {
 			nativeGoalJob(t, ctx, db, fmt.Sprintf("discovery-%03d", i))
 		}
 		d := &listQueryRecorder{DB: db}
-		page, err := pgjobdb.ListGoals(ctx, d, jobdb.ListGoalsRequest{TenantId: "tenant", States: []jobdb.GoalState{jobdb.GoalOpen}, Candidate: &jobdb.GoalCandidateFilter{JobIDs: []string{"discovery-origin"}}, PageSize: 1})
+		page, err := pgjobdb.ListGoals(ctx, d, jobdb.ListGoalsRequest{TenantId: "c2", States: []jobdb.GoalState{jobdb.GoalOpen}, Candidate: &jobdb.GoalCandidateFilter{JobIDs: []string{"discovery-origin"}}, PageSize: 1})
 		require.NoError(t, err)
 		require.Len(t, page.Goals, 1)
 		require.Equal(t, source.GoalID, page.Goals[0].GoalKey.GoalID)
@@ -175,7 +175,7 @@ func TestRetainedGoalDiscoveryAndRetirement(t *testing.T) {
 		t.Logf("retained goal primary-filter plan: %s", plan)
 		// Other open goals still belong to this cell. Close every one before the
 		// final retirement, preserving all hidden memberships.
-		request := jobdb.ListGoalsRequest{TenantId: "tenant", PageSize: 100}
+		request := jobdb.ListGoalsRequest{TenantId: "c2", PageSize: 100}
 		for {
 			goals, err := pgjobdb.ListGoals(ctx, db, request)
 			require.NoError(t, err)
@@ -191,7 +191,7 @@ func TestRetainedGoalDiscoveryAndRetirement(t *testing.T) {
 		for i := range 200 {
 			retireNativeMember(t, ctx, db, fmt.Sprintf("discovery-%03d", i))
 		}
-		p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "tenant", JobId: "unpublished"}, Cell: "test", CellRepo: "example.test/test", Descriptor: "not published"})
+		p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "c2", JobId: "unpublished"}, Cell: "test", CellRepo: "example.test/test", Descriptor: "not published"})
 		require.NoError(t, err)
 		require.Error(t, retire(), "preparation blocks retirement")
 		require.NoError(t, pgjobdb.DiscardJobPreparation(ctx, db, p.Key))
@@ -224,13 +224,13 @@ func TestRetainedGoalProtectedHistoryGuards(t *testing.T) {
 		runtime, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
 		require.NoError(t, err)
 		defer runtime.Close(ctx)
-		_, err = runtime.GetJob(ctx, jobdb.JobKey{TenantId: "tenant", JobId: string(source.JobID)})
+		_, err = runtime.GetJob(ctx, jobdb.JobKey{TenantId: "c2", JobId: string(source.JobID)})
 		require.Error(t, err, "ordinary absent history remains an error")
-		_, err = runtime.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: string(source.JobID)}})
+		_, err = runtime.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: jobdb.JobKey{TenantId: "c2", JobId: string(source.JobID)}})
 		require.Error(t, err)
 		failed, err := runtime.FailGoal(ctx, jobdb.FailGoalRequest{GoalKey: nativeGoalKey(source), Message: "protected"})
 		require.NoError(t, err)
-		key := jobdb.JobKey{TenantId: "tenant", JobId: failed.FailureJobID}
+		key := jobdb.JobKey{TenantId: "c2", JobId: failed.FailureJobID}
 		calls := &atomic.Int32{}
 		engine, err := workflow.NewEngineBuilder().WithRuntime(replayHistoryGuard{ConsumerRuntime: runtime, calls: calls}).BuildEngine()
 		require.NoError(t, err)

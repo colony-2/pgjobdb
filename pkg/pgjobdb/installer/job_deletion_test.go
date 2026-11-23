@@ -14,23 +14,23 @@ import (
 func TestNativeJobDeletionRollbackAndTime(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		for _, id := range []pgjobdb.JobID{"a", "b"} {
-			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: "job"})
+			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: id, WorkerID: "submit", JobType: "job"})
 			require.NoError(t, err)
 		}
-		lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "a", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"job"}}, pgjobdb.GetJobLeaseOptions{LeaseDuration: time.Hour})
+		lease, err := pgjobdb.GetJobLease(ctx, db, "c2", "a", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"job"}}, pgjobdb.GetJobLeaseOptions{LeaseDuration: time.Hour})
 		require.NoError(t, err)
 		require.NotNil(t, lease)
 		_, err = db.ExecContext(ctx, `CREATE FUNCTION pgjobdb.reject_second_hide() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.job_id='b' AND NEW.hidden_at IS NOT NULL THEN RAISE EXCEPTION 'injected deletion failure'; END IF; RETURN NEW; END $$;
 CREATE TRIGGER reject_second_hide BEFORE UPDATE ON pgjobdb.job_facts FOR EACH ROW EXECUTE FUNCTION pgjobdb.reject_second_hide()`)
 		require.NoError(t, err)
 		now := time.Date(2026, 10, 19, 12, 34, 56, 0, time.UTC)
-		req := pgjobdb.DeleteJobsRequest{TenantID: "tenant", All: true, Now: now}
+		req := pgjobdb.DeleteJobsRequest{TenantID: "c2", All: true, Now: now}
 		result, err := pgjobdb.DeleteJobs(ctx, db, req)
 		require.ErrorContains(t, err, "injected deletion failure")
 		require.Equal(t, pgjobdb.DeleteJobsResult{}, result)
 		_, err = pgjobdb.ValidateLease(ctx, db, lease.Identity())
 		require.NoError(t, err, "partial deletion must roll back revocation")
-		page, err := pgjobdb.ListJobs(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"tenant"}})
+		page, err := pgjobdb.ListJobs(ctx, db, pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"c2"}})
 		require.NoError(t, err)
 		require.Len(t, page.Jobs, 2)
 		var count int
@@ -57,9 +57,9 @@ CREATE TRIGGER reject_second_hide BEFORE UPDATE ON pgjobdb.job_facts FOR EACH RO
 func TestNativeJobDeletionRaces(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		submit := func(id pgjobdb.JobID) *pgjobdb.JobLease {
-			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "tenant", JobID: id, WorkerID: "submit", JobType: "job"})
+			_, err := submitCellJob(ctx, db, pgjobdb.SubmitJobRequest{Cell: "test", CellRepo: "example.test/test", TenantID: "c2", JobID: id, WorkerID: "submit", JobType: "job"})
 			require.NoError(t, err)
-			l, err := pgjobdb.GetJobLease(ctx, db, "tenant", id, "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"job"}}, pgjobdb.GetJobLeaseOptions{LeaseDuration: time.Hour})
+			l, err := pgjobdb.GetJobLease(ctx, db, "c2", id, "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"job"}}, pgjobdb.GetJobLeaseOptions{LeaseDuration: time.Hour})
 			require.NoError(t, err)
 			require.NotNil(t, l)
 			return l
@@ -72,13 +72,13 @@ func TestNativeJobDeletionRaces(t *testing.T) {
 			require.NoError(t, pgjobdb.CompleteJob(ctx, tx, l.Identity(), pgjobdb.Completion{Status: pgjobdb.CompletionSuccess, Detail: "original outcome"}))
 			done := make(chan error, 1)
 			go func() {
-				_, err := pgjobdb.DeleteJobs(ctx, db, pgjobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []pgjobdb.JobID{"completed"}})
+				_, err := pgjobdb.DeleteJobs(ctx, db, pgjobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []pgjobdb.JobID{"completed"}})
 				done <- err
 			}()
 			waitForDeletionLock(t, db)
 			require.NoError(t, tx.Commit())
 			require.NoError(t, <-done)
-			row, err := pgjobdb.GetJob(ctx, db, "tenant", "completed")
+			row, err := pgjobdb.GetJob(ctx, db, "c2", "completed")
 			require.NoError(t, err)
 			require.Equal(t, pgjobdb.CompletionSuccess, *row.CompletionStatus)
 			require.Equal(t, "original outcome", *row.CompletionDetail)
@@ -88,7 +88,7 @@ func TestNativeJobDeletionRaces(t *testing.T) {
 			tx, err := db.BeginTx(ctx, nil)
 			require.NoError(t, err)
 			defer tx.Rollback()
-			_, err = pgjobdb.DeleteJobs(ctx, tx, pgjobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []pgjobdb.JobID{"cancelled"}})
+			_, err = pgjobdb.DeleteJobs(ctx, tx, pgjobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []pgjobdb.JobID{"cancelled"}})
 			require.NoError(t, err)
 			done := make(chan error, 1)
 			go func() {
@@ -101,7 +101,7 @@ func TestNativeJobDeletionRaces(t *testing.T) {
 			}, 5*time.Second, 10*time.Millisecond)
 			require.NoError(t, tx.Commit())
 			require.Error(t, <-done)
-			row, err := pgjobdb.GetJob(ctx, db, "tenant", "cancelled")
+			row, err := pgjobdb.GetJob(ctx, db, "c2", "cancelled")
 			require.NoError(t, err)
 			require.Equal(t, pgjobdb.CompletionCancelled, *row.CompletionStatus)
 		})
@@ -110,7 +110,7 @@ func TestNativeJobDeletionRaces(t *testing.T) {
 			tx, err := db.BeginTx(ctx, nil)
 			require.NoError(t, err)
 			defer tx.Rollback()
-			req := pgjobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []pgjobdb.JobID{"duplicate"}}
+			req := pgjobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []pgjobdb.JobID{"duplicate"}}
 			first, err := pgjobdb.DeleteJobs(ctx, tx, req)
 			require.NoError(t, err)
 			require.EqualValues(t, 1, first.DeletedCount)

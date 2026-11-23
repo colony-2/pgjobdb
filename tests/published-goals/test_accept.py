@@ -30,6 +30,14 @@ class PublicationChecks(unittest.TestCase):
         required=['TestPublishedGoals','TestPublishedGoals/migrated']
         for name in ('direct','default','signed'):
             required += ['TestPublishedGoals/'+name,'TestPublishedGoals/'+name+'/admission','TestPublishedGoals/'+name+'/protected','TestPublishedGoals/migrated/'+name]
+        required += ['TestPublishedProject'+name for name in (
+            'FreshInstallationAndReopen','CatalogReceiptsAndDeletion','AdministrationAndFirstUse',
+            'GuardsAndBorrowedTransactions','HistoricalAdoptionPreservesResources',
+            'InstallationRollbackAndInventoryFailures','DamagedGuardsAndResolution',
+            'LargeNumericCatalogMetadata','OpaqueCatalogStrings','AdmissionProjectionIntegrity','InstallationConflictsAndExternalInventory',
+            'WriterExclusionAndUnknownParticipants','SQLNoopAdmissionAndCopy',
+            'SealSurvivesDownstreamFailureAndRelaxedCommit','RefusesIncompleteSharedSchema',
+            'RejectsUncommittedSeal','PartialAndFutureInstallations','CommittedSealSurvivesVacuum','CommittedCatalogNewerThanWriter','ConcurrentRetainedCreationAndDeletion','Commands')]
         raw='\n'.join('--- PASS: '+name+' (0.1s)' for name in required)
         accept.check_behavior(raw,0)
         for name in required:

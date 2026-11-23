@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/integration/internal/jobdbtest"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,13 +31,14 @@ func TestPostgresPrimaryGoalSelection(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			rt := factory(t)
-			var workflow jobdb.ConsumerRuntime = rt
+			view := jobdbtest.NewProjectBackend(rt, "")
+			var workflow jobdb.ConsumerRuntime = view
 			if remote {
-				server := httptest.NewServer(selectionTestHandler(remoteruntime.NewConsumerServer(rt)))
+				server := httptest.NewServer(initialHistoryHTTPDiagnostics(t, selectionTestHandler(remoteruntime.NewConsumerServer(rt))))
 				defer server.Close()
 				client, err := remoteruntime.New(server.URL, server.Client())
 				require.NoError(t, err)
-				workflow = client
+				workflow = jobdbtest.NewProjectClient(client, rt, "")
 			}
 			runtimetest.RunPrimaryGoalSelectionConformance(t, workflow)
 		})
@@ -45,18 +47,18 @@ func TestPostgresPrimaryGoalSelection(t *testing.T) {
 
 func TestPostgresPrimaryGoalBoundaries(t *testing.T) {
 	factory := conformanceRuntimeFactory(t)
-	runtimetest.RunPrimaryGoalSelectionBoundaries(t, factory(t))
+	runtimetest.RunPrimaryGoalSelectionBoundaries(t, jobdbtest.NewProjectBackend(factory(t), ""))
 }
 
 func TestPostgresSelectionDeniedWithoutTrustedHook(t *testing.T) {
 	factory := conformanceRuntimeFactory(t)
 	rt := factory(t)
 	ctx := celltest.Context(context.Background())
-	source, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "authority", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
+	source, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "9YCgKaV6wo2tX7ecZqwiyl2XWni", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 	require.NoError(t, err)
-	_, err = rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "authority", JobID: "selected", GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
+	_, err = rt.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "9YCgKaV6wo2tX7ecZqwiyl2XWni", JobID: "selected", GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 	require.ErrorIs(t, err, jobdb.ErrPrimaryGoalSelectionForbidden)
-	_, err = rt.GetJob(ctx, jobdb.JobKey{TenantId: "authority", JobId: "selected"})
+	_, err = rt.GetJob(ctx, jobdb.JobKey{TenantId: "9YCgKaV6wo2tX7ecZqwiyl2XWni", JobId: "selected"})
 	require.ErrorIs(t, err, jobdb.ErrJobNotFound)
 }
 
@@ -64,10 +66,10 @@ func TestPostgresSelectedConcurrentRequests(t *testing.T) {
 	factory := conformanceRuntimeFactory(t)
 	rt := factory(t)
 	ctx := runtimetest.PrimaryGoalContext(context.Background())
-	source, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "parallel", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
+	source, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "YN1JXVAhGjedETg58gZU1S1HYdq", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 	require.NoError(t, err)
 	goalComplete(t, rt, source, false)
-	req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "parallel", JobID: "selected", GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic("same")}}
+	req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "YN1JXVAhGjedETg58gZU1S1HYdq", JobID: "selected", GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic("same")}}
 	type result struct {
 		h   jobdb.JobHandle
 		err error
@@ -113,7 +115,7 @@ func TestPostgresSelectedConcurrentRequests(t *testing.T) {
 	}
 	require.Equal(t, 1, winners)
 	require.Equal(t, 1, conflicts)
-	listing, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"parallel"}})
+	listing, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"YN1JXVAhGjedETg58gZU1S1HYdq"}})
 	require.NoError(t, err)
 	require.Len(t, listing.Jobs, 3)
 }

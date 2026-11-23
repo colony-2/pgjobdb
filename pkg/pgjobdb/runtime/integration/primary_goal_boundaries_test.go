@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"io"
 	"testing"
 
@@ -64,24 +65,24 @@ func TestSelectedIndependentHistoryBoundaries(t *testing.T) {
 		historyDB, err := sql.Open("postgres", fmt.Sprintf("host=localhost port=%s user=postgres password=postgres dbname=selected_chapters sslmode=disable", port))
 		require.NoError(t, err)
 		defer historyDB.Close()
-		chapters, err := chapterpostgres.NewSQLDB(ctx, historyDB, chapterpostgres.Config{BlobStoreURI: "blobfs://" + t.TempDir(), MaxInlineArtifactBytes: 1})
+		chapters, err := chapterpostgres.NewSQLDB(ctx, historyDB, chapterpostgres.Config{Projects: projectfixture.Control(db), BlobStoreURI: "blobfs://" + t.TempDir(), MaxInlineArtifactBytes: 1})
 		require.NoError(t, err)
 		defer chapters.Close(ctx)
-		schemas, err := schemapostgres.NewSQLDB(ctx, db)
+		schemas, err := schemapostgres.NewSQLDB(ctx, db, projectfixture.Control(db))
 		require.NoError(t, err)
 		scheduler := &selectedFaultScheduler{Scheduler: runtimeadapter.Scheduler{DB: db}}
 		history := &selectedFaultHistory{ChapterLog: chapters}
 		makeRuntime := func() *runtimecore.Runtime {
-			r, e := runtimecore.NewRuntime(runtimecore.Config{Scheduler: scheduler, Chapters: history, Schemas: schemas, Configurations: newConfigurationStore(t, ctx, db)})
+			r, e := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(db), Scheduler: scheduler, Chapters: history, Schemas: schemas, Configurations: newConfigurationStore(t, ctx, db)})
 			require.NoError(t, e)
 			return r
 		}
 		runtime := makeRuntime()
-		source, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
+		source, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 		require.NoError(t, err)
 		retireNativeMember(t, ctx, db, "source")
 		request := func(id string) jobdb.SubmitJobRequest {
-			return jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobID: id, GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic("retained", jobdb.NewArtifactFromBytes("input.txt", []byte("independent blobfs artifact")))}}
+			return jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "c2", JobID: id, GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic("retained", jobdb.NewArtifactFromBytes("input.txt", []byte("independent blobfs artifact")))}}
 		}
 		t.Run("history failure", func(t *testing.T) {
 			history.fail = true
@@ -111,10 +112,10 @@ func TestSelectedIndependentHistoryBoundaries(t *testing.T) {
 			require.ErrorContains(t, err, "injected scheduler failure")
 			scheduler.before = nil
 			assertNoSelectedScheduler(t, ctx, db, "rejected")
-			chapter, err := chapters.Get(ctx, runtimecore.ChapterLogKey{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "rejected"}}, 0)
+			chapter, err := chapters.Get(ctx, runtimecore.ChapterLogKey{JobKey: jobdb.JobKey{TenantId: "c2", JobId: "rejected"}}, 0)
 			require.NoError(t, err)
 			require.Len(t, chapter.Artifacts, 1)
-			reader, err := chapters.OpenArtifact(ctx, runtimecore.ArtifactLookup{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "rejected"}, Ordinal: 0, Name: "input.txt", Digest: chapter.Artifacts[0].Digest})
+			reader, err := chapters.OpenArtifact(ctx, runtimecore.ArtifactLookup{JobKey: jobdb.JobKey{TenantId: "c2", JobId: "rejected"}, Ordinal: 0, Name: "input.txt", Digest: chapter.Artifacts[0].Digest})
 			require.NoError(t, err)
 			stream, err := reader.Open()
 			require.NoError(t, err)
@@ -129,16 +130,18 @@ func TestSelectedIndependentHistoryBoundaries(t *testing.T) {
 			retireNativeMember(t, ctx, db, "rejected")
 		})
 		t.Run("scheduler rollback retains independent history", func(t *testing.T) {
-			_, err := db.ExecContext(ctx, `ALTER TABLE pgjobdb.job_preparations ADD CONSTRAINT injected_receipt_failure CHECK(job_id<>'rolled-back' OR NOT published) NOT VALID`)
+			_, err := db.ExecContext(ctx, `CREATE FUNCTION pgjobdb.test_receipt_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN IF NEW.job_id='rolled-back' AND NEW.published THEN RAISE EXCEPTION 'injected_receipt_failure'; END IF; RETURN NEW; END $$;
+CREATE TRIGGER test_receipt_failure BEFORE UPDATE ON pgjobdb.job_preparations FOR EACH ROW EXECUTE FUNCTION pgjobdb.test_receipt_failure()`)
 			require.NoError(t, err)
 			req := request("rolled-back")
 			req.Job.Dependencies = []jobdb.Dependency{{Target: jobdb.DependencyTarget{JobID: source.JobKey.JobId}, Condition: jobdb.JobPrereqSuccess}}
 			_, err = runtime.SubmitJob(ctx, req)
 			require.ErrorContains(t, err, "injected_receipt_failure")
-			_, err = db.ExecContext(ctx, `ALTER TABLE pgjobdb.job_preparations DROP CONSTRAINT injected_receipt_failure`)
+			_, err = db.ExecContext(ctx, `DROP TRIGGER test_receipt_failure ON pgjobdb.job_preparations; DROP FUNCTION pgjobdb.test_receipt_failure()`)
 			require.NoError(t, err)
 			assertNoSelectedScheduler(t, ctx, db, "rolled-back")
-			chapter, err := chapters.Get(ctx, runtimecore.ChapterLogKey{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "rolled-back"}}, 0)
+			chapter, err := chapters.Get(ctx, runtimecore.ChapterLogKey{JobKey: jobdb.JobKey{TenantId: "c2", JobId: "rolled-back"}}, 0)
 			require.NoError(t, err)
 			require.Len(t, chapter.Artifacts, 1)
 			req = request("rolled-back")
@@ -164,12 +167,12 @@ func TestSelectedIndependentHistoryBoundaries(t *testing.T) {
 			_, err := runtime.SubmitJob(ctx, request("closed"))
 			require.Error(t, err)
 			scheduler.before = nil
-			_, err = runtime.FailGoal(ctx, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "tenant", GoalID: source.GoalID}, Message: "closed"})
+			_, err = runtime.FailGoal(ctx, jobdb.FailGoalRequest{GoalKey: jobdb.GoalKey{TenantId: "c2", GoalID: source.GoalID}, Message: "closed"})
 			require.NoError(t, err)
 			_, err = makeRuntime().SubmitJob(ctx, request("closed"))
 			require.ErrorIs(t, err, jobdb.ErrGoalConflict)
 			assertNoSelectedScheduler(t, ctx, db, "closed")
-			_, err = chapters.Get(ctx, runtimecore.ChapterLogKey{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: "closed"}}, 0)
+			_, err = chapters.Get(ctx, runtimecore.ChapterLogKey{JobKey: jobdb.JobKey{TenantId: "c2", JobId: "closed"}}, 0)
 			require.NoError(t, err)
 		})
 	})

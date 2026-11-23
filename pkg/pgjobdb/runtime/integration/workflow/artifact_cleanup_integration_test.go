@@ -68,7 +68,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 
 		// Build engine with the job and task worker
 		engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
-			b.WithWorkerTenantId("test-tenant").PlusWorkers(jobWorker, taskWorker)
+			b.WithWorkerTenantId("AR56al1yl0yzJyAEqN1IteLC5Vi").PlusWorkers(jobWorker, taskWorker)
 		})
 
 		// Run engine in background
@@ -77,7 +77,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 		// Start the job
 		startTime := time.Now()
 		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "test-tenant",
+			TenantId: "AR56al1yl0yzJyAEqN1IteLC5Vi",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"key": "value"}),
 		})
@@ -155,7 +155,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 
 		// Build engine with the job and task worker
 		engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
-			b.WithWorkerTenantId("test-tenant").PlusWorkers(jobWorker, taskWorker)
+			b.WithWorkerTenantId("AR56al1yl0yzJyAEqN1IteLC5Vi").PlusWorkers(jobWorker, taskWorker)
 		})
 
 		// Run engine in background
@@ -163,7 +163,7 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 
 		// Start the job with artifact
 		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "test-tenant",
+			TenantId: "AR56al1yl0yzJyAEqN1IteLC5Vi",
 			JobType:  jobWorker.Name(),
 			Data: &jobdb.SimpleTaskData{
 				Data:      []byte(`{}`),
@@ -215,13 +215,13 @@ func TestArtifactCleanupAfterUpload(t *testing.T) {
 		}
 
 		engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
-			b.WithWorkerTenantId("test-tenant").PlusWorkers(jobWorker, taskWorker)
+			b.WithWorkerTenantId("AR56al1yl0yzJyAEqN1IteLC5Vi").PlusWorkers(jobWorker, taskWorker)
 		})
 
 		go engine.Run(ctx)
 
 		jobKeyHandle, err := engine.SubmitJob(ctx, jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "test-tenant",
+			TenantId: "AR56al1yl0yzJyAEqN1IteLC5Vi",
 			JobType:  jobWorker.Name(),
 			Data:     jobdb.NewTaskDataOrPanic(map[string]string{"key": "value"}),
 		})

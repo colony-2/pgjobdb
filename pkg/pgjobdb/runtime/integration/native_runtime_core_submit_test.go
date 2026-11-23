@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"io"
 	"testing"
 	"time"
@@ -21,18 +22,18 @@ import (
 
 func TestNativeRuntimeCoreSubmitsAndReconcilesJob(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{
+		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: projectfixture.Control(db),
 			BlobStoreURI: "blobfs://" + t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = chapters.Close(ctx) }()
-		schemas, err := schemapostgres.NewSQLDB(ctx, db)
+		schemas, err := schemapostgres.NewSQLDB(ctx, db, projectfixture.Control(db))
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtime, err := runtimecore.NewRuntime(runtimecore.Config{
+		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(db),
 			Configurations: newConfigurationStore(t, ctx, db),
 			Scheduler:      runtimeadapter.Scheduler{DB: db}, Chapters: chapters,
 			Schemas: schemas,
@@ -46,7 +47,7 @@ func TestNativeRuntimeCoreSubmitsAndReconcilesJob(t *testing.T) {
 			t.Fatal(err)
 		}
 		req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "tenant", JobID: "job", JobType: "collect", Data: data,
+			TenantId: "c2", JobID: "job", JobType: "collect", Data: data,
 			Metadata: json.RawMessage(`{"source":"api"}`),
 			RunPolicy: jobdb.RunPolicy{Retry: jobdb.RetryPolicy{
 				InitialInterval: jobdb.Duration(250 * time.Millisecond), MaximumAttempts: 3,
@@ -81,7 +82,7 @@ func TestNativeRuntimeCoreSubmitsAndReconcilesJob(t *testing.T) {
 		if err != nil || string(content) != "hello" {
 			t.Fatalf("submitted artifact = %q, %v", content, err)
 		}
-		stored, err := pgjobdb.GetJob(ctx, db, "tenant", "job")
+		stored, err := pgjobdb.GetJob(ctx, db, "c2", "job")
 		if err != nil || stored.JobType != "collect" || stored.SchemaHash != "" ||
 			string(stored.AppMetadata) != `{"source": "api"}` {
 			t.Fatalf("native job = %+v, %v", stored, err)
@@ -90,7 +91,7 @@ func TestNativeRuntimeCoreSubmitsAndReconcilesJob(t *testing.T) {
 		if err != nil || handle.JobKey.JobId != "job" {
 			t.Fatalf("repeat submit = %+v, %v", handle, err)
 		}
-		if err := pgjobdb.CompleteUnheldJob(ctx, db, "tenant", "job", "worker",
+		if err := pgjobdb.CompleteUnheldJob(ctx, db, "c2", "job", "worker",
 			pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}); err != nil {
 			t.Fatal(err)
 		}

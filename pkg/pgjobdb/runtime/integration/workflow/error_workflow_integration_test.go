@@ -41,7 +41,7 @@ func TestTaskErrorsAreEnvelopedAndReturned(t *testing.T) {
 
 			jobWorker := singleTaskJob{taskType: "err_task"}
 			taskWorker := errorTaskWorker{err: tt.taskErr}
-			tenantID := "tenant-task-" + tt.name
+			tenantID := workflowProjectID(t, postgresDSN, "tenant-task-"+tt.name)
 
 			engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
 				b.WithWorkerTenantId(tenantID).PlusWorkers(jobWorker, taskWorker)
@@ -98,7 +98,7 @@ func TestJobErrorsAreEnvelopedAndReturned(t *testing.T) {
 			defer blobs.Shutdown()
 
 			jobWorker := errorJobWorker{err: tt.jobErr}
-			tenantID := "tenant-job-" + tt.name
+			tenantID := workflowProjectID(t, postgresDSN, "tenant-job-"+tt.name)
 
 			engine := buildDirectEngine(t, postgresDSN, blobStoreURI, func(b *workflow.EngineBuilder) {
 				b.WithWorkerTenantId(tenantID).PlusWorkers(jobWorker)

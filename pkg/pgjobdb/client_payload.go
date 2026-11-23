@@ -25,6 +25,7 @@ func clientUpdateArgs(u *ClientPayloadUpdate, initial bool) (mode, value, revisi
 	return
 }
 func clientPayloadError(err error) error {
+	err = projectError(err)
 	var pg *pq.Error
 	if errors.As(err, &pg) {
 		switch pg.Code {

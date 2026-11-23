@@ -21,7 +21,7 @@ func goalRuntimes(t *testing.T, run func(*testing.T, jobdb.ConsumerRuntime)) {
 }
 func goalSubmit(t *testing.T, r jobdb.ConsumerRuntime, id string, deps ...jobdb.Dependency) jobdb.JobHandle {
 	t.Helper()
-	handle, err := celltest.Submit(r, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: id, JobType: "work", Data: jobdb.NewTaskDataOrPanic("input"), Dependencies: deps}})
+	handle, err := celltest.Submit(r, celltest.Context(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: id, JobType: "work", Data: jobdb.NewTaskDataOrPanic("input"), Dependencies: deps}})
 	require.NoError(t, err)
 	require.NotEmpty(t, handle.GoalID)
 	require.NotEqual(t, handle.JobKey.JobId, handle.GoalID)
@@ -90,7 +90,7 @@ func TestGoalsLifecycle(t *testing.T) {
 		job, err := r.GetJob(ctx, other.JobKey)
 		require.NoError(t, err)
 		require.Empty(t, job.OtherGoalIDs)
-		list, err := r.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, GoalIDs: []string{a.GoalID, other.GoalID}, PageSize: 100})
+		list, err := r.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"c2"}, GoalIDs: []string{a.GoalID, other.GoalID}, PageSize: 100})
 		require.NoError(t, err)
 		require.Len(t, list.Jobs, 3)
 		_, err = r.FailGoal(ctx, jobdb.FailGoalRequest{GoalKey: goalKey(a), Message: "late"})
@@ -217,11 +217,11 @@ func TestDependencyTimeoutCancellationAndValidation(t *testing.T) {
 			}
 			require.NotNil(t, goalLease(t, r, h))
 		}
-		_, err = r.GetGoal(ctx, jobdb.GoalKey{TenantId: "another", GoalID: a.GoalID})
+		_, err = r.GetGoal(ctx, jobdb.GoalKey{TenantId: "40F0meyA7Npn0VoSVtJ3cd5gXdD", GoalID: a.GoalID})
 		require.ErrorIs(t, err, jobdb.ErrGoalNotFound)
 		_, err = r.SubmitRestartJob(ctx, jobdb.SubmitRestartJobRequest{Job: jobdb.SubmitRestartJob{Cell: "test", JobID: "closed-restart", PriorJobKey: a.JobKey, ShareGoal: true}})
 		require.ErrorIs(t, err, jobdb.ErrGoalConflict)
-		invalid := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "invalid", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil), Dependencies: []jobdb.Dependency{{Target: jobdb.DependencyTarget{JobID: "a", GoalID: a.GoalID}, Condition: jobdb.JobPrereqSuccess}}}}
+		invalid := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "invalid", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil), Dependencies: []jobdb.Dependency{{Target: jobdb.DependencyTarget{JobID: "a", GoalID: a.GoalID}, Condition: jobdb.JobPrereqSuccess}}}}
 		_, err = celltest.Submit(r, ctx, invalid)
 		require.ErrorIs(t, err, jobdb.ErrInvalidDependency)
 	})
@@ -270,7 +270,7 @@ func TestPostgresGoalSharedRestartIdentity(t *testing.T) {
 
 func goalSubmitSelected(t *testing.T, r jobdb.ConsumerRuntime, id, goal string) jobdb.JobHandle {
 	t.Helper()
-	h, err := celltest.Submit(r, runtimetest.PrimaryGoalContext(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: id, GoalID: goal, JobType: "work", Data: jobdb.NewTaskDataOrPanic("input")}})
+	h, err := celltest.Submit(r, runtimetest.PrimaryGoalContext(context.Background()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: id, GoalID: goal, JobType: "work", Data: jobdb.NewTaskDataOrPanic("input")}})
 	require.NoError(t, err)
 	require.Equal(t, goal, h.GoalID)
 	return h

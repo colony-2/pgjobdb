@@ -117,7 +117,7 @@ func newSuppliedFixture(t *testing.T, dsn string) *suppliedFixture {
 	require.NoError(t, err)
 	f.receiver, err = remote.New(server.URL, &http.Client{Transport: receiverTransport{base: server.Client().Transport}})
 	require.NoError(t, err)
-	handle, err := celltest.Submit(f.dispatcher, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "supplied", Data: jobdb.NewTaskDataOrPanic(7, jobdb.NewArtifactFromBytes("input.txt", []byte("artifact"))), ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"cursor":1}`)}}})
+	handle, err := celltest.Submit(f.dispatcher, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobType: "supplied", Data: jobdb.NewTaskDataOrPanic(7, jobdb.NewArtifactFromBytes("input.txt", []byte("artifact"))), ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: json.RawMessage(`{"cursor":1}`)}}})
 	require.NoError(t, err)
 	f.key = handle.JobKey
 	f.lease, err = f.dispatcher.GetJobLease(ctx, jobdb.GetJobLeaseRequest{JobKey: f.key, WorkerID: "dispatcher", Routes: []jobdb.Route{{JobType: "supplied"}}, LeaseDuration: time.Second})
@@ -392,15 +392,16 @@ func runSuppliedLeaseInvalidBeforeImport(t *testing.T, newFixture func(*testing.
 	}
 }
 
-// Inject PostgreSQL failures after the renewal update, during snapshot validation.
-// Both now share one statement: failure must roll back the update and its event.
+// Inject PostgreSQL failures after the renewal update and event insert, without
+// altering receipt-bound definitions. Failure must roll back both resource effects.
 func validationFault(t *testing.T, db *sql.DB, statement string) {
 	t.Helper()
-	var definition string
-	require.NoError(t, db.QueryRow(`SELECT pg_get_functiondef('pgjobdb.validate_native_lease(text,text,text,text)'::regprocedure)`).Scan(&definition))
-	_, err := db.Exec(strings.Replace(definition, "BEGIN", "BEGIN\n"+statement, 1))
+	_, err := db.Exec("CREATE FUNCTION pgjobdb.test_renewal_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN " + statement + " RETURN NEW; END $$; CREATE TRIGGER test_renewal_fault AFTER INSERT ON pgjobdb.lease_events FOR EACH ROW WHEN (NEW.event_type='lease_renewed') EXECUTE FUNCTION pgjobdb.test_renewal_fault()")
 	require.NoError(t, err)
-	t.Cleanup(func() { _, err := db.Exec(definition); require.NoError(t, err) })
+	t.Cleanup(func() {
+		_, err := db.Exec("DROP TRIGGER test_renewal_fault ON pgjobdb.lease_events; DROP FUNCTION pgjobdb.test_renewal_fault()")
+		require.NoError(t, err)
+	})
 }
 
 func runRenewalDatabaseErrorsAndDeadlines(t *testing.T, newFixture func(*testing.T) *suppliedFixture) {

@@ -34,6 +34,9 @@ func ClaimTask(ctx context.Context, db *sql.DB, req ClaimTaskRequest) (TaskClaim
 	if err != nil {
 		return TaskClaim{}, err
 	}
+	if err := AdmitProjectWrite(ctx, db, string(req.TenantID)); err != nil {
+		return TaskClaim{}, err
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaskClaim{}, err

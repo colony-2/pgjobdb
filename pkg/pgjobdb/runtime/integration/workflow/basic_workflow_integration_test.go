@@ -33,7 +33,7 @@ func TestBasicWorkflowIntegration(t *testing.T) {
 	blobStoreURI, blobs := startChapterBlobStore(t)
 	defer blobs.Shutdown()
 
-	tenantID := "test-tenant"
+	tenantID := "AR56al1yl0yzJyAEqN1IteLC5Vi"
 	logCapture := newCaptureHandler()
 	logger := slog.New(logCapture)
 

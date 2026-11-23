@@ -11,6 +11,7 @@ import (
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/cellstate"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +21,7 @@ func TestCellTransactions(t *testing.T) {
 		db.SetMaxOpenConns(8)
 		t.Run("nested metadata no-op and creation replay", func(t *testing.T) {
 			metadata := map[string]json.RawMessage{"nested": json.RawMessage(`{"b":2,"a":1}`), "number": json.RawMessage(`1e999999`)}
-			req := jobdb.CreateCellRequest{TenantID: "metadata", Name: "work", Repo: "example.test/work", Metadata: metadata, RequestID: "create"}
+			req := jobdb.CreateCellRequest{TenantID: "ZGywxVlb4u5M6sI7LrxmtVTFSok", Name: "work", Repo: "example.test/work", Metadata: metadata, RequestID: "create"}
 			c, err := pgjobdb.CreateCell(ctx, db, req)
 			require.NoError(t, err)
 			again, err := pgjobdb.CreateCell(ctx, db, req)
@@ -36,71 +37,73 @@ func TestCellTransactions(t *testing.T) {
 		})
 		t.Run("private retry cannot retarget a cell", func(t *testing.T) {
 			for _, name := range []string{"first", "second"} {
-				_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "private", Name: name, Repo: "example.test/" + name})
+				_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "XP5BIZb2Y8H6je7nERwNsOnRUYI", Name: name, Repo: "example.test/" + name})
 				require.NoError(t, err)
 			}
-			req := pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "private", JobId: "job"}, Cell: "first", CellRepo: "example.test/first", Descriptor: "same"}
+			req := pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "XP5BIZb2Y8H6je7nERwNsOnRUYI", JobId: "job"}, Cell: "first", CellRepo: "example.test/first", Descriptor: "same"}
 			p, err := pgjobdb.PrepareJob(ctx, db, req)
 			require.NoError(t, err)
 			req.Cell = "second"
 			req.CellRepo = "example.test/second"
 			_, err = pgjobdb.PrepareJob(ctx, db, req)
 			require.True(t, errors.Is(err, jobdb.ErrExistingJobMismatch))
-			_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "private", JobID: "job", WorkerID: "worker", JobType: "recipe", Cell: "second", CellRepo: "example.test/second", GoalID: p.GoalID})
+			_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "XP5BIZb2Y8H6je7nERwNsOnRUYI", JobID: "job", WorkerID: "worker", JobType: "recipe", Cell: "second", CellRepo: "example.test/second", GoalID: p.GoalID})
 			require.True(t, errors.Is(err, jobdb.ErrExistingJobMismatch))
-			listed, err := pgjobdb.ListCells(ctx, db, jobdb.ListCellsRequest{TenantID: "private"})
+			listed, err := pgjobdb.ListCells(ctx, db, jobdb.ListCellsRequest{TenantID: "XP5BIZb2Y8H6je7nERwNsOnRUYI"})
 			require.NoError(t, err)
 			require.Len(t, listed.Cells, 2)
 			require.NoError(t, pgjobdb.DiscardJobPreparation(ctx, db, p.Key))
 		})
 		t.Run("job ids are tenant wide", func(t *testing.T) {
 			for _, name := range []string{"first", "second"} {
-				_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "identity", Name: name, Repo: "example.test/" + name})
+				_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "HBDSdEaOWFHDX26m9praNo6jVfc", Name: name, Repo: "example.test/" + name})
 				require.NoError(t, err)
 			}
-			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "identity", JobID: "same", WorkerID: "worker", JobType: "recipe", Cell: "first", CellRepo: "example.test/first"})
+			_, err := pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "HBDSdEaOWFHDX26m9praNo6jVfc", JobID: "same", WorkerID: "worker", JobType: "recipe", Cell: "first", CellRepo: "example.test/first"})
 			require.NoError(t, err)
-			_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "identity", JobID: "same", WorkerID: "worker", JobType: "recipe", Cell: "second", CellRepo: "example.test/second"})
+			_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "HBDSdEaOWFHDX26m9praNo6jVfc", JobID: "same", WorkerID: "worker", JobType: "recipe", Cell: "second", CellRepo: "example.test/second"})
 			require.True(t, errors.Is(err, jobdb.ErrExistingJobMismatch))
-			listed, err := pgjobdb.ListCells(ctx, db, jobdb.ListCellsRequest{TenantID: "identity"})
+			listed, err := pgjobdb.ListCells(ctx, db, jobdb.ListCellsRequest{TenantID: "HBDSdEaOWFHDX26m9praNo6jVfc"})
 			require.NoError(t, err)
 			require.Len(t, listed.Cells, 2)
 		})
 		t.Run("borrowed transaction rolls back failed publication", func(t *testing.T) {
-			_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "rollback", Name: "new", Repo: "example.test/new"})
+			_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "AeCaChn8xiv1ud2PdYA6pnqm1cG", Name: "new", Repo: "example.test/new"})
 			require.NoError(t, err)
 			tx, err := db.BeginTx(ctx, nil)
 			require.NoError(t, err)
 			defer tx.Rollback()
-			_, err = pgjobdb.SubmitJob(ctx, tx, pgjobdb.SubmitJobRequest{TenantID: "rollback", JobID: "job", WorkerID: "worker", Cell: "new", CellRepo: "example.test/new"})
+			_, err = pgjobdb.SubmitJob(ctx, tx, pgjobdb.SubmitJobRequest{TenantID: "AeCaChn8xiv1ud2PdYA6pnqm1cG", JobID: "job", WorkerID: "worker", Cell: "new", CellRepo: "example.test/new"})
 			require.Error(t, err) // empty job type fails after cell resolution
 			require.NoError(t, tx.Commit())
 			var count int
-			require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.job_facts WHERE tenant_id='rollback'`).Scan(&count))
+			require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.job_facts WHERE tenant_id='AeCaChn8xiv1ud2PdYA6pnqm1cG'`).Scan(&count))
 			require.Zero(t, count)
 		})
 		t.Run("lease loss between preparation and publication", func(t *testing.T) {
-			_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "lease", Name: "root", Repo: "example.test/root"})
+			_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "J85kFBsryHgvlyQGsZS7USBCJUu", Name: "root", Repo: "example.test/root"})
 			require.NoError(t, err)
-			_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "lease", JobID: "parent", WorkerID: "submitter", JobType: "recipe", Cell: "root"})
+			_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "J85kFBsryHgvlyQGsZS7USBCJUu", JobID: "parent", WorkerID: "submitter", JobType: "recipe", Cell: "root"})
 			require.NoError(t, err)
-			lease, err := pgjobdb.GetJobLease(ctx, db, "lease", "parent", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetJobLeaseOptions{})
+			lease, err := pgjobdb.GetJobLease(ctx, db, "J85kFBsryHgvlyQGsZS7USBCJUu", "parent", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetJobLeaseOptions{})
 			require.NoError(t, err)
 			require.NotNil(t, lease)
-			proof := cellstate.WithLease(context.Background(), cellstate.LeaseProof{JobKey: jobdb.JobKey{TenantId: "lease", JobId: "parent"}, LeaseID: lease.LeaseID, WorkerID: "worker"})
-			prep, err := pgjobdb.PrepareJob(proof, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "lease", JobId: "child"}, Cell: "root", CellRepo: "example.test/root", Descriptor: "child", ParentJobID: "parent"})
+			proof := cellstate.WithLease(context.Background(), cellstate.LeaseProof{JobKey: jobdb.JobKey{TenantId: "J85kFBsryHgvlyQGsZS7USBCJUu", JobId: "parent"}, LeaseID: lease.LeaseID, WorkerID: "worker"})
+			prep, err := pgjobdb.PrepareJob(proof, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "J85kFBsryHgvlyQGsZS7USBCJUu", JobId: "child"}, Cell: "root", CellRepo: "example.test/root", Descriptor: "child", ParentJobID: "parent"})
 			require.NoError(t, err)
 			require.NoError(t, pgjobdb.CompleteJob(ctx, db, lease.Identity(), pgjobdb.Completion{Status: pgjobdb.CompletionSuccess}))
-			_, err = pgjobdb.SubmitJob(proof, db, pgjobdb.SubmitJobRequest{TenantID: "lease", JobID: "child", WorkerID: "worker", JobType: "recipe", Cell: "root", CellRepo: "example.test/root", GoalID: prep.GoalID, Target: prep.Target})
+			_, err = pgjobdb.SubmitJob(proof, db, pgjobdb.SubmitJobRequest{TenantID: "J85kFBsryHgvlyQGsZS7USBCJUu", JobID: "child", WorkerID: "worker", JobType: "recipe", Cell: "root", CellRepo: "example.test/root", GoalID: prep.GoalID, Target: prep.Target})
 			require.ErrorIs(t, err, jobdb.ErrExecutionLeaseLost)
-			listed, err := pgjobdb.ListCells(ctx, db, jobdb.ListCellsRequest{TenantID: "lease", Name: "child"})
+			listed, err := pgjobdb.ListCells(ctx, db, jobdb.ListCellsRequest{TenantID: "J85kFBsryHgvlyQGsZS7USBCJUu", Name: "child"})
 			require.NoError(t, err)
 			require.Empty(t, listed.Cells)
 			require.NoError(t, pgjobdb.DiscardJobPreparation(ctx, db, prep.Key))
 		})
 		t.Run("retirement serializes with admission", func(t *testing.T) {
 			for i := 0; i < 12; i++ {
-				tenant := fmt.Sprintf("retire-%d", i)
+				creation, err := projectfixture.Control(db).CreateProject(projectfixture.Context(ctx), jobdb.CreateProjectRequest{Name: fmt.Sprintf("retire-%d", i), RequestID: fmt.Sprintf("retire-%d", i)})
+				require.NoError(t, err)
+				tenant := creation.Project.ID
 				c, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: tenant, Name: "work", Repo: "example.test/work"})
 				require.NoError(t, err)
 				start := make(chan struct{})
@@ -128,7 +131,7 @@ func TestCellTransactions(t *testing.T) {
 			}
 		})
 		t.Run("lease creation rollback and identity", func(t *testing.T) {
-			const tenant = "lease-create"
+			const tenant = "7wPgVS9PQyWMqgmgX2w1Cg7xqCv"
 			_, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: tenant, Name: "ordinary", Repo: "example.test/ordinary"})
 			require.NoError(t, err)
 			_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: tenant, JobID: "parent", WorkerID: "submitter", JobType: "recipe", Cell: "ordinary"})
@@ -169,7 +172,7 @@ func TestCellTransactions(t *testing.T) {
 				go func(i int) {
 					defer wg.Done()
 					<-start
-					_, errs[i] = pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "claims", Name: fmt.Sprintf("name-%d", i), Repo: "example.test/shared"})
+					_, errs[i] = pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "PT1KCgHQTtXRcqRixNSTqkynjIJ", Name: fmt.Sprintf("name-%d", i), Repo: "example.test/shared"})
 				}(i)
 			}
 			close(start)
@@ -185,9 +188,9 @@ func TestCellTransactions(t *testing.T) {
 			require.Equal(t, 1, success)
 		})
 		t.Run("preparation remains bound through rename", func(t *testing.T) {
-			c, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "pending-name", Name: "work", Repo: "example.test/work"})
+			c, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "PoPOA8ZZnaQWVKQVUCPyQEJW2Ko", Name: "work", Repo: "example.test/work"})
 			require.NoError(t, err)
-			p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "pending-name", JobId: "job"}, Cell: "work", CellRepo: "example.test/work", Descriptor: "job"})
+			p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "PoPOA8ZZnaQWVKQVUCPyQEJW2Ko", JobId: "job"}, Cell: "work", CellRepo: "example.test/work", Descriptor: "job"})
 			require.NoError(t, err)
 			require.Equal(t, c.ID, p.Target.CellID)
 			name := "renamed"
@@ -201,9 +204,9 @@ func TestCellTransactions(t *testing.T) {
 			require.NoError(t, err)
 		})
 		t.Run("pending preparation prevents retirement", func(t *testing.T) {
-			c, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "pending", Name: "work", Repo: "example.test/work"})
+			c, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "58dLl9YVzx33E4Id6hlwe2gIz5s", Name: "work", Repo: "example.test/work"})
 			require.NoError(t, err)
-			p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "pending", JobId: "job"}, Cell: "work", Descriptor: "job"})
+			p, err := pgjobdb.PrepareJob(ctx, db, pgjobdb.JobPreparation{Key: jobdb.JobKey{TenantId: "58dLl9YVzx33E4Id6hlwe2gIz5s", JobId: "job"}, Cell: "work", Descriptor: "job"})
 			require.NoError(t, err)
 			req := jobdb.RetireCellRequest{CellKey: jobdb.CellKey{TenantID: c.TenantID, CellID: c.ID}, IfMatch: `"` + c.Revision + `"`}
 			_, err = pgjobdb.RetireCell(ctx, db, req)
@@ -219,17 +222,17 @@ func TestCellSelectionBeforePaginationAndAcquisition(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
 		cells := []jobdb.Cell{}
 		for _, name := range []string{"allowed", "other"} {
-			c, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "scope", Name: name, Repo: "example.test/" + name})
+			c, err := pgjobdb.CreateCell(ctx, db, jobdb.CreateCellRequest{TenantID: "NmEyRmqhY5SZ0ThK0Ev5xwirVGU", Name: name, Repo: "example.test/" + name})
 			require.NoError(t, err)
 			cells = append(cells, c)
 			for i := 0; i < 3; i++ {
-				_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "scope", JobID: pgjobdb.JobID(fmt.Sprintf("%s-%d", name, i)), WorkerID: "submitter", JobType: "recipe", Cell: name})
+				_, err = pgjobdb.SubmitJob(ctx, db, pgjobdb.SubmitJobRequest{TenantID: "NmEyRmqhY5SZ0ThK0Ev5xwirVGU", JobID: pgjobdb.JobID(fmt.Sprintf("%s-%d", name, i)), WorkerID: "submitter", JobType: "recipe", Cell: name})
 				require.NoError(t, err)
 			}
 		}
-		authority := jobdb.CellAuthority{Principal: "reader", TenantID: "scope", Permissions: map[string]bool{"jobs.list": true, "jobs.acquire": true}, Cells: map[string]bool{cells[0].ID: true}}
+		authority := jobdb.CellAuthority{Principal: "reader", TenantID: "NmEyRmqhY5SZ0ThK0Ev5xwirVGU", Permissions: map[string]bool{"jobs.list": true, "jobs.acquire": true}, Cells: map[string]bool{cells[0].ID: true}}
 		restricted := jobdb.WithCellAuthority(context.Background(), authority)
-		opts := pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"scope"}, PageSize: 1}
+		opts := pgjobdb.ListJobsOptions{TenantIDs: []pgjobdb.TenantID{"NmEyRmqhY5SZ0ThK0Ev5xwirVGU"}, PageSize: 1}
 		first, err := pgjobdb.ListJobSummaries(restricted, db, opts)
 		require.NoError(t, err)
 		require.Len(t, first.Jobs, 1)
@@ -249,18 +252,18 @@ func TestCellSelectionBeforePaginationAndAcquisition(t *testing.T) {
 		_, err = pgjobdb.ListJobSummaries(restricted, db, opts)
 		require.Error(t, err)
 		for i := 0; i < 3; i++ {
-			l, err := pgjobdb.GetWork(restricted, db, "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"scope"}})
+			l, err := pgjobdb.GetWork(restricted, db, "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"NmEyRmqhY5SZ0ThK0Ev5xwirVGU"}})
 			require.NoError(t, err)
 			require.NotNil(t, l)
 			require.Equal(t, cells[0].ID, l.Cell.CellID)
 		}
-		l, err := pgjobdb.GetWork(restricted, db, "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"scope"}})
+		l, err := pgjobdb.GetWork(restricted, db, "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetWorkOptions{TenantIDs: []pgjobdb.TenantID{"NmEyRmqhY5SZ0ThK0Ev5xwirVGU"}})
 		require.NoError(t, err)
 		require.Nil(t, l)
-		_, err = pgjobdb.GetJobLease(restricted, db, "scope", "other-0", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetJobLeaseOptions{})
+		_, err = pgjobdb.GetJobLease(restricted, db, "NmEyRmqhY5SZ0ThK0Ev5xwirVGU", "other-0", "worker", pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"recipe"}}, pgjobdb.GetJobLeaseOptions{})
 		require.NoError(t, err)
 		var leased bool
-		require.NoError(t, db.QueryRowContext(ctx, `SELECT lease_id IS NOT NULL FROM pgjobdb.jobs WHERE tenant_id='scope' AND job_id='other-0'`).Scan(&leased))
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT lease_id IS NOT NULL FROM pgjobdb.jobs WHERE tenant_id='NmEyRmqhY5SZ0ThK0Ev5xwirVGU' AND job_id='other-0'`).Scan(&leased))
 		require.False(t, leased)
 	})
 }

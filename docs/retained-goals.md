@@ -93,12 +93,15 @@ or that a production cutover has happened. This change performs no deployment.
 
 ## Accepted initial-history unreliability for this delivery
 
-The pinned JobDB publication `05238600e743697cb902630ad9dfc6e1728ba744`
+The pinned JobDB publication `86f7ba9bc009ca5dc851a7e8a0057c63d788bc8b`
 can expose story identity before chapter zero commits. An equivalent concurrent
 selected submission can therefore return `chapter not found` while another
 submission succeeds. This delivery leaves that shared behavior unchanged. Human
-direction recorded on cancelled consultation `Dj83t2CdcL0jrAlhoM8nI8uzyyb` says:
-“we should accept this unreliability for today, not try to fix it.”
+direction recorded on cancelled consultation `WTYBvQMGp87NeKRx1GATPEIBFXD`
+says: “we don't want to address this bug at this time. please ignore it.” This
+supersedes the previous pin-specific exception for `05238600e743`, recorded on
+`Dj83t2CdcL0jrAlhoM8nI8uzyyb`; that older authorization alone does not cover a
+new dependency.
 
 The verification runner still executes the controlled initial-history regression
 and public selection checks. It accepts only their exact diagnosed assertion and
@@ -112,6 +115,12 @@ acceptance. Remove or reconsider this delivery-specific exception when adopting
 a different JobDB publication; it does not establish concurrent history
 reliability or authorize broader failures. The fresh publication consumer remains
 strict and has no accepted-failure rule.
+
+The published HTTP client can map the missing-chapter 404 to unsupported primary
+selection. At the existing remote assertion only, acceptance of that symptom
+requires the exact captured 404/missing-chapter response. Unsupported selection
+without that diagnostic remains a failure; the fixture preserves the server's
+actual status and response bytes.
 
 
 Verification executes the complete enumerated selection in batches of at most

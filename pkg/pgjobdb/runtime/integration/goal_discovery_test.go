@@ -19,13 +19,13 @@ func TestGoalDiscovery(t *testing.T) {
 		ctx := celltest.Context(context.Background())
 		a := goalSubmit(t, r, "a")
 		goalComplete(t, r, a, false)
-		b, err := celltest.Submit(r, runtimetest.PrimaryGoalContext(ctx), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobID: "b", GoalID: a.GoalID, JobType: "special", Data: jobdb.NewTaskDataOrPanic(nil), Metadata: json.RawMessage(`{"repo":"repo-b"}`)}})
+		b, err := celltest.Submit(r, runtimetest.PrimaryGoalContext(ctx), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "c2", JobID: "b", GoalID: a.GoalID, JobType: "special", Data: jobdb.NewTaskDataOrPanic(nil), Metadata: json.RawMessage(`{"repo":"repo-b"}`)}})
 		require.NoError(t, err)
 		c := goalSubmit(t, r, "c")
 		original, err := r.GetGoal(ctx, goalKey(a))
 		require.NoError(t, err)
 		require.NoError(t, r.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: b.JobKey}))
-		page, err := r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "tenant", Candidate: &jobdb.GoalCandidateFilter{MetadataEquals: []jobdb.MetadataPredicate{{Path: []string{"repo"}, Values: []any{"repo-b"}}}}})
+		page, err := r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "c2", Candidate: &jobdb.GoalCandidateFilter{MetadataEquals: []jobdb.MetadataPredicate{{Path: []string{"repo"}, Values: []any{"repo-b"}}}}})
 		require.NoError(t, err)
 		require.Len(t, page.Goals, 1)
 		for _, g := range page.Goals {
@@ -37,10 +37,10 @@ func TestGoalDiscovery(t *testing.T) {
 				require.True(t, original.UpdatedAt.Equal(g.UpdatedAt))
 			}
 		}
-		deleted, err := r.(jobdb.JobDeletionRuntime).DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "tenant", JobIDs: []string{b.JobKey.JobId}})
+		deleted, err := r.(jobdb.JobDeletionRuntime).DeleteJobs(ctx, jobdb.DeleteJobsRequest{TenantID: "c2", JobIDs: []string{b.JobKey.JobId}})
 		require.NoError(t, err)
 		require.EqualValues(t, 1, deleted.DeletedCount)
-		hidden, err := r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "tenant", Candidate: &jobdb.GoalCandidateFilter{JobIDs: []string{b.JobKey.JobId}}})
+		hidden, err := r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "c2", Candidate: &jobdb.GoalCandidateFilter{JobIDs: []string{b.JobKey.JobId}}})
 		require.NoError(t, err)
 		require.Len(t, hidden.Goals, 1)
 		for _, g := range hidden.Goals {
@@ -49,7 +49,7 @@ func TestGoalDiscovery(t *testing.T) {
 				require.EqualValues(t, 2, g.TerminalCandidateCount)
 			}
 		}
-		req := jobdb.ListGoalsRequest{TenantId: "tenant", PageSize: 1}
+		req := jobdb.ListGoalsRequest{TenantId: "c2", PageSize: 1}
 		var ids []string
 		for {
 			page, err = r.ListGoals(ctx, req)
@@ -60,7 +60,7 @@ func TestGoalDiscovery(t *testing.T) {
 				break
 			}
 			bad := req
-			bad.TenantId = "another"
+			bad.TenantId = "40F0meyA7Npn0VoSVtJ3cd5gXdD"
 			bad.PageToken = page.NextPageToken
 			_, err = r.ListGoals(ctx, bad)
 			require.ErrorIs(t, err, jobdb.ErrInvalidDependency)
@@ -74,19 +74,19 @@ func TestGoalDiscovery(t *testing.T) {
 		expected := []string{a.GoalID, c.GoalID}
 		sort.Strings(expected)
 		require.Equal(t, expected, ids)
-		page, err = r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "tenant", GoalIDs: []string{a.GoalID}, States: []jobdb.GoalState{jobdb.GoalOpen}})
+		page, err = r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "c2", GoalIDs: []string{a.GoalID}, States: []jobdb.GoalState{jobdb.GoalOpen}})
 		require.NoError(t, err)
 		require.Len(t, page.Goals, 1)
 		require.Zero(t, page.Goals[0].NonTerminalCandidateCount)
 		require.EqualValues(t, 2, page.Goals[0].TerminalCandidateCount)
 		failed, err := r.FailGoal(ctx, jobdb.FailGoalRequest{GoalKey: goalKey(a), Message: "no more attempts"})
 		require.NoError(t, err)
-		page, err = r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "tenant", States: []jobdb.GoalState{jobdb.GoalFailed}, UpdatedAfter: &failed.UpdatedAt})
+		page, err = r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "c2", States: []jobdb.GoalState{jobdb.GoalFailed}, UpdatedAfter: &failed.UpdatedAt})
 		require.NoError(t, err)
 		require.Len(t, page.Goals, 1)
 		require.Equal(t, failed.Failure, page.Goals[0].Failure)
 		future := time.Now().Add(time.Hour)
-		page, err = r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "tenant", CreatedAfter: &future})
+		page, err = r.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "c2", CreatedAfter: &future})
 		require.NoError(t, err)
 		require.Empty(t, page.Goals)
 		require.Empty(t, page.NextPageToken)
@@ -102,13 +102,13 @@ func TestDependencyDiscovery(t *testing.T) {
 		db := jobdb.Dependency{Target: jobdb.DependencyTarget{JobID: b.JobKey.JobId}, Condition: jobdb.JobPrereqComplete}
 		c := goalSubmit(t, r, "consumer", da, db)
 		_ = goalSubmit(t, r, "consumer-2", da)
-		req := jobdb.ListDependencyWaitsRequest{TenantId: "tenant", Target: &da.Target, PageSize: 1}
+		req := jobdb.ListDependencyWaitsRequest{TenantId: "c2", Target: &da.Target, PageSize: 1}
 		first, err := r.ListDependencyWaits(ctx, req)
 		require.NoError(t, err)
 		require.Len(t, first.Waits, 1)
 		require.NotEmpty(t, first.NextPageToken)
 		bad := req
-		bad.TenantId = "other"
+		bad.TenantId = "TqtggXyN1eGriOdDqH0R8ApQbbb"
 		bad.PageToken = first.NextPageToken
 		_, err = r.ListDependencyWaits(ctx, bad)
 		require.ErrorIs(t, err, jobdb.ErrInvalidDependency)
@@ -122,7 +122,7 @@ func TestDependencyDiscovery(t *testing.T) {
 		require.NotNil(t, info.BlockingWait)
 		require.Equal(t, "submission", info.BlockingWait.WaitID)
 		require.Len(t, info.BlockingWait.Dependencies, 2)
-		jobs, err := r.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, JobKeys: []jobdb.JobKey{c.JobKey}})
+		jobs, err := r.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"c2"}, JobKeys: []jobdb.JobKey{c.JobKey}})
 		require.NoError(t, err)
 		require.Len(t, jobs.Jobs, 1)
 		require.Nil(t, jobs.Jobs[0].BlockingWait)
@@ -134,23 +134,23 @@ func TestDependencyDiscovery(t *testing.T) {
 		gone, err := r.ListDependencyWaits(ctx, req)
 		require.NoError(t, err)
 		require.Empty(t, gone.Waits)
-		forward, err := r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "tenant", ConsumerJobID: c.JobKey.JobId})
+		forward, err := r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "c2", ConsumerJobID: c.JobKey.JobId})
 		require.NoError(t, err)
 		require.Len(t, forward.Waits, 1)
 		require.Equal(t, jobdb.DependencyPending, forward.Waits[0].State)
 		require.Equal(t, a.JobKey.JobId, forward.Waits[0].Dependencies[0].SatisfiedByJobID)
-		reverseB, err := r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "tenant", Target: &db.Target})
+		reverseB, err := r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "c2", Target: &db.Target})
 		require.NoError(t, err)
 		require.Len(t, reverseB.Waits, 1)
 		require.NoError(t, r.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: b.JobKey}))
-		done, err := r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "tenant", ConsumerJobID: c.JobKey.JobId, States: []jobdb.DependencyState{jobdb.DependencySatisfied}})
+		done, err := r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "c2", ConsumerJobID: c.JobKey.JobId, States: []jobdb.DependencyState{jobdb.DependencySatisfied}})
 		require.NoError(t, err)
 		require.Len(t, done.Waits, 1)
 		require.Equal(t, a.JobKey.JobId, done.Waits[0].Dependencies[0].SatisfiedByJobID)
 		info, err = r.GetJob(ctx, c.JobKey)
 		require.NoError(t, err)
 		require.Nil(t, info.BlockingWait)
-		_, err = r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "tenant", Target: &da.Target, States: []jobdb.DependencyState{jobdb.DependencySatisfied}})
+		_, err = r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "c2", Target: &da.Target, States: []jobdb.DependencyState{jobdb.DependencySatisfied}})
 		require.ErrorIs(t, err, jobdb.ErrInvalidDependency)
 	})
 }
@@ -174,12 +174,12 @@ func TestDependencyDiscoverySkipsExpiredPages(t *testing.T) {
 		}
 		time.Sleep(time.Until(expires) + time.Millisecond)
 		for range 2 {
-			page, err := r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "tenant", Target: &d.Target, PageSize: 1})
+			page, err := r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "c2", Target: &d.Target, PageSize: 1})
 			require.NoError(t, err)
 			require.Len(t, page.Waits, 1)
 			require.Equal(t, "c3", page.Waits[0].JobKey.JobId)
 			require.Empty(t, page.NextPageToken)
-			expired, err := r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "tenant", ConsumerJobID: "c1", States: []jobdb.DependencyState{jobdb.DependencyTimedOut}})
+			expired, err := r.ListDependencyWaits(ctx, jobdb.ListDependencyWaitsRequest{TenantId: "c2", ConsumerJobID: "c1", States: []jobdb.DependencyState{jobdb.DependencyTimedOut}})
 			require.NoError(t, err)
 			require.Len(t, expired.Waits, 1)
 		}

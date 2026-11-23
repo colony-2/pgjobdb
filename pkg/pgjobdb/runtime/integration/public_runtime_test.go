@@ -12,7 +12,7 @@ import (
 )
 
 func TestPublicRuntimeInitializesFreshDatabase(t *testing.T) {
-	withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
+	withPreparedDatabase(t, func(ctx context.Context, db *sql.DB) {
 		db.SetMaxOpenConns(1)
 		cfg := directruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()}
 		runtime, err := directruntime.NewSQLDB(ctx, db, cfg)
@@ -28,7 +28,7 @@ func TestPublicRuntimeInitializesFreshDatabase(t *testing.T) {
 			t.Fatal(err)
 		}
 		handle, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "tenant", JobID: "fresh", JobType: "collect", Data: input,
+			TenantId: "c2", JobID: "fresh", JobType: "collect", Data: input,
 		}})
 		if err != nil || handle.JobKey.JobId != "fresh" {
 			t.Fatalf("submit through public runtime = %+v, %v", handle, err)

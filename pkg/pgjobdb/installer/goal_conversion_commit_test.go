@@ -122,6 +122,9 @@ func TestGoalConversionStartupReport(t *testing.T) {
 					cfg.ConversionReportWriter = failingReportWriter{}
 				}
 				runtime, err := pgruntime.NewSQLDB(ctx, db, cfg)
+				require.Error(t, err)
+				require.Nil(t, runtime)
+				_, err = (installer.Installer{DB: db}).ApplyWithReport(ctx, cfg.ConversionReportWriter)
 				if exportFailure {
 					require.ErrorContains(t, err, "export staged conversion report")
 					require.Nil(t, runtime)
@@ -130,7 +133,7 @@ func TestGoalConversionStartupReport(t *testing.T) {
 					return
 				}
 				require.NoError(t, err)
-				require.NoError(t, runtime.Close(ctx))
+				prepareHistoricalProjectFixture(t, ctx, db)
 				var staged installer.ConversionReport
 				require.NoError(t, json.Unmarshal(report.Bytes(), &staged))
 				require.Equal(t, 11, staged.SourceFormat)

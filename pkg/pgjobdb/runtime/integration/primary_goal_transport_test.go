@@ -20,7 +20,7 @@ func TestPostgresSelectedTransportRefusesUnsafeRoutes(t *testing.T) {
 	factory := conformanceRuntimeFactory(t)
 	rt := factory(t)
 	ctx := runtimetest.PrimaryGoalContext(context.Background())
-	source, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "transport", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
+	source, err := celltest.Submit(rt, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "XkR2hrh4sCknNJ1wPsH6jXZT0Fm", JobID: "source", Cell: "test", CellRepo: "example.test/test", JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}})
 	require.NoError(t, err)
 	application := selectionTestHandler(remoteruntime.NewConsumerServer(rt))
 	for _, mode := range []string{"unknown", "unsupported", "route404", "route405", "redirect307", "redirect308", "legacy"} {
@@ -68,21 +68,21 @@ func TestPostgresSelectedTransportRefusesUnsafeRoutes(t *testing.T) {
 			defer server.Close()
 			remote, err := remoteruntime.New(server.URL, server.Client())
 			require.NoError(t, err)
-			req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "transport", JobID: mode, GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}}
+			req := jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "XkR2hrh4sCknNJ1wPsH6jXZT0Fm", JobID: mode, GoalID: source.GoalID, Cell: source.Cell, CellRepo: source.CellRepo, JobType: "work", Data: jobdb.NewTaskDataOrPanic(nil)}}
 			_, err = remote.SubmitJob(ctx, req)
 			require.ErrorIs(t, err, jobdb.ErrPrimaryGoalSelectionUnsupported)
 			require.Zero(t, ordinary.Load())
 			if mode == "unknown" || mode == "unsupported" || mode == "legacy" {
 				require.Zero(t, selected.Load())
 			}
-			_, err = rt.GetJob(ctx, jobdb.JobKey{TenantId: "transport", JobId: mode})
+			_, err = rt.GetJob(ctx, jobdb.JobKey{TenantId: "XkR2hrh4sCknNJ1wPsH6jXZT0Fm", JobId: mode})
 			require.ErrorIs(t, err, jobdb.ErrJobNotFound)
 		})
 	}
-	jobs, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"transport"}})
+	jobs, err := rt.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"XkR2hrh4sCknNJ1wPsH6jXZT0Fm"}})
 	require.NoError(t, err)
 	require.Len(t, jobs.Jobs, 1)
-	goals, err := rt.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "transport"})
+	goals, err := rt.ListGoals(ctx, jobdb.ListGoalsRequest{TenantId: "XkR2hrh4sCknNJ1wPsH6jXZT0Fm"})
 	require.NoError(t, err)
 	require.Len(t, goals.Goals, 1)
 }

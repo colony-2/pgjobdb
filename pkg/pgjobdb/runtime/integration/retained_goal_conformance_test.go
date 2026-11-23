@@ -4,6 +4,7 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtimetest"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/integration/internal/jobdbtest"
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,8 @@ func TestRetainedGoalPublicConformance(t *testing.T) {
 	for _, transport := range []string{"direct", "default-http", "signed-http"} {
 		t.Run(transport, func(t *testing.T) {
 			rt := factory(t)
-			var r jobdb.WorkflowRuntime = rt
+			view := jobdbtest.NewProjectBackend(rt, "")
+			var r jobdb.WorkflowRuntime = view
 			if transport != "direct" {
 				var handler http.Handler = remote.NewConsumerServer(rt)
 				if transport == "signed-http" {
@@ -27,7 +29,7 @@ func TestRetainedGoalPublicConformance(t *testing.T) {
 				t.Cleanup(server.Close)
 				client, err := remote.New(server.URL, server.Client())
 				require.NoError(t, err)
-				r = client
+				r = jobdbtest.NewProjectClient(client, rt, "")
 			}
 			t.Run("admission", func(t *testing.T) { runtimetest.RunGoalAdmissionConformance(t, r) })
 			t.Run("failure-records", func(t *testing.T) { runtimetest.RunTerminalFailureConformance(t, r) })

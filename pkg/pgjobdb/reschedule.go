@@ -117,6 +117,9 @@ func rescheduleJob(ctx context.Context, db DB, identity LeaseIdentity,
 		}
 		wait = string(raw)
 	}
+	if err := AdmitProjectWrite(ctx, db, string(identity.TenantID)); err != nil {
+		return err
+	}
 	var updated bool
 	if err := db.QueryRowContext(ctx, `SELECT pgjobdb.reschedule_native_job(
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/colony-2/pgjobdb/internal/projectfixture"
 	"testing"
 	"time"
 
@@ -19,18 +20,18 @@ import (
 
 func TestNativeRuntimeCoreRestartsFromChapterPrefix(t *testing.T) {
 	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
-		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{
+		chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: projectfixture.Control(db),
 			BlobStoreURI: "blobfs://" + t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = chapters.Close(ctx) }()
-		schemas, err := schemapostgres.NewSQLDB(ctx, db)
+		schemas, err := schemapostgres.NewSQLDB(ctx, db, projectfixture.Control(db))
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtime, err := runtimecore.NewRuntime(runtimecore.Config{
+		runtime, err := runtimecore.NewRuntime(runtimecore.Config{Projects: projectfixture.Control(db),
 			Configurations: newConfigurationStore(t, ctx, db),
 			Scheduler:      runtimeadapter.Scheduler{DB: db}, Chapters: chapters,
 			Schemas: schemas,
@@ -43,12 +44,12 @@ func TestNativeRuntimeCoreRestartsFromChapterPrefix(t *testing.T) {
 			t.Fatal(err)
 		}
 		source, err := celltest.Submit(runtime, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test",
-			TenantId: "tenant", JobID: "source", JobType: "collect", Data: data,
+			TenantId: "c2", JobID: "source", JobType: "collect", Data: data,
 		}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		lease, err := pgjobdb.GetJobLease(ctx, db, "tenant", "source", "worker",
+		lease, err := pgjobdb.GetJobLease(ctx, db, "c2", "source", "worker",
 			pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"collect"}},
 			pgjobdb.GetJobLeaseOptions{})
 		if err != nil || lease == nil {
