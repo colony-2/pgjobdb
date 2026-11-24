@@ -98,10 +98,15 @@ jobs:
           printf 'machine github.com login x-access-token password %s\n' "$REPO_READ_TOKEN" > "$HOME/.netrc"
           chmod 600 "$HOME/.netrc"
 
+      - name: Build pinned compatibility test client
+        run: |
+          GOWORK=off GOFLAGS= GOTOOLCHAIN=local go -C scripts/testdata/pgjobdb-legacy-client build -mod=readonly -o "$RUNNER_TEMP/pgjobdb-legacy-client" .
+
       - name: Run tests
         # Custom HOME ONLY for this step, and outside the workspace
         env:
           HOME: ${{ runner.temp }}/test-home
+          PGJOBDB_TEST_LEGACY_CLIENT: ${{ runner.temp }}/pgjobdb-legacy-client
         run: |
           mkdir -p "$HOME"
           go test -v -tags=integration ./...

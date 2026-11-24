@@ -59,7 +59,7 @@ func TestGoalConversionAuthoritativeReport(t *testing.T) {
 			err          error
 		}
 		done := make(chan outcome, 1)
-		go func() { c, e := install.ApplyWithReport(ctx, sink); done <- outcome{c, e} }()
+		go func() { c, e := install.MigrateWithReport(ctx, sink); done <- outcome{c, e} }()
 		staged := <-sink.captured
 		var report installer.ConversionReport
 		require.NoError(t, json.Unmarshal(staged, &report))
@@ -111,7 +111,7 @@ func TestGoalConversionAuthoritativeReport(t *testing.T) {
 		require.Equal(t, id, marker["jobId"])
 		afterReport, err := install.Preflight(ctx)
 		require.NoError(t, err)
-		require.Equal(t, 13, afterReport.SourceFormat)
+		require.Equal(t, 14, afterReport.SourceFormat)
 		require.False(t, afterReport.LegacyInputsAvailable)
 		require.Empty(t, afterReport.RemovedLinks, "removed legacy memberships cannot be reconstructed")
 	})
@@ -133,7 +133,7 @@ func TestGoalConversionRejectsCorruption(t *testing.T) {
 				_, err = db.ExecContext(ctx, mutation)
 				require.NoError(t, err)
 				before := catalogSnapshot(t, ctx, db)
-				require.Error(t, (installer.Installer{DB: db}).Apply(ctx))
+				require.Error(t, (installer.Installer{DB: db}).Migrate(ctx))
 				require.JSONEq(t, before, catalogSnapshot(t, ctx, db))
 				var version int
 				require.NoError(t, db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version))
@@ -149,7 +149,7 @@ func TestGoalConversionRejectsCorruption(t *testing.T) {
 				_, err = db.ExecContext(ctx, `INSERT INTO pgjobdb.installation VALUES('pgjobdb',$1)`, version)
 				require.NoError(t, err)
 				before := catalogSnapshot(t, ctx, db)
-				require.Error(t, (installer.Installer{DB: db}).Apply(ctx))
+				require.Error(t, (installer.Installer{DB: db}).Migrate(ctx))
 				require.JSONEq(t, before, catalogSnapshot(t, ctx, db))
 			})
 		})
@@ -203,7 +203,7 @@ func TestRetainedGoalRejectsDamagedMirror(t *testing.T) {
 		before := catalogSnapshot(t, ctx, db)
 		install := installer.Installer{DB: db}
 		require.ErrorContains(t, install.Verify(ctx), "inconsistent protected archive mirror")
-		require.ErrorContains(t, install.Apply(ctx), "inconsistent protected archive mirror")
+		require.ErrorContains(t, install.Migrate(ctx), "inconsistent protected archive mirror")
 		require.JSONEq(t, before, catalogSnapshot(t, ctx, db))
 		var detail string
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT completion_detail FROM pgjobdb.jobs_archive WHERE job_id=$1`, failed.FailureJobID).Scan(&detail))

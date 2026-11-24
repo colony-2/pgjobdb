@@ -29,7 +29,8 @@ REQUIRED_PROJECT_RUNTIME = {'TestProjectIndependentSharedWriters', 'TestProjectN
  'TestProjectReadDoesNotSeal', 'TestProjectAdmissionBeforeSecretProvider', 'TestProjectHTTPAdministrationAndReceiptReplay', 'TestProjectHTTPLeaseRenewal', 'TestPostgresTaskAlternates', 'TestPostgresTaskAlternateDelayedReschedule'}
 REQUIRED_CONSUMER = {'TestConsumerConstructorCapabilities', 'TestConsumerHTTPRetiresAttachment',
                      'TestConsumerCapabilities', 'TestConsumerReadOnlyHistory',
-                     'TestConsumerSignedLeaseAuthority', 'TestConsumerNamespacedAuthority'}
+                     'TestConsumerSignedLeaseAuthority', 'TestConsumerNamespacedAuthority',
+                     'TestTenantConfiguration'}
 REQUIRED_GOALS = {'TestRetainedGoalPublicConformance', 'TestRetainedGoalIndependentCommitOrders',
                   'TestRetainedGoalSimultaneousIdleAdmission', 'TestRetainedGoalPublicationRollbackAndReopen',
                   'TestRetainedGoalHiddenAndCancellationAdmission', 'TestRetainedGoalFailureCurrentAuthority',
@@ -40,6 +41,22 @@ REQUIRED_INSTALLER = {'TestGoalConversionHistoricalFormats', 'TestGoalConversion
                       'TestGoalConversionLostCommitAcknowledgement', 'TestGoalConversionStartupReport',
                       'TestGoalConversionOriginTie', 'TestRetainedGoalVerifyContract', 'TestRetainedGoalRejectsDamagedMirror',
                       'TestRetainedGoalProtectionDefinitions', 'TestGoalConversionRejectsAlteredProtections'}
+REQUIRED_RESOURCE = {'TestResourceBackoffConformance', 'TestResourceBackoffPostgresBoundaries', 'TestResourceBackoffHTTPPostgres', 'TestResourceBackoffPostgresProcessRestart', 'TestResourceBackoffInstalledProtections', 'TestResourceBackoffDefaultAssignments', 'TestResourceBackoffWorkflowPostgres'}
+REQUIRED_RESOURCE_CHILDREN = {'B13b_guarded_clear', 'B05_B10_atomic_validation', 'B06a_late_duplicate', 'B17_retained_after_cancel', 'B11a_zero_credit_deadline_job_target', 'B07_competing_transitions', 'B09_append_gate_B13a_parent_not_refilled', 'B04_tenant_job_and_attempt_isolation', 'B13a_B13c_ordinary_reset_and_renew', 'B07a_single_reclaim', 'B05a_transaction_rollback', 'B11a_zero_credit_deadline_job_poll', 'B08_reopen', 'B11_zero_credit_engine_timeout_external_true', 'B09b_deadline_keeps_resource_gate', 'B04_B04a_retained_sequences', 'B13_countdown_boundary', 'B11a_zero_credit_deadline_task_poll', 'B15a_S02_snapshot', 'B03f_policy_binding', 'B11_zero_credit_engine_timeout_external_false', 'B09_task_completion_gate', 'B11a_zero_credit_deadline_task_target', 'B09_B09b_independent_gate', 'B07_barrier', 'B11a_ordinary_completion_after_due', 'B07a_task_poll_target_completion_append_reclaim', 'B09a_ordinary_join_alternative', 'B06_exact_receipt'}
+REQUIRED_RESOURCE_INSTALLER = {'TestPostgresResourceBackoffMigrationFormat13', 'TestPostgresResourceBackoffMigrationRollback', 'TestPostgresResourceBackoffMigrationPreservesProjects', 'TestPostgresResourceBackoffMigrationDefaultSerialization', 'TestPostgresResourceBackoffMigrationRejectsInvalidCrashData'}
+REQUIRED_FORMAT14_REGRESSIONS = {
+    'TestRetainedGoalProtectionDefinitions': ('project_search_path',),
+    'TestTenantConfiguration': ('reopen_and_connection_ownership',),
+    'TestResourceBackoffHTTPPostgres': ('H08_pre_eagain_client',),
+    'TestResourceBackoffWorkflowPostgres': (
+        'acknowledged_local', 'acknowledged_external', 'failed_before_commit_unselected', 'lost_after_commit',
+        'cancel_resumed_wait',
+    ),
+    'TestPostgresResourceBackoffMigrationRejectsInvalidCrashData': (
+        'missing_threshold', 'null_threshold', 'zero_threshold', 'negative_threshold',
+        'negative_active_count', 'negative_archived_count',
+    ),
+}
 # Current human direction on cancelled owner consultation WTYBvQMGp87NeKRx1GATPEIBFXD.
 # Keep the diagnosed raw failures; never retry or skip them. This supersedes the
 # previous delivery's exception for 05238600e743; it does not authorize other bugs.
@@ -54,7 +71,7 @@ INITIAL_HISTORY_SITES = {
     'TestPostgresPrimaryGoalSelection/remote': 'runtimetest/primary_goal.go:86',
     'TestPostgresSelectedConcurrentRequests': 'primary_goal_selection_test.go:86',
 }
-REQUIRED_COMMAND = {'TestPostgresConsumerGoalsCommands', 'TestPostgresProjectCommands'}
+REQUIRED_COMMAND = {'TestPostgresConsumerGoalsCommands', 'TestPostgresProjectCommands', 'TestPostgresResourceBackoffMigrationCommands'}
 TASK_DELEGATION_PACKAGE = INTEGRATION + '/internal/jobdbtest'
 REQUIRED_TASK_DELEGATION = {'TestPostgresTaskDelegation'}
 ENGINE_CONFORMANCE_PACKAGE = INTEGRATION + '/internal/jobdbtest/engineconformance'
@@ -90,16 +107,16 @@ def select_tests(package, names, behavior):
         raise ValueError('missing PostgreSQL task delegation tests')
     if package == ENGINE_CONFORMANCE_PACKAGE and not REQUIRED_RETRY_HISTORY.issubset(tests):
         raise ValueError('missing PostgreSQL retry history tests')
-    if package == PREFIX + 'pkg/pgjobdb/installer' and not REQUIRED_INSTALLER.issubset(tests):
+    if package == PREFIX + 'pkg/pgjobdb/installer' and not (REQUIRED_INSTALLER | REQUIRED_RESOURCE_INSTALLER).issubset(tests):
         raise ValueError('missing required historical conversion/report tests')
     if package == PROJECTS and not REQUIRED_PROJECTS.issubset(tests):
         raise ValueError('missing required PostgreSQL project tests')
     if package == COMMAND:
         if not REQUIRED_COMMAND.issubset(tests): raise ValueError('missing PostgreSQL command tests')
-        database = [n for n in tests if n.startswith(('TestPostgresConsumerGoals', 'TestPostgresProject'))]
+        database = [n for n in tests if n.startswith(('TestPostgresConsumerGoals', 'TestPostgresProject', 'TestPostgresResourceBackoffMigration'))]
         return database if behavior == 'runtime' else [n for n in tests if n not in database]
     if package == INTEGRATION:
-        if not (REQUIRED_CONSUMER | REQUIRED_GOALS | REQUIRED_PROJECT_RUNTIME).issubset(tests): raise ValueError('missing focused consumer tests')
+        if not (REQUIRED_CONSUMER | REQUIRED_GOALS | REQUIRED_PROJECT_RUNTIME | REQUIRED_RESOURCE).issubset(tests): raise ValueError('missing focused consumer tests')
         conformance = [n for n in tests if 'Conformance' in n]
         if not conformance: raise ValueError('empty conformance test selection')
         return conformance if behavior == 'conformance' else [n for n in tests if n not in conformance]
@@ -162,7 +179,14 @@ def accepted_initial_history_failures(events, package, pinned):
 def validate_outcomes(events, chosen, accepted=()):
     outcomes = {e['Test']: e['Action'] for e in events
                 if 'Test' in e and e.get('Action') in ('pass', 'fail', 'skip')}
-    missing = set(chosen) - set(outcomes)
+    if 'TestResourceBackoffConformance' in chosen:
+        expected = {'TestResourceBackoffConformance/' + name for name in REQUIRED_RESOURCE_CHILDREN}
+        missing_children = expected - set(outcomes)
+        if missing_children:
+            raise ValueError('missing required resource cases: ' + ', '.join(sorted(missing_children)))
+    required_regressions = {parent + '/' + child for parent, children in REQUIRED_FORMAT14_REGRESSIONS.items()
+                            if parent in chosen for child in children}
+    missing = (set(chosen) | required_regressions) - set(outcomes)
     if missing: raise ValueError('missing required test outcomes: ' + ', '.join(sorted(missing)))
     for test in chosen:
         if outcomes[test] != 'pass' and not (outcomes[test] == 'fail' and test in accepted): raise ValueError('required test did not pass: ' + test + ': ' + outcomes[test])
@@ -212,31 +236,56 @@ def execute(argv, log, **kwargs):
     # Timeout is a failure; terminate the entire child process group, including PostgreSQL.
     enable_subreaper()
     p = subprocess.Popen(argv, stdout=kwargs.pop('stdout', log), stderr=log, start_new_session=True, **kwargs)
+
+    class Cancelled(Exception):
+        pass
+
+    cancellation = None
+    cleaning = False
+
     def stop(signum, frame):
-        os.killpg(p.pid, signal.SIGTERM)
-        try: p.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            os.killpg(p.pid, signal.SIGKILL)
-            p.wait()
-        raise SystemExit(128 + signum)
-    old = {s: signal.signal(s, stop) for s in (signal.SIGTERM, signal.SIGINT)}
+        nonlocal cancellation
+        if cancellation is not None:
+            return
+        cancellation = signum
+        if not cleaning:
+            # Unwind before waiting again: the interrupted wait may hold
+            # Popen's waitpid lock in this same thread.
+            raise Cancelled
+
+    old = {}
     try:
         try:
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                old[signum] = signal.getsignal(signum)
+                signal.signal(signum, stop)
             return p.wait(timeout=1800)
+        except Cancelled:
+            try:
+                os.killpg(p.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                p.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.wait()
         except subprocess.TimeoutExpired:
             os.killpg(p.pid, signal.SIGKILL)
             p.wait()
             raise RuntimeError('command timed out after 1800 seconds')
     finally:
-        pending = sys.exception()
+        cleaning = True
         try:
             cleanup_children()
         except Exception:
-            if isinstance(pending, SystemExit): raise pending
-            raise
+            if cancellation is None:
+                raise
         finally:
             for s, handler in old.items():
                 signal.signal(s, handler)
+        if cancellation is not None:
+            raise SystemExit(128 + cancellation) from None
 
 
 def test_outcomes(output):
@@ -325,6 +374,14 @@ def run(behavior):
                     if execute(cmd, log, cwd=root, env=buildenv):
                         raise RuntimeError('production CLI compilation prerequisite failed')
                     testenv['PGJOBDB_TEST_CLI'] = str(cli)
+                if behavior == 'runtime' and INTEGRATION in packages:
+                    legacy = scratch / 'legacy-client'
+                    cmd = ['go', 'build', '-mod=readonly', '-o', str(legacy), '.']
+                    result['commands'].append(cmd)
+                    legacy_source = root / 'scripts/testdata/pgjobdb-legacy-client'
+                    if execute(cmd, log, cwd=legacy_source, env=buildenv) or not legacy.is_file():
+                        raise RuntimeError('pre-EAGAIN client compilation prerequisite failed')
+                    testenv['PGJOBDB_TEST_LEGACY_CLIENT'] = str(legacy)
                 for i, package in enumerate(packages):
                     binary = scratch / ('test-' + str(i))
                     cmd = ['go', 'test', *goflags, '-c', '-o', str(binary), package]

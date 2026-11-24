@@ -8,7 +8,7 @@ preserves historical bytes.
 `runtime.NewSQLDB`, `OpenDSN`, `direct` and `serve` only open prepared storage.
 They refuse missing, partial, damaged or unsupported project installations. They
 never initialize a database, convert scheduler formats or import projects.
-Scheduler format remains 13; project installation has independent protocol 1.
+Scheduler format is 14; project installation has independent protocol 1.
 
 ## Prepare empty storage
 
@@ -41,9 +41,13 @@ fresh initializer or delete historical storage to make it appear empty.
 ## Adopt historical storage
 
 Back up first and keep every participant fenced through reconciliation and reopen.
-Convert supported scheduler formats 9–12 explicitly with
-`installer.Installer.ApplyWithReport`, retaining the staged report and committed
-confirmation. Opening a runtime no longer performs that conversion.
+Convert supported scheduler formats 9–13 explicitly with
+`installer.Installer.MigrateWithReport` or [`jobdb direct migrate`](resource-backoff.md),
+retaining the staged report and commit confirmation. If format 13 already has
+an installed catalog, migration preserves the catalog, admission projection and
+original installation receipt. It verifies the old guard contract before cutover
+and records the updated scheduler fingerprint in the same transaction. Skip
+project adoption below for an already installed catalog.
 
 If all five shared tables are absent, explicitly prepare them:
 

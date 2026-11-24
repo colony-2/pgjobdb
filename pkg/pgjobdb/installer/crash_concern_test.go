@@ -48,7 +48,7 @@ func TestCrashConcernExcludesNativeAcquisition(t *testing.T) {
 				}
 				count := func() int {
 					var n int
-					require.NoError(t, db.QueryRowContext(ctx, `SELECT consecutive_expirations FROM pgjobdb.jobs WHERE tenant_id='c2' AND job_id=$1`, id).Scan(&n))
+					require.NoError(t, db.QueryRowContext(ctx, `SELECT crash_budget_remaining FROM pgjobdb.jobs WHERE tenant_id='c2' AND job_id=$1`, id).Scan(&n))
 					return n
 				}
 				for n := 0; n <= 2; n++ {
@@ -60,10 +60,10 @@ func TestCrashConcernExcludesNativeAcquisition(t *testing.T) {
 					}
 					require.NotNil(t, lease)
 					require.Equal(t, id, lease.JobID)
-					require.Equal(t, n, count())
+					require.Equal(t, 2-n, count())
 					_, err := pgjobdb.KeepAliveLease(ctx, db, lease.Identity(), time.Minute)
 					require.NoError(t, err)
-					require.Equal(t, n, count(), "renewal must not erase consecutive crashes")
+					require.Equal(t, 2-n, count(), "renewal must not erase consecutive crashes")
 					row, err := pgjobdb.GetJob(ctx, db, "c2", id)
 					require.NoError(t, err)
 					require.Equal(t, pgjobdb.JobStatusActive, row.Status)
@@ -90,7 +90,7 @@ func TestCrashConcernExcludesNativeAcquisition(t *testing.T) {
 				lease := get()
 				require.NotNil(t, lease, "explicit clearing restores acquisition")
 				require.NoError(t, lease.Reschedule(ctx, db, pgjobdb.RescheduleRequest{RouteJobType: "reset", WorkKind: pgjobdb.WorkKindJob}))
-				require.Zero(t, count(), "successful rescheduling resets the streak")
+				require.Equal(t, 2, count(), "successful rescheduling assigns current default")
 				selector = pgjobdb.WorkSelector{JobTypes: []pgjobdb.JobType{"reset"}}
 				require.NotNil(t, get())
 				expire()

@@ -16,7 +16,10 @@ import (
 
 // Scheduler adapts pgjobdb's native SQL API to JobDB's scheduler port.
 type Scheduler struct {
-	DB *sql.DB
+	DB             *sql.DB
+	Chapters       runtimecore.ChapterLog
+	ResourceSample func() float64
+	ResourceFault  func(string) error
 }
 
 var _ runtimecore.Scheduler = Scheduler{}
@@ -62,7 +65,7 @@ func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest
 		GoalIDs:   req.GoalIDs,
 		RootOnly:  req.RootOnly, CreatedAfter: req.CreatedAfter, IncludeHidden: req.IncludeHidden,
 		CreatedBefore: req.CreatedBefore, PageSize: req.PageSize,
-		PageToken: req.PageToken, Now: req.Now,
+		PageToken: req.PageToken, // PostgreSQL owns eligibility time.
 	}
 	for _, route := range req.AvailableRoutes {
 		opts.AvailableRoutes = append(opts.AvailableRoutes, pgjobdb.Route{JobType: pgjobdb.JobType(route.JobType), TaskType: pgjobdb.TaskType(route.TaskType)})
@@ -106,7 +109,7 @@ func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest
 		NextPageToken: listed.NextPageToken,
 	}
 	for _, summary := range listed.Jobs {
-		row := runtimecore.StoredJob{RecordKind: summary.RecordKind, TerminalFailure: summary.TerminalFailure,
+		row := runtimecore.StoredJob{CrashBudgetRemaining: summary.CrashBudgetRemaining, ResourceBackoff: summary.ResourceBackoff, ResourceResume: summary.ResourceResume, RecordKind: summary.RecordKind, TerminalFailure: summary.TerminalFailure,
 			Cell:   jobdb.ResolvedCell{Cell: summary.Cell, CellID: summary.CellID, CellRepo: summary.CellRepo},
 			JobKey: jobdb.JobKey{TenantId: string(summary.TenantID), JobId: string(summary.JobID)},
 			GoalID: summary.GoalID, Store: jobdb.JobStore(summary.Store), Status: jobdb.JobStatus(summary.Status),
@@ -160,7 +163,7 @@ func metadataPredicatesToPgjobdb(input []jobdb.MetadataPredicate) ([]pgjobdb.Met
 }
 
 func storedJobFromDetail(detail pgjobdb.JobDetail) (runtimecore.StoredJob, error) {
-	row := runtimecore.StoredJob{RecordKind: detail.RecordKind, TerminalFailure: detail.TerminalFailure, AppendKey: detail.AppendKey, AppendGeneration: detail.AppendGeneration,
+	row := runtimecore.StoredJob{CrashBudgetRemaining: detail.CrashBudgetRemaining, ResourceBackoff: detail.ResourceBackoff, ResourceResume: detail.ResourceResume, RecordKind: detail.RecordKind, TerminalFailure: detail.TerminalFailure, AppendKey: detail.AppendKey, AppendGeneration: detail.AppendGeneration,
 		Cell:   jobdb.ResolvedCell{Cell: detail.Cell, CellID: detail.CellID, CellRepo: detail.CellRepo},
 		GoalID: detail.GoalID, OtherGoalIDs: detail.OtherGoalIDs,
 		JobKey: jobdb.JobKey{TenantId: string(detail.TenantID), JobId: string(detail.JobID)},

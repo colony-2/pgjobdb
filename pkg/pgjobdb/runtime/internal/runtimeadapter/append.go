@@ -25,7 +25,7 @@ func (s Scheduler) GetAppendTail(ctx context.Context, c runtimecore.AppendChain)
  ) SELECT f.job_id,f.append_gen,f.goal_id,f.cell_id,f.cell_name,f.cell_repo,f.job_type,f.schema_hash,
  COALESCE(a.archived_at,CASE WHEN j.job_id IS NULL THEN f.created_at END),COALESCE(j.cancel_requested,a.final_cancel_requested,false),
  j.lease_worker_id,NULLIF(j.lease_expires_at,'-infinity'::timestamptz),
- COALESCE(j.consecutive_expirations>=pgjobdb.crash_concern_threshold() AND j.lease_expires_at<=clock_timestamp(),false)
+ COALESCE(j.crash_budget_remaining=0 AND j.lease_expires_at<=pgjobdb.scheduler_now(),false)
  FROM tail f LEFT JOIN pgjobdb.jobs j USING(tenant_id,job_id) LEFT JOIN pgjobdb.jobs_archive a USING(tenant_id,job_id)`, c.TenantID, c.CellID, c.JobType, c.AppendKey).Scan(
 		&out.JobKey.JobId, &out.AppendGeneration, &out.GoalID, &out.Cell.CellID, &out.Cell.Cell, &out.Cell.CellRepo, &out.JobType, &schema, &archived, &out.CancelRequested, &worker, &expiry, &crash)
 	if errors.Is(err, sql.ErrNoRows) {

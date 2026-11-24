@@ -35,14 +35,14 @@ func TestPriorPrimaryGoalPreparationsPreserved(t *testing.T) {
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(p)-'selected_goal_id'-'receipt' ORDER BY job_id)::text FROM pgjobdb.job_preparations p`).Scan(&before))
 		inst := pginstaller.Installer{DB: db}
 		require.Error(t, inst.Verify(ctx))
-		require.NoError(t, inst.Apply(ctx))
+		require.NoError(t, inst.Migrate(ctx))
 		require.NoError(t, inst.Verify(ctx))
 		var after string
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(p)-'selected_goal_id'-'receipt' ORDER BY job_id)::text FROM pgjobdb.job_preparations p`).Scan(&after))
 		require.JSONEq(t, before, after)
 		var version int
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version))
-		require.Equal(t, 13, version)
+		require.Equal(t, 14, version)
 
 	})
 }

@@ -15,7 +15,7 @@ type Installer struct {
 	ReportWriter io.Writer
 }
 
-// Apply validates and applies the same transactional path used by startup.
+// Apply prepares fresh storage or validates current storage. For older formats use Migrate.
 func (i Installer) Apply(ctx context.Context) error {
 	_, err := i.ApplyWithReport(ctx, i.ReportWriter)
 	return err
@@ -33,6 +33,9 @@ func (i Installer) Verify(ctx context.Context) error {
 		return err
 	}
 	schema := i.schemaName()
+	if err := i.assertInstallation(ctx, schema); err != nil {
+		return err
+	}
 
 	for _, tbl := range []string{"lease_events", "cells", "cell_names", "cell_catalog", "installation", "jobs", "jobs_archive", "jobs_trace", "job_facts", "job_client_state", "job_preparations", "dependency_waits", "dependency_targets"} {
 		if err := i.assertTable(ctx, schema, tbl); err != nil {
@@ -68,9 +71,6 @@ func (i Installer) Verify(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := i.assertInstallation(ctx, schema); err != nil {
-		return err
-	}
 	for _, object := range []string{"goals", "goal_candidates"} {
 		var exists bool
 		if err := i.DB.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, schema+"."+object).Scan(&exists); err != nil {
@@ -96,10 +96,13 @@ func (i Installer) Verify(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if version >= 9 && version < FormatVersion {
+		return fmt.Errorf("pgjobdb: format %d requires explicit offline migration to format %d", version, FormatVersion)
+	}
 	if version != FormatVersion {
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
-	if err = validateInput(ctx, tx, 13); err != nil {
+	if err = validateInput(ctx, tx, FormatVersion); err != nil {
 		return err
 	}
 	return validateTargetContract(ctx, tx)
@@ -137,7 +140,10 @@ func (i Installer) assertInstallation(ctx context.Context, schema string) error 
 	if err := i.DB.QueryRowContext(ctx, query, schema).Scan(&version); err != nil {
 		return fmt.Errorf("pgjobdb: read installation marker: %w", err)
 	}
-	if version != 13 {
+	if version >= 9 && version < FormatVersion {
+		return fmt.Errorf("pgjobdb: format %d requires explicit offline migration to format %d", version, FormatVersion)
+	}
+	if version != FormatVersion {
 		return fmt.Errorf("pgjobdb: unsupported schema format %d", version)
 	}
 	return nil

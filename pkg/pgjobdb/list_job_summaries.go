@@ -15,6 +15,10 @@ import (
 // membership enumeration or evaluated dependency explanations. Stored payloads,
 // policy, task coordinates, prerequisites, and completion detail are included.
 type JobListSummary struct {
+	CrashBudgetRemaining *int64                           `json:"crash_budget_remaining"`
+	ResourceBackoff      *jobdb.ResourceBackoffCapability `json:"resource_backoff"`
+	ResourceResume       *jobdb.ResourceResume            `json:"resource_resume"`
+
 	RecordKind            jobdb.JobRecordKind          `json:"record_kind"`
 	TerminalFailure       *jobdb.GoalFailure           `json:"terminal_failure"`
 	AppendKey             string                       `json:"append_key"`

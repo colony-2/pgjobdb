@@ -25,7 +25,7 @@ func rejectAlteredProtection(t *testing.T, ctx context.Context, db *sql.DB, dama
 	install := installer.Installer{DB: db}
 	_, err = install.Preflight(ctx)
 	require.ErrorContains(t, err, "protection")
-	require.ErrorContains(t, install.Apply(ctx), "protection")
+	require.ErrorContains(t, install.Migrate(ctx), "protection")
 	if target {
 		require.ErrorContains(t, install.Verify(ctx), "protection")
 	}
@@ -93,12 +93,20 @@ func TestRetainedGoalProtectionDefinitions(t *testing.T) {
 		} {
 			t.Run(c.name, func(t *testing.T) { rejectAlteredProtection(t, ctx, db, c.damage, c.restore, rows, true) })
 		}
-		// Deparsing must not depend on a caller including pgjobdb in search_path.
-		_, err := db.ExecContext(ctx, `ALTER ROLE postgres SET search_path TO pgjobdb,public`)
-		require.NoError(t, err)
-		db.SetMaxIdleConns(0)
-		require.NoError(t, (installer.Installer{DB: db}).Verify(ctx))
-		require.NoError(t, (installer.Installer{DB: db}).Apply(ctx))
+		t.Run("project_search_path", func(t *testing.T) {
+			install := installer.Installer{DB: db}
+			// Verify uses a canonical path to deparse retained scheduler protections.
+			// Migration also checks the resolution of the shared project tables.
+			_, err := db.ExecContext(ctx, `ALTER ROLE postgres SET search_path TO pgjobdb,public`)
+			require.NoError(t, err)
+			db.SetMaxIdleConns(0) // Use the new role default on the next connection.
+			require.NoError(t, install.Verify(ctx))
+			require.ErrorContains(t, install.Migrate(ctx), "project storage requires an unshadowed public search path")
+
+			_, err = db.ExecContext(ctx, `ALTER ROLE postgres SET search_path TO public`)
+			require.NoError(t, err)
+			require.NoError(t, install.Migrate(ctx))
+		})
 	})
 }
 
@@ -128,7 +136,7 @@ func TestGoalConversionRejectsAlteredProtections(t *testing.T) {
 				} {
 					t.Run(c.name, func(t *testing.T) { rejectAlteredProtection(t, ctx, db, c.damage, c.restore, rows, false) })
 				}
-				require.NoError(t, (installer.Installer{DB: db}).Apply(ctx))
+				require.NoError(t, (installer.Installer{DB: db}).Migrate(ctx))
 				require.NoError(t, (installer.Installer{DB: db}).Verify(ctx))
 			})
 		})

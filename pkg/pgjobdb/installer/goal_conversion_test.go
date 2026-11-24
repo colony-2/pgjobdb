@@ -108,8 +108,8 @@ func stableHistoricalRows(t *testing.T, ctx context.Context, db *sql.DB) string 
 	var out string
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_build_object(
  'facts',(SELECT jsonb_agg(to_jsonb(f)-'goal_origin'-'goal_created_at'-'goal_closed_at'-'goal_success_job_id'-'historical_goal_success'-'record_kind'-'terminal_failure'-'append_key'-'append_gen' ORDER BY job_id) FROM pgjobdb.job_facts f WHERE job_type<>'jobdb.goal_failure'),
- 'active',(SELECT jsonb_agg(to_jsonb(j) ORDER BY job_id) FROM pgjobdb.jobs j),
- 'archive',(SELECT jsonb_agg(to_jsonb(a) ORDER BY job_id) FROM pgjobdb.jobs_archive a WHERE job_id IN (SELECT job_id FROM pgjobdb.job_facts WHERE job_type<>'jobdb.goal_failure')),
+ 'active',(SELECT jsonb_agg(to_jsonb(j)-'crash_budget_remaining'-'resource_not_before_ns'-'resource_not_before'-'resource_deadline'-'resource_resume' ORDER BY job_id) FROM pgjobdb.jobs j),
+ 'archive',(SELECT jsonb_agg(to_jsonb(a)-'crash_budget_remaining'-'resource_not_before_ns'-'resource_not_before'-'resource_deadline'-'resource_resume' ORDER BY job_id) FROM pgjobdb.jobs_archive a WHERE job_id IN (SELECT job_id FROM pgjobdb.job_facts WHERE job_type<>'jobdb.goal_failure')),
  'clients',(SELECT jsonb_agg(to_jsonb(s) ORDER BY job_id) FROM pgjobdb.job_client_state s WHERE job_id IN (SELECT job_id FROM pgjobdb.job_facts WHERE job_type<>'jobdb.goal_failure')),
  'preparations',(SELECT jsonb_agg(to_jsonb(p)-CASE WHEN to_jsonb(p)->'selected_goal_id' IS NULL OR to_jsonb(p)->'selected_goal_id'='null'::jsonb THEN 'selected_goal_id' ELSE '' END-CASE WHEN to_jsonb(p)->'receipt' IS NULL OR to_jsonb(p)->'receipt'='null'::jsonb THEN 'receipt' ELSE '' END ORDER BY job_id) FROM pgjobdb.job_preparations p),
  'waits',(SELECT jsonb_agg(to_jsonb(w) ORDER BY wait_id) FROM pgjobdb.dependency_waits w),
@@ -126,6 +126,12 @@ func TestGoalConversionHistoricalFormats(t *testing.T) {
 		t.Run(fmt.Sprint(fixture.version), func(t *testing.T) {
 			withBareDatabase(t, func(ctx context.Context, db *sql.DB) {
 				_, err := db.ExecContext(ctx, fixture.ddl)
+				require.NoError(t, err)
+				threshold := 2
+				if fixture.version%2 == 0 {
+					threshold = 9
+				}
+				_, err = db.ExecContext(ctx, `SELECT pgjobdb.set_crash_concern_threshold($1)`, threshold)
 				require.NoError(t, err)
 				a, b, failure, overlap := historicalBaseline(t, ctx, db, fixture.version)
 				chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: celltest.UnrestrictedProjects{}, BlobStoreURI: "blobfs://" + t.TempDir()})
@@ -154,7 +160,7 @@ func TestGoalConversionHistoricalFormats(t *testing.T) {
 					return s
 				}())
 				var report bytes.Buffer
-				confirmation, err := install.ApplyWithReport(ctx, &report)
+				confirmation, err := install.MigrateWithReport(ctx, &report)
 				require.NoError(t, err)
 				require.True(t, confirmation.Committed)
 				require.NotEmpty(t, confirmation.ReportSHA256)
@@ -177,6 +183,11 @@ func TestGoalConversionHistoricalFormats(t *testing.T) {
 				var r installer.ConversionReport
 				require.NoError(t, json.Unmarshal(report.Bytes(), &r))
 				require.False(t, r.Advisory)
+				require.EqualValues(t, threshold, r.OriginalCrashDefault)
+				require.EqualValues(t, threshold, r.TargetCrashDefault)
+				var preservedThreshold int
+				require.NoError(t, db.QueryRowContext(ctx, `SELECT pgjobdb.crash_concern_threshold()`).Scan(&preservedThreshold))
+				require.Equal(t, threshold, preservedThreshold)
 				capture, err := json.Marshal(struct {
 					Report       installer.ConversionReport   `json:"report"`
 					Confirmation installer.CommitConfirmation `json:"confirmation"`
@@ -228,11 +239,11 @@ func TestGoalConversionHistoricalFormats(t *testing.T) {
 						require.NoError(t, err)
 					}
 				}
-				require.NoError(t, install.Apply(ctx))
+				require.NoError(t, install.Migrate(ctx))
 				again, err := pgjobdb.GetGoal(ctx, db, key)
 				require.NoError(t, err)
 				require.Equal(t, g, again)
-				t.Logf("format %d -> 13: preserved rows, exact cross-primary witness, failure %s, 2 dropped links, overlap drained", fixture.version, g.FailureJobID)
+				t.Logf("format %d -> 14: preserved rows, exact cross-primary witness, failure %s, 2 dropped links, overlap drained", fixture.version, g.FailureJobID)
 			})
 		})
 	}
@@ -270,12 +281,12 @@ func TestGoalConversionRollback(t *testing.T) {
 		install := installer.Installer{DB: db}
 		before := stableHistoricalRows(t, ctx, db)
 		catalog := catalogSnapshot(t, ctx, db)
-		confirmation, err := install.ApplyWithReport(ctx, failingReportWriter{})
+		confirmation, err := install.MigrateWithReport(ctx, failingReportWriter{})
 		require.ErrorContains(t, err, "injected report export failure")
 		require.False(t, confirmation.Committed)
 		require.JSONEq(t, before, stableHistoricalRows(t, ctx, db))
 		require.JSONEq(t, catalog, catalogSnapshot(t, ctx, db))
-		confirmation, err = install.ApplyWithReport(ctx, shortReportWriter{})
+		confirmation, err = install.MigrateWithReport(ctx, shortReportWriter{})
 		require.ErrorIs(t, err, io.ErrShortWrite)
 		require.False(t, confirmation.Committed)
 		require.JSONEq(t, before, stableHistoricalRows(t, ctx, db))
@@ -285,13 +296,13 @@ func TestGoalConversionRollback(t *testing.T) {
 		_, err = db.ExecContext(ctx, `ALTER TABLE pgjobdb.installation ADD CONSTRAINT injected_conversion_failure CHECK(format_version<>13)`)
 		require.NoError(t, err)
 		catalog = catalogSnapshot(t, ctx, db)
-		require.ErrorContains(t, install.Apply(ctx), "injected_conversion_failure")
+		require.ErrorContains(t, install.Migrate(ctx), "injected_conversion_failure")
 		require.JSONEq(t, before, stableHistoricalRows(t, ctx, db))
 		require.JSONEq(t, catalog, catalogSnapshot(t, ctx, db))
 		_, err = db.ExecContext(ctx, `ALTER TABLE pgjobdb.installation DROP CONSTRAINT injected_conversion_failure`)
 		require.NoError(t, err)
-		require.NoError(t, install.Apply(ctx))
-		require.NoError(t, install.Apply(ctx))
+		require.NoError(t, install.Migrate(ctx))
+		require.NoError(t, install.Migrate(ctx))
 		var count int
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.job_facts WHERE record_kind='MIGRATED_GOAL_FAILURE'`).Scan(&count))
 		require.Equal(t, 1, count)
@@ -311,7 +322,7 @@ func TestGoalConversionOriginTie(t *testing.T) {
 		install := installer.Installer{DB: db}
 		report, err := install.Preflight(ctx)
 		require.NoError(t, err)
-		require.NoError(t, install.Apply(ctx))
+		require.NoError(t, install.Migrate(ctx))
 		var actual string
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT job_id FROM pgjobdb.job_facts WHERE goal_id=$1 AND goal_origin`, goal).Scan(&actual))
 		require.Equal(t, expected, actual)

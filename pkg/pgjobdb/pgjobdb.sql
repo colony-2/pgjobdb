@@ -4,22 +4,25 @@ CREATE SCHEMA IF NOT EXISTS pgjobdb;
 
 SET LOCAL search_path = pgjobdb, public;
 
+CREATE OR REPLACE FUNCTION pgjobdb.scheduler_now() RETURNS TIMESTAMPTZ LANGUAGE sql VOLATILE AS $$ SELECT clock_timestamp(); $$;
+
+
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') NOT IN (9,10,11,12,13) THEN
-   RAISE EXCEPTION 'unsupported pgjobdb format; create a fresh database';
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') <> 14 THEN
+   RAISE EXCEPTION 'unsupported pgjobdb format; explicit offline migration to format 14 required';
   END IF;
  END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 13),
-    installed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+    format_version INTEGER NOT NULL CHECK (format_version = 14),
+    installed_at TIMESTAMPTZ NOT NULL DEFAULT pgjobdb.scheduler_now()
 );
 
 INSERT INTO pgjobdb.installation (name, format_version)
-SELECT 'pgjobdb',13 WHERE NOT EXISTS(SELECT 1 FROM pgjobdb.installation WHERE name='pgjobdb');
+SELECT 'pgjobdb',14 WHERE NOT EXISTS(SELECT 1 FROM pgjobdb.installation WHERE name='pgjobdb');
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -85,6 +88,28 @@ CREATE OR REPLACE FUNCTION pgjobdb._goal_lock(p_tenant TEXT) RETURNS VOID LANGUA
  SELECT pg_advisory_xact_lock(hashtextextended('pgjobdb.goals:' || p_tenant, 0));
 $$;
 
+-- The default applies only when assigning a new balance. Reapply preserves it.
+CREATE TABLE IF NOT EXISTS pgjobdb.resource_configuration (
+ singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton),
+ protocol_version INTEGER NOT NULL CHECK(protocol_version=1),
+ crash_allowance BIGINT NOT NULL CHECK(crash_allowance BETWEEN 1 AND 2147483647)
+);
+INSERT INTO pgjobdb.resource_configuration VALUES(TRUE,1,5) ON CONFLICT DO NOTHING;
+CREATE OR REPLACE FUNCTION pgjobdb.crash_concern_threshold() RETURNS INTEGER LANGUAGE plpgsql AS $$
+DECLARE value INTEGER;
+BEGIN
+ SELECT crash_allowance INTO STRICT value FROM pgjobdb.resource_configuration WHERE singleton;
+ IF value<=0 THEN RAISE EXCEPTION 'invalid crash default'; END IF;
+ RETURN value;
+END $$;
+CREATE OR REPLACE FUNCTION pgjobdb.set_crash_concern_threshold(p_threshold INTEGER) RETURNS INTEGER LANGUAGE plpgsql AS $$
+BEGIN
+ IF p_threshold IS NULL OR p_threshold<=0 THEN RAISE EXCEPTION 'threshold must be positive'; END IF;
+ UPDATE pgjobdb.resource_configuration SET crash_allowance=p_threshold WHERE singleton;
+ IF NOT FOUND THEN RAISE EXCEPTION 'missing crash default'; END IF;
+ RETURN p_threshold;
+END $$;
+
 CREATE TABLE IF NOT EXISTS pgjobdb.jobs (
     goal_id TEXT NOT NULL,
     dependency_wait_id TEXT,
@@ -96,13 +121,13 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs (
     wait_until_is_deadline BOOLEAN NOT NULL DEFAULT FALSE,
     payload JSONB NOT NULL DEFAULT '{}'::JSONB,
     metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
-    available_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    available_at TIMESTAMPTZ NOT NULL DEFAULT pgjobdb.scheduler_now(),
     expires_at TIMESTAMPTZ NOT NULL DEFAULT 'infinity',
     lease_id TEXT,
     lease_expires_at TIMESTAMPTZ NOT NULL DEFAULT '-infinity',
     lease_expiration_count BIGINT NOT NULL DEFAULT 0,
     consecutive_expirations BIGINT NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT pgjobdb.scheduler_now(),
     cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
     cancel_requested_by TEXT,
     cancel_requested_at TIMESTAMPTZ,
@@ -153,12 +178,18 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs (
             )
 );
 
+ALTER TABLE pgjobdb.jobs ADD COLUMN IF NOT EXISTS crash_budget_remaining BIGINT NOT NULL DEFAULT pgjobdb.crash_concern_threshold() CHECK(crash_budget_remaining>=0);
+ALTER TABLE pgjobdb.jobs ADD COLUMN IF NOT EXISTS resource_not_before_ns BIGINT;
+ALTER TABLE pgjobdb.jobs ADD COLUMN IF NOT EXISTS resource_not_before TIMESTAMPTZ;
+ALTER TABLE pgjobdb.jobs ADD COLUMN IF NOT EXISTS resource_deadline TIMESTAMPTZ;
+ALTER TABLE pgjobdb.jobs ADD COLUMN IF NOT EXISTS resource_resume JSON;
+
 -- Rescheduled dependency waits may wake on completion OR a deadline. Keep
 -- ordinary submission availability and delay-only reschedules as not-before times.
 
 CREATE TABLE IF NOT EXISTS pgjobdb.jobs_archive (
     goal_id TEXT NOT NULL,
-    archived_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    archived_at TIMESTAMPTZ NOT NULL DEFAULT pgjobdb.scheduler_now(),
     tenant_id TEXT NOT NULL,
     job_id TEXT NOT NULL,
     alternate_after_seconds DOUBLE PRECISION,
@@ -231,13 +262,19 @@ CREATE TABLE IF NOT EXISTS pgjobdb.jobs_archive (
             )
 );
 
+ALTER TABLE pgjobdb.jobs_archive ADD COLUMN IF NOT EXISTS crash_budget_remaining BIGINT NOT NULL DEFAULT 0 CHECK(crash_budget_remaining>=0);
+ALTER TABLE pgjobdb.jobs_archive ADD COLUMN IF NOT EXISTS resource_not_before_ns BIGINT;
+ALTER TABLE pgjobdb.jobs_archive ADD COLUMN IF NOT EXISTS resource_not_before TIMESTAMPTZ;
+ALTER TABLE pgjobdb.jobs_archive ADD COLUMN IF NOT EXISTS resource_deadline TIMESTAMPTZ;
+ALTER TABLE pgjobdb.jobs_archive ADD COLUMN IF NOT EXISTS resource_resume JSON;
+
 CREATE TABLE IF NOT EXISTS pgjobdb.jobs_trace (
     trace_id BIGINT PRIMARY KEY DEFAULT nextval('pgjobdb.jobs_trace_id_seq'),
     tenant_id TEXT NOT NULL,
     job_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
     worker_id TEXT NOT NULL,
-    event_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    event_at TIMESTAMPTZ NOT NULL DEFAULT pgjobdb.scheduler_now(),
     input_data JSONB NOT NULL,
     output_data JSONB
 );
@@ -264,37 +301,14 @@ ON pgjobdb.jobs_archive USING GIN (metadata);
 CREATE INDEX IF NOT EXISTS idx_trace_tenant_job_event
 ON pgjobdb.jobs_trace(tenant_id, job_id, event_at DESC);
 
-CREATE OR REPLACE FUNCTION pgjobdb.crash_concern_threshold()
-RETURNS INTEGER
-LANGUAGE sql
-AS $$
-    SELECT 5;
-$$;
-
-CREATE OR REPLACE FUNCTION pgjobdb.set_crash_concern_threshold(p_threshold INTEGER)
-RETURNS INTEGER
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF p_threshold IS NULL OR p_threshold <= 0 THEN
-        RAISE EXCEPTION 'threshold must be positive';
-    END IF;
-
-    EXECUTE format(
-        'CREATE OR REPLACE FUNCTION pgjobdb.crash_concern_threshold() RETURNS INTEGER LANGUAGE plpgsql AS %L',
-        format('BEGIN RETURN %s; END;', p_threshold)
-    );
-
-    RETURN p_threshold;
-END;
-$$;
-
 -- Shared eligibility for live acquisition and read-only discovery at a supplied time.
 CREATE OR REPLACE FUNCTION pgjobdb.job_status_at(j pgjobdb.jobs, p_now TIMESTAMPTZ)
 RETURNS TEXT LANGUAGE sql STABLE AS $$
     SELECT CASE
             WHEN j.lease_expires_at > p_now THEN 'ACTIVE'
             WHEN j.cancel_requested THEN 'CANCELLED'
+            WHEN j.resource_deadline IS NOT NULL AND j.resource_deadline<=p_now THEN 'READY'
+            WHEN j.resource_not_before IS NOT NULL AND j.resource_not_before>p_now THEN 'AWAITING_FUTURE'
             WHEN EXISTS(SELECT 1 FROM pgjobdb.dependency_waits w WHERE w.tenant_id=j.tenant_id AND w.job_id=j.job_id
                 AND w.wait_id=j.dependency_wait_id AND w.state='PENDING' AND (w.deadline IS NULL OR w.deadline>p_now)) THEN 'PENDING_JOBS'
             WHEN NOT j.wait_until_is_deadline AND j.available_at > p_now THEN 'AWAITING_FUTURE'
@@ -308,7 +322,7 @@ RETURNS TEXT LANGUAGE sql STABLE AS $$
                       AND ja.job_id = dep_job_id
                 )
             ) AND NOT (j.wait_until_is_deadline AND j.available_at <= p_now) THEN 'PENDING_JOBS'
-            WHEN j.consecutive_expirations >= pgjobdb.crash_concern_threshold() THEN 'CRASH_CONCERN'
+            WHEN j.crash_budget_remaining = 0 AND NOT (j.resource_deadline IS NOT NULL AND j.resource_deadline<=p_now) THEN 'CRASH_CONCERN'
             WHEN j.expires_at <= p_now THEN 'EXPIRED'
             ELSE 'READY'
         END;
@@ -317,10 +331,10 @@ $$;
 CREATE OR REPLACE FUNCTION pgjobdb.effective_native_route(j pgjobdb.jobs, p_now TIMESTAMPTZ)
 RETURNS TABLE(effective_job_type TEXT, effective_work_kind TEXT, effective_task_type TEXT, alternate_due BOOLEAN)
 LANGUAGE sql STABLE AS $$
-    SELECT CASE WHEN due THEN j.alternate_job_type ELSE j.route_job_type END,
-        CASE WHEN due THEN CASE WHEN j.alternate_task_type IS NULL THEN 'JOB' ELSE 'TASK' END ELSE j.work_kind END,
-        CASE WHEN due THEN j.alternate_task_type ELSE j.task_type END, due
-    FROM (SELECT COALESCE(j.alternate_job_type IS NOT NULL AND j.alternate_at IS NOT NULL
+    SELECT CASE WHEN deadline_due THEN COALESCE(j.resource_resume#>>'{route,jobType}',j.route_job_type) WHEN due THEN j.alternate_job_type ELSE j.route_job_type END,
+        CASE WHEN deadline_due THEN 'JOB' WHEN due THEN CASE WHEN j.alternate_task_type IS NULL THEN 'JOB' ELSE 'TASK' END ELSE j.work_kind END,
+        CASE WHEN deadline_due THEN NULL WHEN due THEN j.alternate_task_type ELSE j.task_type END, due AND NOT deadline_due
+    FROM (SELECT COALESCE(j.resource_deadline<=p_now,FALSE) AS deadline_due, COALESCE(j.alternate_job_type IS NOT NULL AND j.alternate_at IS NOT NULL
         AND p_now >= j.alternate_at, FALSE) AS due) alt;
 $$;
 
@@ -357,7 +371,7 @@ WITH status_calc AS (
         j.lease_route_job_type,
         j.lease_work_kind,
         j.lease_task_type,
-        pgjobdb.job_status_at(j, clock_timestamp()) AS status
+        pgjobdb.job_status_at(j, pgjobdb.scheduler_now()) AS status
     FROM pgjobdb.jobs j
 ),
 ready_calc AS (
@@ -576,7 +590,7 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     v_row RECORD;
-    v_now TIMESTAMPTZ := clock_timestamp();
+    v_now TIMESTAMPTZ := pgjobdb.scheduler_now();
 BEGIN
     IF p_completed_jobs IS NULL OR array_length(p_completed_jobs, 1) IS NULL OR array_length(p_completed_jobs, 1) = 0 THEN
         RETURN;
@@ -740,7 +754,7 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     v_job pgjobdb.jobs%ROWTYPE;
-    v_now TIMESTAMPTZ := clock_timestamp();
+    v_now TIMESTAMPTZ := pgjobdb.scheduler_now();
 BEGIN
     PERFORM pgjobdb._goal_lock(p_tenant_id);
     IF p_tenant_id IS NULL THEN
@@ -881,14 +895,14 @@ BEGIN
     IF v_job.lease_worker_id IS DISTINCT FROM p_worker_id THEN
         RAISE EXCEPTION 'native lease owner mismatch';
     END IF;
-    IF v_job.lease_expires_at <= clock_timestamp() THEN
+    IF v_job.lease_expires_at <= pgjobdb.scheduler_now() THEN
         RAISE EXCEPTION 'native lease not active';
     END IF;
     IF v_job.cancel_requested THEN
         RAISE EXCEPTION 'job %s/%s is cancelled and cannot extend the lease', p_tenant_id, p_job_id;
     END IF;
 
-    v_now := clock_timestamp();
+    v_now := pgjobdb.scheduler_now();
     v_new := v_now + make_interval(secs => p_additional_seconds);
 
     UPDATE pgjobdb.jobs
@@ -960,10 +974,11 @@ BEGIN
         RAISE EXCEPTION 'job %/%  is cancelled and cannot clear crash concern', p_tenant_id, p_job_id;
     END IF;
 
+    IF v_job.lease_expires_at>pgjobdb.scheduler_now() OR EXISTS(SELECT 1 FROM pgjobdb.job_facts WHERE tenant_id=p_tenant_id AND job_id=p_job_id AND hidden_at IS NOT NULL) THEN RAISE EXCEPTION 'cannot clear crash concern for live or hidden job'; END IF;
     v_previous_consecutive := v_job.consecutive_expirations;
 
     UPDATE pgjobdb.jobs
-    SET consecutive_expirations = 0
+    SET consecutive_expirations = 0, crash_budget_remaining=pgjobdb.crash_concern_threshold()
     WHERE tenant_id = v_job.tenant_id
       AND job_id = v_job.job_id;
 
@@ -1016,7 +1031,7 @@ BEGIN
         SELECT tenant_id, job_id
         FROM pgjobdb.jobs
         WHERE cancel_requested
-          AND lease_expires_at <= clock_timestamp()
+          AND lease_expires_at <= pgjobdb.scheduler_now()
           AND (p_tenant_ids IS NULL OR array_length(p_tenant_ids, 1) IS NULL OR tenant_id = ANY(p_tenant_ids))
         ORDER BY created_at
         LIMIT v_effective_limit
@@ -1160,7 +1175,7 @@ CREATE TABLE IF NOT EXISTS pgjobdb.job_facts (
     schema_hash TEXT,
     parent_job_id TEXT,
     created_by_worker_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT pgjobdb.scheduler_now(),
     expires_at TIMESTAMPTZ NOT NULL DEFAULT 'infinity',
     PRIMARY KEY (tenant_id, job_id)
 );
@@ -1318,7 +1333,7 @@ DECLARE w RECORD;
 BEGIN
  FOR w IN SELECT dw.outcome FROM pgjobdb.dependency_targets dt JOIN pgjobdb.dependency_waits dw USING(tenant_id,job_id,wait_id)
   WHERE dt.tenant_id=t AND dt.target_kind=k AND dt.target_id=id ORDER BY dw.job_id,dw.wait_id LOOP
-  PERFORM pgjobdb._save_wait(pgjobdb._evaluate_wait(w.outcome,clock_timestamp()));
+  PERFORM pgjobdb._save_wait(pgjobdb._evaluate_wait(w.outcome,pgjobdb.scheduler_now()));
  END LOOP;
 END $$;
 CREATE OR REPLACE FUNCTION pgjobdb._cancel_waits(t TEXT,j TEXT,keep TEXT DEFAULT NULL) RETURNS VOID LANGUAGE plpgsql AS $$
@@ -1339,7 +1354,7 @@ BEGIN
    SELECT dt.target_kind AS kind,dt.target_id AS id FROM pgjobdb.dependency_targets dt
    JOIN pgjobdb.dependency_waits dw USING(tenant_id,job_id,wait_id)
    WHERE w.kind='job' AND dt.tenant_id=t AND dt.job_id=w.id
-    AND (dw.deadline IS NULL OR dw.deadline>clock_timestamp())
+    AND (dw.deadline IS NULL OR dw.deadline>pgjobdb.scheduler_now())
     AND NOT EXISTS(SELECT 1 FROM pgjobdb.jobs_archive a WHERE a.tenant_id=t AND a.job_id=w.id)
    UNION ALL
    SELECT 'job',m.job_id FROM pgjobdb.retained_goal_projection g
@@ -1372,7 +1387,7 @@ BEGIN
  SELECT * INTO old FROM pgjobdb.dependency_waits WHERE tenant_id=t AND job_id=j AND wait_id=id;
  IF FOUND THEN
   IF old.descriptor IS DISTINCT FROM req->'dependencies' OR old.deadline IS DISTINCT FROM deadline THEN RAISE EXCEPTION 'wait descriptor changed' USING ERRCODE='JGW02'; END IF;
-  PERFORM pgjobdb._save_wait(pgjobdb._evaluate_wait(old.outcome,clock_timestamp()));
+  PERFORM pgjobdb._save_wait(pgjobdb._evaluate_wait(old.outcome,pgjobdb.scheduler_now()));
   RETURN;
  END IF;
  FOR d IN SELECT value FROM jsonb_array_elements(req->'dependencies') LOOP
@@ -1385,7 +1400,7 @@ BEGIN
  w:=jsonb_strip_nulls(jsonb_build_object('jobKey',jsonb_build_object('tenantId',t,'jobId',j),'waitId',id,'deadline',req->'deadline','state','PENDING','dependencies',ds));
  INSERT INTO pgjobdb.dependency_waits(tenant_id,job_id,wait_id,descriptor,deadline,state,outcome)
  VALUES(t,j,id,req->'dependencies',deadline,'PENDING',w);
- PERFORM pgjobdb._save_wait(pgjobdb._evaluate_wait(w,clock_timestamp()));
+ PERFORM pgjobdb._save_wait(pgjobdb._evaluate_wait(w,pgjobdb.scheduler_now()));
  PERFORM pgjobdb._check_goal_cycle(t,'job',j);
 END $$;
 CREATE OR REPLACE FUNCTION pgjobdb.dependency_wait_info(t TEXT,j TEXT,id TEXT) RETURNS JSONB LANGUAGE plpgsql STABLE AS $$
@@ -1399,11 +1414,11 @@ CREATE OR REPLACE FUNCTION pgjobdb._expire_goal_waits(tenants TEXT[]) RETURNS VO
 DECLARE t TEXT; w RECORD;
 BEGIN
  -- Lock only tenants with due waits, in stable order, before any job lock.
- FOR t IN SELECT DISTINCT tenant_id FROM pgjobdb.dependency_waits WHERE state='PENDING' AND deadline<=clock_timestamp()
+ FOR t IN SELECT DISTINCT tenant_id FROM pgjobdb.dependency_waits WHERE state='PENDING' AND deadline<=pgjobdb.scheduler_now()
   AND (tenants IS NULL OR tenant_id=ANY(tenants)) ORDER BY tenant_id LOOP
   PERFORM pgjobdb._goal_lock(t);
-  FOR w IN SELECT outcome FROM pgjobdb.dependency_waits WHERE tenant_id=t AND state='PENDING' AND deadline<=clock_timestamp() LOOP
-   PERFORM pgjobdb._save_wait(pgjobdb._evaluate_wait(w.outcome,clock_timestamp()));
+  FOR w IN SELECT outcome FROM pgjobdb.dependency_waits WHERE tenant_id=t AND state='PENDING' AND deadline<=pgjobdb.scheduler_now() LOOP
+   PERFORM pgjobdb._save_wait(pgjobdb._evaluate_wait(w.outcome,pgjobdb.scheduler_now()));
   END LOOP;
  END LOOP;
 END $$;
@@ -1464,7 +1479,7 @@ BEGIN
  RETURN jsonb_build_object('Key',jsonb_build_object('tenantId',t,'jobId',j),'GoalID',g,'Published',FALSE,'Target',jsonb_build_object('cellId',target_id,'cell',target_name,'cellRepo',target_repo));
 END $$;
 CREATE OR REPLACE FUNCTION pgjobdb._resolve_goal(t TEXT,g TEXT,j TEXT) RETURNS VOID LANGUAGE plpgsql AS $$
-DECLARE at TIMESTAMPTZ:=clock_timestamp();
+DECLARE at TIMESTAMPTZ:=pgjobdb.scheduler_now();
 BEGIN
  UPDATE pgjobdb.job_facts SET goal_success_job_id=j,goal_closed_at=at
  WHERE tenant_id=t AND job_id=j AND goal_id=g AND NOT EXISTS(SELECT 1 FROM pgjobdb.job_facts c WHERE c.tenant_id=t AND c.goal_id=g AND c.goal_closed_at IS NOT NULL);
@@ -1481,7 +1496,7 @@ BEGIN
  SELECT COALESCE(jsonb_agg(m.job_id ORDER BY m.job_id COLLATE "C") FILTER(WHERE a.job_id IS NOT NULL),'[]'),
  COALESCE(jsonb_agg(m.job_id ORDER BY m.job_id COLLATE "C") FILTER(WHERE a.job_id IS NULL),'[]') INTO terminal,nonterminal
  FROM pgjobdb._goal_members(t,g) m LEFT JOIN pgjobdb.jobs_archive a ON a.tenant_id=t AND a.job_id=m.job_id;
- at:=clock_timestamp();
+ at:=pgjobdb.scheduler_now();
  id:=gen_random_uuid()::TEXT;
  v_failure:=jsonb_build_object('code','goal_failed','goalId',g,'jobId',id,'message',message,'terminalJobIds',terminal,'nonTerminalJobIds',nonterminal,'failedAt',at);
  INSERT INTO pgjobdb.job_facts(tenant_id,job_id,goal_id,cell_id,cell_name,cell_repo,job_type,created_at,record_kind,terminal_failure,goal_closed_at)
@@ -1728,7 +1743,7 @@ BEGIN
         goal_origin, goal_created_at, cell_id, cell_name, cell_repo, goal_id, initial_dependencies, tenant_id, job_id, job_type, run_policy, app_metadata, schema_hash,
         parent_job_id, created_by_worker_id, expires_at, append_key, append_gen
     ) VALUES (
-        NOT (p_share_goal OR p_selected_goal_id IS NOT NULL), CASE WHEN NOT (p_share_goal OR p_selected_goal_id IS NOT NULL) THEN clock_timestamp() END, p_cell->>'cellId',p_cell->>'cell',p_cell->>'cellRepo', v_goal, p_dependencies, p_tenant_id, p_job_id, p_job_type, p_run_policy, p_app_metadata,
+        NOT (p_share_goal OR p_selected_goal_id IS NOT NULL), CASE WHEN NOT (p_share_goal OR p_selected_goal_id IS NOT NULL) THEN pgjobdb.scheduler_now() END, p_cell->>'cellId',p_cell->>'cell',p_cell->>'cellRepo', v_goal, p_dependencies, p_tenant_id, p_job_id, p_job_type, p_run_policy, p_app_metadata,
         p_schema_hash, p_parent_job_id, p_worker_id, v_expires_at, p_append_key, CASE WHEN p_append_key IS NOT NULL THEN p_append_gen END
     ) ON CONFLICT ON CONSTRAINT job_facts_pkey DO NOTHING;
     GET DIAGNOSTICS v_inserted = ROW_COUNT;
@@ -1762,7 +1777,7 @@ BEGIN
     ) VALUES (
         v_goal, p_tenant_id, p_job_id,
         pgjobdb.normalize_wait_for(p_tenant_id, p_wait_for),
-        COALESCE(p_available_at, clock_timestamp()), v_expires_at,
+        COALESCE(p_available_at, pgjobdb.scheduler_now()), v_expires_at,
         p_job_type, 'JOB'
     );
     INSERT INTO pgjobdb.job_client_state VALUES(p_tenant_id,p_job_id,v_initial,CASE WHEN v_initial IS NULL THEN 0 ELSE 1 END,v_digest);
@@ -1778,6 +1793,7 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS pgjobdb.get_native_work(TEXT,TEXT[],TEXT[],JSONB,JSONB,INTEGER,TEXT,TEXT,JSONB,TEXT[]);
 CREATE OR REPLACE FUNCTION pgjobdb.get_native_work(
     p_worker_id TEXT,
     p_tenant_ids TEXT[],
@@ -1796,12 +1812,12 @@ RETURNS TABLE(
     resume_job_type TEXT, task_input_ordinal BIGINT,
     task_output_ordinal BIGINT, task_input_hash TEXT,
     run_policy JSONB, client_payload JSON, client_payload_revision BIGINT,
-    schema_hash TEXT, goal_id TEXT, cell JSONB
+    schema_hash TEXT, goal_id TEXT, cell JSONB, crash_budget_remaining BIGINT, resource_resume JSON
 )
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_now TIMESTAMPTZ := clock_timestamp();
+    v_now TIMESTAMPTZ := pgjobdb.scheduler_now();
     v_updated pgjobdb.jobs%ROWTYPE;
     v_previous TEXT;
     v_result RECORD;
@@ -1823,19 +1839,19 @@ BEGIN
 
     PERFORM pgjobdb._goal_lock(t) FROM (SELECT DISTINCT unnest(p_tenant_ids) AS t ORDER BY t) tenants;
     PERFORM pgjobdb._expire_goal_waits(p_tenant_ids);
-    v_now:=clock_timestamp();
+    v_now:=pgjobdb.scheduler_now();
     WITH candidate AS (
         SELECT j.tenant_id, j.job_id, j.lease_id AS previous_id,
             route.effective_job_type,
             route.effective_work_kind,
             route.effective_task_type, route.alternate_due
         FROM pgjobdb.jobs j
-        -- The status view is authoritative for readiness, including crash
-        -- concern. Lock the base row below to preserve SKIP LOCKED acquisition.
-        JOIN pgjobdb.jobs_with_status eligibility USING (tenant_id, job_id)
+        -- Readiness and route selection share one database-clock observation,
+        -- so crossing a deadline mid-statement cannot select a body route.
+        -- Lock the base row below to preserve SKIP LOCKED acquisition.
         JOIN pgjobdb.job_facts f USING (tenant_id, job_id) LEFT JOIN pgjobdb.job_client_state c USING (tenant_id,job_id)
         CROSS JOIN LATERAL pgjobdb.effective_native_route(j, v_now) route
-        WHERE eligibility.status = 'READY'
+        WHERE pgjobdb.job_status_at(j, v_now) = 'READY'
           AND f.cell_id=ANY(p_cell_ids)
           AND EXISTS(SELECT 1 FROM pgjobdb.cells c WHERE c.tenant_id=f.tenant_id AND c.cell_id=f.cell_id AND c.state='ACTIVE')
           AND j.route_job_type IS NOT NULL
@@ -1887,11 +1903,10 @@ BEGIN
             alternate_task_type = CASE WHEN NOT c.alternate_due THEN j.alternate_task_type END,
             alternate_after_seconds = CASE WHEN NOT c.alternate_due THEN j.alternate_after_seconds END,
             alternate_at = CASE WHEN NOT c.alternate_due THEN j.alternate_at END,
-            lease_expires_at = clock_timestamp() + make_interval(secs => p_lease_seconds),
+            lease_expires_at = pgjobdb.scheduler_now() + make_interval(secs => p_lease_seconds),
             lease_expiration_count = j.lease_expiration_count +
                 CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
-            consecutive_expirations = CASE WHEN left(j.lease_worker_id,13) = 'jobdb-append-' THEN j.consecutive_expirations WHEN j.lease_id IS NOT NULL
-                THEN j.consecutive_expirations + 1 ELSE j.consecutive_expirations END
+            crash_budget_remaining = CASE WHEN j.lease_id IS NOT NULL AND left(j.lease_worker_id,13)<>'jobdb-append-' THEN greatest(j.crash_budget_remaining-1,0) ELSE j.crash_budget_remaining END
         FROM candidate c
         WHERE j.tenant_id = c.tenant_id AND j.job_id = c.job_id
         RETURNING j AS updated, c.previous_id
@@ -1905,7 +1920,7 @@ BEGIN
     SELECT l.tenant_id, l.job_id, l.lease_id, l.lease_expires_at,
         f.job_type, l.lease_route_job_type, l.lease_work_kind, l.lease_task_type,
         l.resume_job_type, l.task_input_ordinal, l.task_output_ordinal,
-        l.task_input_hash, f.run_policy, c.client_payload, c.revision, f.schema_hash, l.goal_id, jsonb_build_object('cell',f.cell_name,'cellId',f.cell_id,'cellRepo',f.cell_repo)
+        l.task_input_hash, f.run_policy, c.client_payload, c.revision, f.schema_hash, l.goal_id, jsonb_build_object('cell',f.cell_name,'cellId',f.cell_id,'cellRepo',f.cell_repo), l.crash_budget_remaining, l.resource_resume
     FROM (SELECT (v_updated).*) l JOIN pgjobdb.job_facts f USING (tenant_id,job_id) LEFT JOIN pgjobdb.job_client_state c USING(tenant_id,job_id);
 END;
 $$;
@@ -1995,7 +2010,7 @@ BEGIN
         p_tenant_id, p_job_id, 'ACTIVE', p_lease_id,
         format('native lease not active for job %s/%s', p_tenant_id, p_job_id)
     );
-    IF v_job.lease_expires_at<=clock_timestamp() OR v_job.cancel_requested THEN RAISE EXCEPTION 'native lease not active';END IF;
+    IF v_job.lease_expires_at<=pgjobdb.scheduler_now() OR v_job.cancel_requested THEN RAISE EXCEPTION 'native lease not active';END IF;
     PERFORM pgjobdb._update_client_payload(p_tenant_id,p_job_id,p_client_mode,p_client_value,p_client_expected);
     RETURN pgjobdb._complete_native_locked_job(
         v_job, p_worker_id, p_completion_status,
@@ -2034,6 +2049,7 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS pgjobdb.validate_native_lease(TEXT,TEXT,TEXT,TEXT);
 CREATE OR REPLACE FUNCTION pgjobdb.validate_native_lease(
     p_tenant_id TEXT,
     p_job_id TEXT,
@@ -2046,7 +2062,7 @@ RETURNS TABLE(
     resume_job_type TEXT, task_input_ordinal BIGINT,
     task_output_ordinal BIGINT, task_input_hash TEXT,
     run_policy JSONB, client_payload JSON, client_payload_revision BIGINT,
-    schema_hash TEXT, goal_id TEXT, cell JSONB
+    schema_hash TEXT, goal_id TEXT, cell JSONB, crash_budget_remaining BIGINT, resource_resume JSON
 )
 LANGUAGE plpgsql
 AS $$
@@ -2058,10 +2074,10 @@ BEGIN
     SELECT j.tenant_id, j.job_id, j.lease_id, j.lease_expires_at,
         f.job_type, j.lease_route_job_type, j.lease_work_kind, j.lease_task_type,
         j.resume_job_type, j.task_input_ordinal, j.task_output_ordinal,
-        j.task_input_hash, f.run_policy, c.client_payload, c.revision, f.schema_hash, j.goal_id, jsonb_build_object('cell',f.cell_name,'cellId',f.cell_id,'cellRepo',f.cell_repo)
+        j.task_input_hash, f.run_policy, c.client_payload, c.revision, f.schema_hash, j.goal_id, jsonb_build_object('cell',f.cell_name,'cellId',f.cell_id,'cellRepo',f.cell_repo), j.crash_budget_remaining, j.resource_resume
     FROM pgjobdb.jobs j JOIN pgjobdb.job_facts f USING (tenant_id, job_id) LEFT JOIN pgjobdb.job_client_state c USING (tenant_id,job_id)
     WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id
-      AND j.lease_id = p_lease_id AND j.lease_expires_at > clock_timestamp()
+      AND j.lease_id = p_lease_id AND j.lease_expires_at > pgjobdb.scheduler_now()
       AND j.lease_worker_id = p_worker_id
       AND j.route_job_type IS NOT NULL AND NOT j.cancel_requested;
 END;
@@ -2141,7 +2157,7 @@ DECLARE
     v_locked pgjobdb.jobs_with_status%ROWTYPE;
     v_active pgjobdb.jobs%ROWTYPE;
     v_wait_for TEXT[];
-    v_now TIMESTAMPTZ := clock_timestamp();
+    v_now TIMESTAMPTZ := pgjobdb.scheduler_now();
 BEGIN
     PERFORM pgjobdb._goal_lock(p_tenant_id);
     IF p_wait_until_is_deadline IS NULL OR (p_wait_until_is_deadline
@@ -2210,7 +2226,7 @@ BEGIN
     IF v_active.cancel_requested THEN
         RAISE EXCEPTION 'cancelled job cannot be rescheduled';
     END IF;
-    IF p_lease_id IS NOT NULL AND v_active.lease_expires_at<=clock_timestamp() THEN RAISE EXCEPTION 'native lease not active';END IF;
+    IF p_lease_id IS NOT NULL AND v_active.lease_expires_at<=pgjobdb.scheduler_now() THEN RAISE EXCEPTION 'native lease not active';END IF;
     PERFORM pgjobdb._update_client_payload(p_tenant_id,p_job_id,p_client_mode,p_client_value,p_client_expected);
     IF p_dependency_wait IS NOT NULL AND (cardinality(p_wait_for)>0 OR p_available_at IS NOT NULL OR p_alternate_job_type IS NOT NULL) THEN
         RAISE EXCEPTION 'mixed structured and legacy wait' USING ERRCODE='JGI01';
@@ -2218,6 +2234,13 @@ BEGIN
     PERFORM pgjobdb._cancel_waits(p_tenant_id,p_job_id,p_dependency_wait->>'waitId');
     IF p_dependency_wait IS NOT NULL THEN PERFORM pgjobdb._register_wait(p_tenant_id,p_job_id,p_dependency_wait); END IF;
     v_wait_for := pgjobdb.normalize_wait_for(p_tenant_id, p_wait_for);
+
+    -- Admission and dependency registration can wait for locks. Relative routes
+    -- start from the database clock after those waits have completed.
+    v_now := pgjobdb.scheduler_now();
+    IF p_lease_id IS NOT NULL AND v_active.lease_expires_at <= v_now THEN
+        RAISE EXCEPTION 'native lease not active';
+    END IF;
 
     UPDATE pgjobdb.jobs j SET
         dependency_wait_id = p_dependency_wait->>'waitId',
@@ -2240,7 +2263,8 @@ BEGIN
         lease_worker_id = NULL,
         lease_route_job_type = NULL, lease_work_kind = NULL, lease_task_type = NULL,
         lease_expires_at = '-infinity',
-        consecutive_expirations = 0
+        consecutive_expirations = 0, crash_budget_remaining=pgjobdb.crash_concern_threshold(),
+        resource_not_before_ns=NULL, resource_not_before=NULL, resource_deadline=NULL, resource_resume=NULL
     WHERE j.tenant_id = p_tenant_id AND j.job_id = p_job_id;
     RETURN TRUE;
 END;
@@ -2269,7 +2293,7 @@ DECLARE
     v_updated pgjobdb.jobs%ROWTYPE;
 BEGIN
     PERFORM pgjobdb._expire_goal_waits(ARRAY[p_tenant_id]);
-    v_now:=clock_timestamp();
+    v_now:=pgjobdb.scheduler_now();
     IF p_worker_id IS NULL OR p_worker_id = '' THEN
         RAISE EXCEPTION 'worker id is required';
     END IF;
@@ -2282,13 +2306,13 @@ BEGIN
         RAISE EXCEPTION 'native waiting task not found' USING ERRCODE = 'JTC01';
     END IF;
     -- Take the clock reading after any wait for the row lock.
-    v_now := clock_timestamp();
-    IF NOT EXISTS (SELECT 1 FROM pgjobdb.jobs_with_status s
-        WHERE s.tenant_id = p_tenant_id AND s.job_id = p_job_id
-          AND s.status = 'READY') THEN
+    v_now := pgjobdb.scheduler_now();
+    IF pgjobdb.job_status_at(v_job, v_now) <> 'READY' THEN
         RAISE EXCEPTION 'waiting task is not ready' USING ERRCODE = 'JTC01';
     END IF;
-    IF v_job.cancel_requested OR v_job.lease_expires_at > v_now
+    IF (v_job.resource_not_before IS NOT NULL AND v_job.resource_not_before>v_now) OR v_job.crash_budget_remaining=0
+        OR (v_job.resource_deadline IS NOT NULL AND v_job.resource_deadline<=v_now)
+        OR v_job.cancel_requested OR v_job.lease_expires_at > v_now
         OR v_job.expires_at <= v_now THEN
         RAISE EXCEPTION 'waiting task is not eligible' USING ERRCODE = 'JTC01';
     END IF;
@@ -2309,8 +2333,7 @@ BEGIN
         lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
         lease_expiration_count = j.lease_expiration_count +
             CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
-        consecutive_expirations = CASE WHEN left(j.lease_worker_id,13) = 'jobdb-append-' THEN j.consecutive_expirations WHEN j.lease_id IS NOT NULL
-            THEN j.consecutive_expirations + 1 ELSE j.consecutive_expirations END,
+        crash_budget_remaining = CASE WHEN j.lease_id IS NOT NULL AND left(j.lease_worker_id,13)<>'jobdb-append-' THEN greatest(j.crash_budget_remaining-1,0) ELSE j.crash_budget_remaining END,
         work_kind = 'JOB',
         route_job_type = v_job.resume_job_type,
         task_type = NULL, resume_job_type = NULL,
@@ -2340,7 +2363,7 @@ SELECT
     NULL::TEXT AS completion_status, NULL::TEXT AS completion_detail,
     NULL::TEXT AS completion_error_kind, NULL::BOOLEAN AS completion_retryable,
     f.goal_id,
-    '{}'::TEXT[] AS other_goal_ids, f.append_key, f.append_gen, f.record_kind, f.terminal_failure
+    '{}'::TEXT[] AS other_goal_ids, f.append_key, f.append_gen, f.record_kind, f.terminal_failure, j.crash_budget_remaining, j.resource_resume, json_build_object('protocolVersion',1,'durabilityVersion',1) AS resource_backoff
 FROM pgjobdb.job_facts f
 JOIN pgjobdb.jobs j USING (tenant_id, job_id)
 JOIN pgjobdb.jobs_with_status s USING (tenant_id, job_id)
@@ -2364,7 +2387,7 @@ SELECT
     a.completion_status, a.completion_detail,
     a.completion_error_kind, a.completion_retryable,
     f.goal_id,
-    '{}'::TEXT[] AS other_goal_ids, f.append_key, f.append_gen, f.record_kind, f.terminal_failure
+    '{}'::TEXT[] AS other_goal_ids, f.append_key, f.append_gen, f.record_kind, f.terminal_failure, a.crash_budget_remaining, a.resource_resume, json_build_object('protocolVersion',1,'durabilityVersion',1)
 FROM pgjobdb.job_facts f
 JOIN pgjobdb.jobs_archive a USING (tenant_id, job_id)
 WHERE a.final_route_job_type IS NOT NULL OR f.record_kind<>'EXECUTION';
@@ -2596,16 +2619,18 @@ END $$;
 -- PostgreSQL rechecks the CAS predicate after waiting for a concurrent updater.
 CREATE OR REPLACE FUNCTION pgjobdb.claim_append(p_tenant TEXT,p_job TEXT,p_lease TEXT,p_worker TEXT,p_seconds DOUBLE PRECISION)
 RETURNS TIMESTAMPTZ LANGUAGE plpgsql AS $$
-DECLARE old_id TEXT; updated pgjobdb.jobs%ROWTYPE; t TIMESTAMPTZ:=clock_timestamp();
+DECLARE old_id TEXT; updated pgjobdb.jobs%ROWTYPE; t TIMESTAMPTZ:=pgjobdb.scheduler_now();
 BEGIN
  SELECT lease_id INTO old_id FROM pgjobdb.jobs WHERE tenant_id=p_tenant AND job_id=p_job FOR UPDATE;
- t:=clock_timestamp();
+ t:=pgjobdb.scheduler_now();
  UPDATE pgjobdb.jobs j SET lease_id=p_lease,lease_worker_id=p_worker,
  lease_expires_at=t+make_interval(secs=>p_seconds),
  lease_route_job_type=j.route_job_type,lease_work_kind=j.work_kind,lease_task_type=j.task_type,
- consecutive_expirations=CASE WHEN j.lease_id IS NOT NULL AND left(j.lease_worker_id,13)<>'jobdb-append-' THEN j.consecutive_expirations+1 ELSE j.consecutive_expirations END
+ crash_budget_remaining=CASE WHEN j.lease_id IS NOT NULL AND left(j.lease_worker_id,13)<>'jobdb-append-' THEN greatest(j.crash_budget_remaining-1,0) ELSE j.crash_budget_remaining END
  WHERE j.tenant_id=p_tenant AND j.job_id=p_job AND NOT j.cancel_requested
- AND j.consecutive_expirations<pgjobdb.crash_concern_threshold()
+ AND j.crash_budget_remaining>0
+ AND (j.resource_not_before IS NULL OR j.resource_not_before<=t)
+ AND (j.resource_deadline IS NULL OR j.resource_deadline>t)
  AND (j.lease_id IS NULL OR j.lease_expires_at<=t)
  RETURNING j.* INTO updated;
  IF NOT FOUND THEN RETURN NULL; END IF;
@@ -2619,6 +2644,6 @@ RETURNS VOID LANGUAGE sql AS $$
 $$;
 
 ALTER TABLE pgjobdb.installation DROP CONSTRAINT IF EXISTS installation_format_version_check;
-UPDATE pgjobdb.installation SET format_version=13;
-ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK(format_version=13);
+UPDATE pgjobdb.installation SET format_version=14;
+ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK(format_version=14);
 COMMIT;

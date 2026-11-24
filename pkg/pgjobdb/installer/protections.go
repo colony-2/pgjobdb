@@ -48,7 +48,7 @@ func validateProtections(ctx context.Context, tx *sql.Tx, version int) error {
 		return fmt.Errorf("pgjobdb: invalid protection contract: %w", err)
 	}
 	key := "historical"
-	if version == FormatVersion {
+	if version >= 13 && version <= FormatVersion {
 		key = "retained"
 	}
 	expected := contracts[key]

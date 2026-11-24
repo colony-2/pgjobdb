@@ -24,7 +24,7 @@ coverage, which the pgjobdb test workflow does not request.
 | test.yml native arm64 `go test -v -tags=integration ./...` | `service_free`: all packages outside installer and runtime/integration, including CLI configuration/help/completion/rejection tests and compilation of packages with no test files. Database command tests run in `runtime`. |
 | Same native suite: installer | `installer`: complete pkg/pgjobdb/installer and pkg/pgjobdb/projects suites, including explicit installation, inventory preservation, receipts and independent SQL guards. Required coverage includes opaque catalog strings, admission projection integrity, committed catalog updates newer than an active resource writer's transaction ID, plus rejection of uncommitted seals. |
 | Same native suite: runtime conformance | `conformance`: all names containing Conformance, enumerated from the compiled integration test binary, including workflow runtime, start-or-append, fixture isolation and cell conformance. |
-| Same native suite: other runtime tests | `runtime`: remaining tests in runtime/integration and all descendant packages, including engineconformance, usageparity and workflow, plus PostgreSQL consumer-goal and project CLI tests in cmd/jobdb. The hook builds and supplies the actual production CLI. No package is discarded because it also contains conformance tests. |
+| Same native suite: other runtime tests | `runtime`: remaining tests in runtime/integration and all descendant packages, including engineconformance, usageparity and workflow, plus PostgreSQL consumer-goal, project and resource migration CLI tests in cmd/jobdb. The hook builds and supplies the actual production CLI. No package is discarded because it also contains conformance tests. |
 | test-summary | `report`: checks all four behavior statuses and required logs/JSON; exports verification.md and environment.json. |
 | test.yml architecture/macOS matrix | Each run covers its recorded native Linux arm64 or amd64 host. Other architecture and macOS runs remain held. |
 | test.yml container-smoke | Held: Docker daemon/buildx, amd64 release-shaped image, Postgres/MinIO service topology and container persistence smoke. |
@@ -61,7 +61,8 @@ The service-free selection first executes the bounded hook unit tests from an
 isolated source copy as the same unprivileged UID, without acquisition credentials.
 Per-command execution is bounded to 30 minutes. Unprivileged Linux subreaper
 semantics adopt daemonized PostgreSQL descendants; timeout/cancellation cleanup
-stops process groups and adopted children, then reaps them.
+stops process groups and adopted children, then reaps them. Signal cancellation
+unwinds any active child wait before it stops and reaps the process group.
 Ordinary test/compile failures retain evidence and allow independent packages and
 recipe tasks to continue. Launch/setup errors fail the behavior, recording that
 dependent tests were not run. Evidence/report generation failures fail the hook;
@@ -79,3 +80,23 @@ and run `c2j test run --directory <scratch-dir> --out-dir <scratch-results>`.
 Loader fixtures read current source, use actual cell:// loading and result-schema
 validation, mock the expensive suites, and execute the report command for pass
 and failure cases. Acceptance separately runs the real native suites.
+
+Resource acceptance requires the PostgreSQL conformance, boundary and installed-protection suites,
+format-13 conversion, project preservation and rollback suites, and migration command tests during
+enumeration. Every one of the 29 shared resource cases must appear with a passing
+outcome, including B09b, B11a and real workflow B11 timeout recovery. A passing
+wrapper, empty selection, missing child, failure or skip cannot certify support.
+Named children are also required for workflow resumption and acknowledgment
+failures, and for migration rejection of invalid legacy crash data.
+The runtime partition also requires cancellation during resumed EAGAIN execution
+and ordinary HTTP operations from a pre-EAGAIN client. The hook builds that
+client from its standalone module in `scripts/testdata/pgjobdb-legacy-client`,
+then supplies the binary via `PGJOBDB_TEST_LEGACY_CLIENT`. The server test
+checks the binary's linked JobDB version and rejects module replacements.
+Without a supplied binary, ordinary `go test` builds the same isolated module in
+a temporary directory. Release tests prebuild it before switching to their
+separate test home so the build can use the configured private-module access.
+The hook also requires passing child results for reopening tenant configuration
+on the current format and for verifying the project search path during migration.
+The project delivery carries the current owner deferral for the exact JobDB pin.
+No resource case or new assertion is exempt.

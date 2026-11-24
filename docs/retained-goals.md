@@ -33,9 +33,12 @@ those gaps and unpublished preparations.
 
 ## Supported installations
 
-Fresh Apply creates format 13. Apply, ApplyWithReport and `runtime.NewSQLDB`
-transactionally convert authentic formats 9, 10, 11 and 12 to 13; reapplication
-preserves identities. Verify requires the retained contract and rejects either
+Fresh Apply creates format 14. Apply, ApplyWithReport and `runtime.NewSQLDB`
+reject authentic formats 9–13 unchanged until an explicit offline migration.
+`Installer.MigrateWithReport` composes the retained-goal conversion for formats
+9–12 and the countdown conversion to 14 in one transaction. Format 13 converts
+directly without recreating lifecycle stores. Reapplication preserves identities.
+See [resource waits and upgrade commands](resource-backoff.md). Verify requires the retained contract and rejects either
 removed table, any retired mutation overload, damaged protection and inconsistent
 mirrors. Formats 1–8, future formats, old `pgwf`, unmarked, corrupt and incomplete
 installations fail without mutation. Use the installer; raw embedded SQL does not
@@ -70,8 +73,8 @@ counts, every removed membership and timestamp, affected pending waits and
 preparations with original targets, cross-primary success witnesses, origin
 metadata derivations, live overlaps and allocated migration failure IDs.
 
-Use `Installer.ApplyWithReport(ctx, destination)` with a caller-owned durable
-writer, or set `runtime.Config.ConversionReportWriter` for startup. The destination
+Use `Installer.MigrateWithReport(ctx, destination)` with a caller-owned durable
+writer. Startup no longer authorizes conversion. The destination
 must acknowledge retaining the complete staged report before commit is attempted.
 Write failure, short write or a database error rolls back definitions, tables,
 records and marker. The writer may retain staged bytes from a rolled-back attempt;
@@ -81,7 +84,7 @@ A successful `CommitConfirmation` binds the exported report digest and source an
 target versions to the committed result. A commit error remains uncertain: retain
 the staged report and reconcile its exact migration IDs and retained facts on a
 fresh connection before retrying. The installer never retries an uncertain commit.
-Plain Apply uses the same conversion engine; without a destination its in-memory
+Plain Migrate uses the same conversion engine; without a destination its in-memory
 report is not durable operator evidence. Post-conversion preflight explicitly sets
 `legacyInputsAvailable` false: removed links and timestamps cannot be reconstructed
 from the retained records.
@@ -130,4 +133,4 @@ batch. This prevents a large package from exhausting one cumulative limit before
 its final tests run. Individual test assertions and database startup checks are
 unchanged.
 
-Installer validation compares owned goal protections with canonical catalog definitions from authentic formats 9–12 and fresh format 13. It checks validated constraints, index keys/collations/predicates, enabled trigger timing/events/columns/conditions/function bindings, and bound function definitions. Missing or altered protections reject Preflight, Apply and Verify without repairing the input. Apply repeats validation after writer exclusion. Catalog deparsing uses a transaction-local search path and restores the caller's path; extra unrelated objects remain permitted. Equivalent manually rewritten definitions are not automatically accepted as authentic installation inputs.
+Installer validation compares owned goal protections with canonical catalog definitions from authentic formats 9–12 and fresh format 13. It checks validated constraints, index keys/collations/predicates, enabled trigger timing/events/columns/conditions/function bindings, and bound function definitions. Missing or altered protections reject Preflight, Migrate, Apply and Verify without repairing the input. Migration repeats validation after writer exclusion. Catalog deparsing uses a transaction-local search path and restores the caller's path; extra unrelated objects remain permitted. Equivalent manually rewritten definitions are not automatically accepted as authentic installation inputs.

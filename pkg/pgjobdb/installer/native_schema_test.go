@@ -18,11 +18,13 @@ func TestNativeSchemaRoundTrip(t *testing.T) {
 			t.Fatalf("reapply schema: %v", err)
 		}
 
+		// The database-clock helper belongs to scheduling eligibility, not the
+		// removed recurring-schedule API. Keep the remaining absence check strict.
 		var scheduleObjects int
 		if err := db.QueryRowContext(ctx, `SELECT
             (SELECT count(*) FROM information_schema.tables WHERE table_schema='pgjobdb' AND table_name='schedules') +
             (SELECT count(*) FROM information_schema.columns WHERE table_schema='pgjobdb' AND table_name IN ('job_facts','native_jobs') AND (column_name LIKE 'schedule_%' OR column_name='scheduled_at')) +
-            (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='pgjobdb' AND p.proname LIKE '%schedule%' AND p.proname NOT LIKE '%reschedule%')`).Scan(&scheduleObjects); err != nil {
+            (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='pgjobdb' AND p.proname LIKE '%schedule%' AND p.proname NOT LIKE '%reschedule%' AND p.proname<>'scheduler_now')`).Scan(&scheduleObjects); err != nil {
 			t.Fatal(err)
 		}
 		if scheduleObjects != 0 {

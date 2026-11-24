@@ -72,6 +72,7 @@ type Queryer interface {
 var Tables = map[string]string{
 	"pgjobdb.cell_catalog": "tenant_id", "pgjobdb.cells": "tenant_id", "pgjobdb.cell_names": "tenant_id", "pgjobdb.cell_requests": "tenant_id",
 	"pgjobdb.job_preparations": "tenant_id", "pgjobdb.dependency_waits": "tenant_id", "pgjobdb.dependency_targets": "tenant_id",
+	"pgjobdb.resource_sequences": "tenant_id", "pgjobdb.resource_receipts": "tenant_id",
 	"pgjobdb.jobs": "tenant_id", "pgjobdb.jobs_archive": "tenant_id", "pgjobdb.jobs_trace": "tenant_id", "pgjobdb.lease_events": "tenant_id", "pgjobdb.job_facts": "tenant_id", "pgjobdb.job_client_state": "tenant_id",
 	"public.jobdb_configuration": "tenant_id", "public.jobdb_schemas": "tenant_id", "public.jobdb_chapter_stories": "anthology_id", "public.jobdb_chapter_chapters": "anthology_id", "public.jobdb_chapter_artifacts": "anthology_id",
 }
@@ -181,7 +182,15 @@ func Verify(ctx context.Context, q Queryer) error {
 	if err != nil {
 		return err
 	}
-	if digest != r.Structure {
+	var migratedStructure sql.NullString
+	if err = q.QueryRowContext(ctx, `SELECT row_to_json(i)->>'scheduler_structure' FROM pgjobdb.project_installation i WHERE singleton=1`).Scan(&migratedStructure); err != nil {
+		return err
+	}
+	expectedStructure := r.Structure
+	if migratedStructure.Valid {
+		expectedStructure = migratedStructure.String
+	}
+	if digest != expectedStructure {
 		return fmt.Errorf("project storage definitions or guard bindings changed")
 	}
 	return nil

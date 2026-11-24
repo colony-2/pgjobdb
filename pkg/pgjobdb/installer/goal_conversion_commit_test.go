@@ -80,7 +80,7 @@ func TestGoalConversionLostCommitAcknowledgement(t *testing.T) {
 		uncertain := sql.OpenDB(connector)
 		defer uncertain.Close()
 		var staged bytes.Buffer
-		confirmation, err := (installer.Installer{DB: uncertain}).ApplyWithReport(ctx, &staged)
+		confirmation, err := (installer.Installer{DB: uncertain}).MigrateWithReport(ctx, &staged)
 		require.ErrorContains(t, err, "commit not confirmed")
 		require.False(t, confirmation.Committed)
 		require.NotEmpty(t, confirmation.ReportSHA256)
@@ -100,7 +100,7 @@ func TestGoalConversionLostCommitAcknowledgement(t *testing.T) {
 		var id string
 		require.NoError(t, fresh.QueryRowContext(ctx, `SELECT job_id FROM pgjobdb.job_facts WHERE record_kind='MIGRATED_GOAL_FAILURE'`).Scan(&id))
 		require.Equal(t, proposed.JobID, id)
-		require.NoError(t, install.Apply(ctx))
+		require.NoError(t, install.Migrate(ctx))
 		var count int
 		require.NoError(t, fresh.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.job_facts WHERE record_kind='MIGRATED_GOAL_FAILURE' AND job_id=$1`, id).Scan(&count))
 		require.Equal(t, 1, count)
@@ -122,9 +122,12 @@ func TestGoalConversionStartupReport(t *testing.T) {
 					cfg.ConversionReportWriter = failingReportWriter{}
 				}
 				runtime, err := pgruntime.NewSQLDB(ctx, db, cfg)
-				require.Error(t, err)
+				require.ErrorContains(t, err, "explicit offline migration")
 				require.Nil(t, runtime)
-				_, err = (installer.Installer{DB: db}).ApplyWithReport(ctx, cfg.ConversionReportWriter)
+				require.Empty(t, report.Bytes())
+				require.JSONEq(t, before, stableHistoricalRows(t, ctx, db))
+				require.JSONEq(t, catalog, catalogSnapshot(t, ctx, db))
+				_, err = (installer.Installer{DB: db}).MigrateWithReport(ctx, cfg.ConversionReportWriter)
 				if exportFailure {
 					require.ErrorContains(t, err, "export staged conversion report")
 					require.Nil(t, runtime)

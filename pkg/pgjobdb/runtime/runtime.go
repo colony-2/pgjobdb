@@ -27,7 +27,7 @@ type Config struct {
 	PostgresDSN string
 	// CanDeleteProject must prove complete, stable participant/external-use absence. Nil denies deletion.
 	CanDeleteProject func(context.Context, string) error
-	// Deprecated: runtime opening never converts storage. Use installer.ApplyWithReport explicitly.
+	// Deprecated: runtime opening never converts storage. Use installer.MigrateWithReport explicitly.
 	ConversionReportWriter io.Writer
 	// ConfigurationLimits bounds tenant configuration; zero fields use JobDB defaults.
 	ConfigurationLimits jobdb.ConfigurationLimits
@@ -117,7 +117,7 @@ func NewSQLDB(ctx context.Context, db *sql.DB, cfg Config) (*Runtime, error) {
 	core, err := runtimecore.NewRuntime(runtimecore.Config{Projects: control,
 		Configurations: configurations, ConfigurationLimits: cfg.ConfigurationLimits,
 		SecretProvider: cfg.SecretProvider, SecretLimits: cfg.SecretLimits,
-		Scheduler: runtimeadapter.Scheduler{DB: db}, Chapters: chapters, Schemas: schemas,
+		Scheduler: runtimeadapter.Scheduler{DB: db, Chapters: chapters}, Chapters: chapters, Schemas: schemas,
 	})
 	if err != nil {
 		_ = chapters.Close(ctx)

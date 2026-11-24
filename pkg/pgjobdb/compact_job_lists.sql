@@ -17,7 +17,7 @@ WITH parameters AS NOT MATERIALIZED (SELECT
     $14::text AS p_before_job_id,
     $15::integer AS p_limit,
     $16::jsonb AS p_available_routes,
-    $17::timestamptz AS p_now,
+    COALESCE($17::timestamptz,pgjobdb.scheduler_now()) AS p_now,
     $18::boolean AS p_include_hidden,
     $19::text[] AS p_goal_ids,
  $20::text[] AS p_cell_ids, $21::text[] AS p_append_keys
@@ -33,7 +33,7 @@ WITH parameters AS NOT MATERIALIZED (SELECT
         NULLIF(j.lease_expires_at,'-infinity'::timestamptz) AS lease_expires_at,
         NULL::timestamptz AS archived_at,j.cancel_requested,
         NULL::text AS completion_status,NULL::text AS completion_detail,j.dependency_wait_id,f.hidden_at,
-        route.effective_job_type,route.effective_task_type
+        route.effective_job_type,route.effective_task_type,j.crash_budget_remaining,j.resource_resume
     FROM pgjobdb.jobs j
     JOIN pgjobdb.job_facts f USING(tenant_id,job_id)
     CROSS JOIN parameters
@@ -50,7 +50,7 @@ WITH parameters AS NOT MATERIALIZED (SELECT
         a.final_available_at,NULLIF(f.expires_at,'infinity'::timestamptz),
         NULLIF(a.final_lease_expires_at,'-infinity'::timestamptz),
         a.archived_at,a.final_cancel_requested,a.completion_status,a.completion_detail,
-        NULL::text,f.hidden_at,NULL::text,NULL::text
+        NULL::text,f.hidden_at,NULL::text,NULL::text,a.crash_budget_remaining,a.resource_resume
     FROM pgjobdb.jobs_archive a
     JOIN pgjobdb.job_facts f USING(tenant_id,job_id)
     WHERE a.final_route_job_type IS NOT NULL OR f.record_kind<>'EXECUTION'
@@ -101,7 +101,8 @@ WITH parameters AS NOT MATERIALIZED (SELECT
     LIMIT $15::integer
 )
 SELECT jsonb_build_object(
-    'cell_id',n.cell_id,'cell_repo',n.cell_repo,'cell',(SELECT name FROM pgjobdb.cells WHERE tenant_id=n.tenant_id AND cell_id=n.cell_id),
+    'crash_budget_remaining',n.crash_budget_remaining,'resource_resume',n.resource_resume,'resource_backoff',jsonb_build_object('protocolVersion',1,'durabilityVersion',1),
+ 'cell_id',n.cell_id,'cell_repo',n.cell_repo,'cell',(SELECT name FROM pgjobdb.cells WHERE tenant_id=n.tenant_id AND cell_id=n.cell_id),
  'record_kind',n.record_kind,'terminal_failure',n.terminal_failure,'tenant_id',n.tenant_id,'job_id',n.job_id,'goal_id',n.goal_id,
     'store',n.store,'status',COALESCE(n.status,(SELECT pgjobdb.job_status_at(j,p_now)
         FROM pgjobdb.jobs j WHERE j.tenant_id=n.tenant_id AND j.job_id=n.job_id)),

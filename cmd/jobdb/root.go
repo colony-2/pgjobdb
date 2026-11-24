@@ -89,6 +89,7 @@ func newDirectCmd() *cobra.Command {
 			})
 		},
 	}
+	cmd.AddCommand(newMigrationCmd(false), newMigrationCmd(true))
 	cmd.Flags().StringVar(&postgresDSN, "postgres-dsn", "", "postgres DSN for pgjobdb state (overrides "+postgresDSNEnvVar+")")
 	return cmd
 }

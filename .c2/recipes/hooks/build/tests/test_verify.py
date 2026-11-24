@@ -3,10 +3,12 @@ import importlib.util
 import json
 import os
 import re
+import signal
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -21,8 +23,19 @@ PACKAGES = [verify.PROJECTS, verify.COMMAND, verify.INTEGRATION, verify.PREFIX+'
             verify.INTEGRATION+'/internal/jobdbtest', verify.INTEGRATION+'/internal/jobdbtest/engineconformance',
             verify.INTEGRATION+'/internal/jobdbtest/usageparity', verify.INTEGRATION+'/workflow']
 
-class EvidenceTests(unittest.TestCase):
+class NativeRunnerSimulation(unittest.TestCase):
+    """Simulate the configured native worker for mocked runner tests."""
     def setUp(self):
+        super().setUp()
+        for name, value in (('system', 'Linux'), ('machine', 'aarch64')):
+            override = patch.object(verify.platform, name, return_value=value)
+            override.start()
+            self.addCleanup(override.stop)
+
+
+class EvidenceTests(NativeRunnerSimulation):
+    def setUp(self):
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -65,7 +78,7 @@ class EvidenceTests(unittest.TestCase):
             elif argv[:3] == ['go', 'tool', 'test2json']:
                 kwargs['stdout'].write(json.dumps({'Test':'TestLocal', 'Action':'pass'})+'\n')
             elif '-test.list=.' in argv:
-                kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\n')
+                kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\nTestPostgresResourceBackoffMigrationCommands\n')
             elif argv[0] != 'python3':
                 observed.append(kwargs['env'])
             return 0
@@ -98,7 +111,7 @@ class EvidenceTests(unittest.TestCase):
                 elif argv[1:3] == ['tool', 'test2json']:
                     kwargs['stdout'].write(json.dumps({'Test':'TestRequired', 'Action':'skip'})+'\n')
             elif '-test.list=.' in argv:
-                kwargs['stdout'].write('TestRequired\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\n')
+                kwargs['stdout'].write('TestRequired\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\nTestPostgresResourceBackoffMigrationCommands\n')
             elif argv[0] != 'python3':
                 kwargs['stdout'].write('--- SKIP: TestRequired (0.00s)\n')
             return 0
@@ -140,21 +153,66 @@ class EvidenceTests(unittest.TestCase):
                 verify.aggregate()
 
     def test_cancellation_propagates(self):
-        script = "import importlib.util; s=importlib.util.spec_from_file_location('v',%r); v=importlib.util.module_from_spec(s); s.loader.exec_module(v); f=open(%r,'w'); v.execute([%r,'-c','import time; time.sleep(30)'],f)" % (str(RUNNER), str(self.root / 'cancel.log'), sys.executable)
+        ready = self.root / 'cancel-ready'
+        script = """
+import importlib.util
+from pathlib import Path
+import signal
+s = importlib.util.spec_from_file_location('v', {runner!r})
+v = importlib.util.module_from_spec(s)
+s.loader.exec_module(v)
+install = signal.signal
+
+def notify(signum, handler):
+    old = install(signum, handler)
+    if signum == signal.SIGINT:
+        Path({ready!r}).touch()
+    return old
+
+signal.signal = notify
+with open({log!r}, 'w') as f:
+    v.execute([{python!r}, '-c', 'import time; time.sleep(30)'], f)
+""".format(runner=str(RUNNER), ready=str(ready), log=str(self.root / 'cancel.log'), python=sys.executable)
         p = subprocess.Popen([sys.executable, '-B', '-c', script])
-        import time
-        import signal
         try:
-            for _ in range(100):
-                if (self.root / 'cancel.log').exists() and (self.root / 'cancel.log').stat().st_size:
-                    time.sleep(0.1)
-                    break
+            deadline = time.monotonic() + 5
+            while not ready.exists() and p.poll() is None and time.monotonic() < deadline:
                 time.sleep(0.02)
+            self.assertTrue(ready.exists(), 'runner did not install cancellation handlers')
             p.send_signal(signal.SIGTERM)
-            self.assertEqual(p.wait(timeout=5), 143)
+            self.assertEqual(p.wait(timeout=10), 143)
         finally:
             if p.poll() is None:
                 p.kill(); p.wait()
+
+    def test_cancellation_unwinds_wait_before_reaping(self):
+        calls = []
+
+        class Child:
+            pid = 123
+            waiting = False
+
+            def wait(child, timeout):
+                self.assertFalse(child.waiting, 'cancellation reentered subprocess.wait')
+                calls.append(timeout)
+                if timeout == 1800:
+                    child.waiting = True
+                    try:
+                        signal.raise_signal(signal.SIGTERM)
+                    finally:
+                        child.waiting = False
+                return -signal.SIGTERM
+
+        with (self.root / 'interrupt.log').open('w') as log, \
+                patch.object(verify.subprocess, 'Popen', return_value=Child()), \
+                patch.object(verify.os, 'killpg') as kill_group, \
+                patch.object(verify, 'enable_subreaper'), patch.object(verify, 'cleanup_children') as cleanup:
+            with self.assertRaises(SystemExit) as stopped:
+                verify.execute(['child'], log)
+        self.assertEqual(stopped.exception.code, 143)
+        self.assertEqual(calls, [1800, 2])
+        kill_group.assert_called_once_with(Child.pid, signal.SIGTERM)
+        cleanup.assert_called_once_with()
 
     def test_missing_tool_records_failure(self):
         with patch.dict(os.environ, PATH='', ROOT=str(HERE.parents[4])):
@@ -162,6 +220,19 @@ class EvidenceTests(unittest.TestCase):
         result = json.loads((self.root / 'installer.json').read_text())
         self.assertEqual(result['status'], 'failed')
         self.assertIn('No such file', result['error'])
+
+    def test_unsupported_native_platform_refuses_before_commands(self):
+        for system, machine in (('Linux', 'riscv64'), ('Darwin', 'arm64')):
+            with self.subTest(system=system, machine=machine), \
+                    patch.object(verify.platform, 'system', return_value=system), \
+                    patch.object(verify.platform, 'machine', return_value=machine), \
+                    patch.object(verify, 'execute') as execute:
+                verify.run('installer')
+                result = json.loads((self.root / 'installer.json').read_text())
+                self.assertEqual(result['status'], 'failed')
+                self.assertEqual(result['error'], 'verification requires native Linux arm64 or amd64')
+                self.assertEqual(result['commands'], [])
+                execute.assert_not_called()
 
     def test_launch_error_fails(self):
         with (self.root / 'launch.log').open('w') as log:
@@ -176,15 +247,15 @@ class EvidenceTests(unittest.TestCase):
 
 
 
-class SelectionTests(unittest.TestCase):
+class SelectionTests(NativeRunnerSimulation):
     def test_complete_disjoint_partitions_and_nested_packages(self):
-        names = ['TestLocal', 'TestConsumerGoalsRejectBeforeHTTP', 'TestPostgresConsumerGoalsCommands', 'TestPostgresProjectCommands']
+        names = ['TestLocal', 'TestConsumerGoalsRejectBeforeHTTP', 'TestPostgresConsumerGoalsCommands', 'TestPostgresProjectCommands', 'TestPostgresResourceBackoffMigrationCommands']
         free = verify.select_tests(verify.COMMAND, names, 'service_free')
         runtime = verify.select_tests(verify.COMMAND, names, 'runtime')
         self.assertEqual(set(free) | set(runtime), set(names))
         self.assertFalse(set(free) & set(runtime))
         names = ['TestPostgresRuntimeConformance', 'TestWorkflowRuntimeConformance',
-                 'TestStartOrAppendConformance', 'TestOther'] + sorted(verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME)
+                 'TestStartOrAppendConformance', 'TestOther'] + sorted(verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME | verify.REQUIRED_RESOURCE)
         conf = verify.select_tests(verify.INTEGRATION, names, 'conformance')
         runtime = verify.select_tests(verify.INTEGRATION, names, 'runtime')
         self.assertEqual(set(conf) | set(runtime), set(names))
@@ -194,8 +265,8 @@ class SelectionTests(unittest.TestCase):
         self.assertIn(verify.COMMAND, verify.select_packages(PACKAGES, 'service_free'))
 
     def test_required_goal_and_conversion_outcomes(self):
-        for package, required in ((verify.INTEGRATION, verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME),
-                                  (verify.PREFIX+'pkg/pgjobdb/installer', verify.REQUIRED_INSTALLER),
+        for package, required in ((verify.INTEGRATION, verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME | verify.REQUIRED_RESOURCE),
+                                  (verify.PREFIX+'pkg/pgjobdb/installer', verify.REQUIRED_INSTALLER | verify.REQUIRED_RESOURCE_INSTALLER),
                                   (verify.PROJECTS, verify.REQUIRED_PROJECTS),
                                   (verify.ENGINE_CONFORMANCE_PACKAGE, verify.REQUIRED_RETRY_HISTORY)):
             for omitted in required:
@@ -205,6 +276,48 @@ class SelectionTests(unittest.TestCase):
                 events = [{'Test': n, 'Action': action if n == names[0] else 'pass'} for n in names]
                 with self.assertRaises(ValueError): verify.validate_outcomes(events, names)
             with self.assertRaises(ValueError): verify.validate_outcomes([], names)
+
+    def test_format14_regressions_require_passing_child_outcomes(self):
+        for parent, children in {
+            'TestRetainedGoalProtectionDefinitions': ['project_search_path'],
+            'TestTenantConfiguration': ['reopen_and_connection_ownership'],
+            'TestResourceBackoffHTTPPostgres': ['H08_pre_eagain_client'],
+            'TestResourceBackoffWorkflowPostgres': [
+                'acknowledged_local', 'acknowledged_external', 'failed_before_commit_unselected', 'lost_after_commit',
+                'cancel_resumed_wait',
+            ],
+            'TestPostgresResourceBackoffMigrationRejectsInvalidCrashData': [
+                'missing_threshold', 'null_threshold', 'zero_threshold', 'negative_threshold',
+                'negative_active_count', 'negative_archived_count',
+            ],
+        }.items():
+            with self.subTest(parent=parent):
+                events = [{'Test': name, 'Action': 'pass'} for name in [parent] + [parent + '/' + child for child in children]]
+                verify.validate_outcomes(events, [parent])
+                for index in range(1, len(events)):
+                    remaining = events[:index] + events[index+1:]
+                    case = events[index]['Test']
+                    with self.assertRaisesRegex(ValueError, 'missing required test outcomes: ' + case):
+                        verify.validate_outcomes(remaining, [parent])
+                    for outcome in ('fail', 'skip'):
+                        with self.assertRaisesRegex(ValueError, 'did not pass: ' + case):
+                            verify.validate_outcomes(remaining + [{'Test': case, 'Action': outcome}], [parent])
+
+    def test_resource_children_cannot_be_omitted_skipped_or_failed(self):
+        parent = 'TestResourceBackoffConformance'
+        events = [{'Test': parent, 'Action': 'pass'}] + [
+            {'Test': parent + '/' + name, 'Action': 'pass'} for name in sorted(verify.REQUIRED_RESOURCE_CHILDREN)]
+        verify.validate_outcomes(events, [parent])
+        for index in range(1, len(events)):
+            with self.assertRaisesRegex(ValueError, 'resource cases'):
+                verify.validate_outcomes(events[:index] + events[index+1:], [parent])
+            for action in ('fail', 'skip'):
+                changed = [dict(e) for e in events]
+                changed[index]['Action'] = action
+                with self.assertRaisesRegex(ValueError, 'did not pass'):
+                    verify.validate_outcomes(changed, [parent])
+        for identifier in ('B09b_', 'B11a_', 'B11_'):
+            self.assertTrue(any(n.startswith(identifier) for n in verify.REQUIRED_RESOURCE_CHILDREN))
 
     def test_retry_history_selection(self):
         names = sorted(verify.REQUIRED_RETRY_HISTORY) + ['TestOther']
@@ -401,7 +514,7 @@ class SelectionTests(unittest.TestCase):
                 events = self.history_events(leaf)
                 def command(argv, log, **kwargs):
                     if argv[:2] == ['go', 'list']: kwargs['stdout'].write(verify.INTEGRATION + '\n')
-                    elif argv[:2] == ['go', 'test']: Path(argv[argv.index('-o')+1]).touch()
+                    elif argv[0] == 'go' and argv[1] in ('build', 'test'): Path(argv[argv.index('-o')+1]).touch()
                     elif '-test.list=.' in argv: kwargs['stdout'].write(leaf + '\n')
                     elif argv[:3] == ['go', 'tool', 'test2json']:
                         kwargs['stdout'].write(''.join(json.dumps(e) + '\n' for e in events))
@@ -433,7 +546,7 @@ class SelectionTests(unittest.TestCase):
                 runs, pending = [], []
                 def command(argv, log, **kwargs):
                     if argv[:2] == ['go', 'list']: kwargs['stdout'].write(verify.INTEGRATION + '\n')
-                    elif argv[:2] == ['go', 'test']: Path(argv[argv.index('-o')+1]).touch()
+                    elif argv[0] == 'go' and argv[1] in ('build', 'test'): Path(argv[argv.index('-o')+1]).touch()
                     elif '-test.list=.' in argv: kwargs['stdout'].write('\n'.join(names))
                     elif argv[:3] == ['go', 'tool', 'test2json']:
                         kwargs['stdout'].write(''.join(json.dumps(e) + '\n' for e in pending))
@@ -487,7 +600,7 @@ class SelectionTests(unittest.TestCase):
                 if argv[0] == 'python3': return 1
                 if argv[:2] == ['go','list']: kwargs['stdout'].write('\n'.join(PACKAGES)+'\n')
                 elif argv[:2] == ['go','test']: Path(argv[argv.index('-o')+1]).touch()
-                elif '-test.list=.' in argv: kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\n')
+                elif '-test.list=.' in argv: kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\nTestPostgresResourceBackoffMigrationCommands\n')
                 elif argv[:3] == ['go','tool','test2json']: kwargs['stdout'].write(json.dumps({'Test':'TestLocal','Action':'pass'})+'\n')
                 return 0
             with patch.dict(os.environ, ROOT=tmp, OUTBOX=tmp), patch.object(verify,'execute',side_effect=command):
@@ -507,7 +620,7 @@ class SelectionTests(unittest.TestCase):
                     elif argv[:2]==['go','test']:
                         if phase=='compile': return 1
                         Path(argv[argv.index('-o')+1]).touch()
-                    elif '-test.list=.' in argv: kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\n')
+                    elif '-test.list=.' in argv: kwargs['stdout'].write('TestLocal\nTestPostgresConsumerGoalsCommands\nTestPostgresProjectCommands\nTestPostgresResourceBackoffMigrationCommands\n')
                     elif argv[:3]==['go','tool','test2json']: kwargs['stdout'].write(json.dumps({'Test':'TestLocal','Action':'fail'})+'\n')
                     elif phase=='launch': raise OSError('forced launch failure')
                     else: log.write('database startup failed\n'); return 1

@@ -7,7 +7,7 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb"
 )
 
-// ClearCrashConcern clears only the consecutive crash count. The guard and the
+// ClearCrashConcern assigns the current default crash credit. The guard and the
 // existing traced SQL operation execute under the same row lock, including when
 // called inside a borrowed transaction. Other run eligibility constraints remain.
 func ClearCrashConcern(ctx context.Context, db DB, req jobdb.ClearCrashConcernRequest) error {
@@ -31,8 +31,7 @@ func ClearCrashConcern(ctx context.Context, db DB, req jobdb.ClearCrashConcernRe
     WHERE j.tenant_id=$1 AND j.job_id=$2 FOR UPDATE OF j
 )
 SELECT CASE
-    WHEN cancel_requested OR hidden_at IS NOT NULL OR lease_expires_at>clock_timestamp() THEN 'conflict'
-    WHEN consecutive_expirations=0 THEN 'cleared'
+    WHEN cancel_requested OR hidden_at IS NOT NULL OR lease_expires_at>pgjobdb.scheduler_now() THEN 'conflict'
     WHEN pgjobdb.clear_crash_concern($1,$2,$3,$4) THEN 'cleared'
     ELSE 'conflict' END
 FROM target

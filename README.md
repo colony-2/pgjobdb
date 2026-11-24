@@ -10,12 +10,12 @@ caller-owned `*sql.DB`; `OpenDSN(ctx, dsn, cfg)` owns the connection. Both
 require a `BlobStoreURI` for chapter artifacts. Call `Close` when finished.
 
 Prepare storage explicitly before opening a runtime. Constructors and server
-startup verify scheduler format 13 and project installation protocol 1; they never
+startup verify scheduler format 14 and project installation protocol 1; they never
 install, convert or seed projects. Every writer requires a real catalog project
 ID. See [PostgreSQL projects](docs/projects.md) for fresh installation, historical
 adoption, inventory/fencing obligations, administration and durable first-use
-admission. Supported scheduler formats 9–12 require explicit conversion; see
-[retained goals and conversion](docs/retained-goals.md).
+admission. Supported scheduler formats 9–13 require explicit conversion; see
+[resource waits and upgrades](docs/resource-backoff.md).
 
 The `github.com/colony-2/pgjobdb/pkg/pgjobdb` package exposes typed scheduler
 operations. Its `installer` subpackage installs and verifies the embedded
@@ -111,12 +111,12 @@ Native polling, targeted lease acquisition, and external-task claims require
 classification through an alternate route. Acquisition still locks the base job
 row with `FOR UPDATE ... SKIP LOCKED`.
 
-The existing default threshold is five consecutive expired-lease reclaims,
-configurable with `pgjobdb.set_crash_concern_threshold`. The counter advances on
-reacquisition, not on reads or renewal. A held lease is `ACTIVE`; once it expires,
-the threshold determines whether the job is `CRASH_CONCERN`. With the default,
-an uninterrupted failure cycle stops after the sixth lease expires. Successful
-rescheduling resets the streak. An operator can restore normal scheduling
+The default crash allowance is five remaining expired execution-lease recoveries.
+A fresh claim keeps five; recovery claims install 4/3/2/1/0. The final live lease
+remains ACTIVE until expiry. Successful ordinary rescheduling assigns the current
+default. `pgjobdb.set_crash_concern_threshold` changes future assignments without
+rebasing existing credit or reviving exhausted jobs. Resource waits bind their
+own allowance and preserve completed work. An operator can restore scheduling
 eligibility through `WorkflowRuntime.ClearCrashConcern`, or:
 
 ```sh

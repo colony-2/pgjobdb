@@ -17,6 +17,7 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtimetest"
 	wf "github.com/colony-2/jobdb/pkg/workflow"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/installer"
 	pgruntime "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/integration/internal/jobdbtest"
 	"github.com/stretchr/testify/require"
@@ -200,7 +201,7 @@ func TestTenantConfiguration(t *testing.T) {
 		require.JSONEq(t, `"existing-input"`, string(start.Input.Data))
 		var version int
 		require.NoError(t, db.QueryRowContext(ctx, "SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb'").Scan(&version))
-		require.Equal(t, 13, version)
+		require.Equal(t, installer.FormatVersion, version)
 	})
 }
 

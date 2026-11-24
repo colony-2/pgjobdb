@@ -9,6 +9,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/lib/pq"
 )
 
@@ -135,16 +136,24 @@ func scanJobLease(row rowScanner, worker WorkerID) (*JobLease, error) {
 	var tenant, job, jobType, route, workKind string
 	var taskType, resumeType, inputHash, schemaHash sql.NullString
 	var inputOrdinal, outputOrdinal sql.NullInt64
-	var policy, payload, cell []byte
+	var policy, payload, cell, resume []byte
+	var credit int64
 	if err := row.Scan(&tenant, &job, &lease.LeaseID, &lease.ExpiresAt,
 		&jobType, &route, &workKind, &taskType, &resumeType,
 		&inputOrdinal, &outputOrdinal, &inputHash, &policy, &payload,
 		&lease.ClientPayloadRevision,
-		&schemaHash, &lease.GoalID, &cell); err != nil {
+		&schemaHash, &lease.GoalID, &cell, &credit, &resume); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(cell, &lease.Cell); err != nil {
 		return nil, err
+	}
+	lease.CrashBudgetRemaining = &credit
+	lease.ResourceBackoff = &jobdb.ResourceBackoffCapability{ProtocolVersion: 1, DurabilityVersion: 1}
+	if len(resume) > 0 {
+		if err := json.Unmarshal(resume, &lease.ResourceResume); err != nil {
+			return nil, err
+		}
 	}
 	lease.TenantID, lease.JobID, lease.WorkerID = TenantID(tenant), JobID(job), worker
 	lease.JobType, lease.RouteJobType, lease.WorkKind = JobType(jobType), JobType(route), WorkKind(workKind)

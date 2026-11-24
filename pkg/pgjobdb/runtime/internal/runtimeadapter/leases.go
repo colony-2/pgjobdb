@@ -116,7 +116,7 @@ func leaseFromPgjobdb(lease pgjobdb.JobLease, requestedDuration time.Duration) (
 	if duration == 0 {
 		duration = time.Minute
 	}
-	snapshot := runtimecore.LeaseSnapshot{
+	snapshot := runtimecore.LeaseSnapshot{CrashBudgetRemaining: lease.CrashBudgetRemaining, ResourceResume: lease.ResourceResume, ResourceBackoff: lease.ResourceBackoff,
 		GoalID: lease.GoalID, Cell: lease.Cell,
 		Identity: runtimecore.LeaseIdentity{
 			JobKey:  jobdb.JobKey{TenantId: string(lease.TenantID), JobId: string(lease.JobID)},

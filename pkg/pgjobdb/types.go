@@ -115,6 +115,10 @@ type TaskWork struct {
 }
 
 type JobLease struct {
+	CrashBudgetRemaining *int64                           `json:"crash_budget_remaining"`
+	ResourceBackoff      *jobdb.ResourceBackoffCapability `json:"resource_backoff"`
+	ResourceResume       *jobdb.ResourceResume            `json:"resource_resume"`
+
 	Cell                  jobdb.ResolvedCell
 	GoalID                string
 	TenantID              TenantID
@@ -216,6 +220,10 @@ const (
 
 // JobDetail joins immutable job facts with current or final scheduler state.
 type JobDetail struct {
+	CrashBudgetRemaining *int64                           `json:"crash_budget_remaining"`
+	ResourceBackoff      *jobdb.ResourceBackoffCapability `json:"resource_backoff"`
+	ResourceResume       *jobdb.ResourceResume            `json:"resource_resume"`
+
 	RecordKind            jobdb.JobRecordKind `json:"record_kind"`
 	TerminalFailure       *jobdb.GoalFailure  `json:"terminal_failure"`
 	AppendKey             string              `json:"append_key"`
