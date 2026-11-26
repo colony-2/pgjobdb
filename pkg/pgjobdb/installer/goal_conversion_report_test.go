@@ -111,7 +111,7 @@ func TestGoalConversionAuthoritativeReport(t *testing.T) {
 		require.Equal(t, id, marker["jobId"])
 		afterReport, err := install.Preflight(ctx)
 		require.NoError(t, err)
-		require.Equal(t, 14, afterReport.SourceFormat)
+		require.Equal(t, installer.FormatVersion, afterReport.SourceFormat)
 		require.False(t, afterReport.LegacyInputsAvailable)
 		require.Empty(t, afterReport.RemovedLinks, "removed legacy memberships cannot be reconstructed")
 	})

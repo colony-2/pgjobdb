@@ -41,6 +41,11 @@ func runDatabaseTest(t *testing.T, fn func(context.Context, *sql.DB)) {
 
 func withBareDatabase(t *testing.T, fn func(context.Context, *sql.DB)) {
 	t.Helper()
+	withBareDatabaseDSN(t, func(ctx context.Context, db *sql.DB, _ string) { fn(ctx, db) })
+}
+
+func withBareDatabaseDSN(t *testing.T, fn func(context.Context, *sql.DB, string)) {
+	t.Helper()
 	port := uint32(6000 + rand.Intn(1000))
 	tempDir := t.TempDir()
 	runtimeDir := filepath.Join(tempDir, "runtime")
@@ -63,5 +68,5 @@ func withBareDatabase(t *testing.T, fn func(context.Context, *sql.DB)) {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	ctx, cancel := context.WithTimeout(celltest.Context(context.Background()), time.Minute)
 	t.Cleanup(cancel)
-	fn(ctx, sqlDB)
+	fn(ctx, sqlDB, dsn)
 }

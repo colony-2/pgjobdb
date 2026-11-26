@@ -33,7 +33,7 @@ type ResourceBackoffOptions struct {
 func VerifyResourceBackoff(ctx context.Context, db DB) error {
 	var valid bool
 	err := db.QueryRowContext(ctx, resourceProtectionCatalog+` SELECT
- (SELECT format_version=14 FROM pgjobdb.installation WHERE name='pgjobdb')
+ (SELECT format_version IN (14,15) FROM pgjobdb.installation WHERE name='pgjobdb')
  AND to_regclass('pgjobdb.resource_sequences') IS NOT NULL
  AND to_regclass('pgjobdb.resource_receipts') IS NOT NULL
  AND to_regclass('pgjobdb.resource_configuration') IS NOT NULL
@@ -66,7 +66,7 @@ func VerifyResourceBackoff(ctx context.Context, db DB) error {
    AND tgname='archive_resource_state' AND tgenabled='O' AND NOT tgisinternal AND tgtype=7
    AND tgfoid=to_regprocedure('pgjobdb._archive_resource_state()') AND tgqual IS NULL AND tgnargs=0)`).Scan(&valid)
 	if err != nil || !valid {
-		return &jobdb.ResourceBackoffUnsupportedError{Feature: "installed PostgreSQL format 14 resource contract"}
+		return &jobdb.ResourceBackoffUnsupportedError{Feature: "installed PostgreSQL crash-budget resource contract"}
 	}
 	if err := verifyResourceFunctions(ctx, db); err != nil {
 		return err

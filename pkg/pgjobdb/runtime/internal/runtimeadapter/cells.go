@@ -7,6 +7,16 @@ import (
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb"
 )
 
+var _ jobdb.CellArchiveRuntime = Scheduler{}
+
+func (s Scheduler) ArchiveCell(ctx context.Context, req jobdb.ArchiveCellRequest) (jobdb.Cell, error) {
+	return pgjobdb.SetCellArchived(ctx, s.DB, req, true)
+}
+
+func (s Scheduler) UnarchiveCell(ctx context.Context, req jobdb.ArchiveCellRequest) (jobdb.Cell, error) {
+	return pgjobdb.SetCellArchived(ctx, s.DB, req, false)
+}
+
 func (s Scheduler) CreateCell(ctx context.Context, req jobdb.CreateCellRequest) (jobdb.Cell, error) {
 	return pgjobdb.CreateCell(ctx, s.DB, req)
 }

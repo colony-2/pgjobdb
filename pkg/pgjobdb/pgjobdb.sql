@@ -9,20 +9,20 @@ CREATE OR REPLACE FUNCTION pgjobdb.scheduler_now() RETURNS TIMESTAMPTZ LANGUAGE 
 
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') <> 14 THEN
-   RAISE EXCEPTION 'unsupported pgjobdb format; explicit offline migration to format 14 required';
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') <> 15 THEN
+   RAISE EXCEPTION 'unsupported pgjobdb format; explicit offline migration to format 15 required';
   END IF;
  END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 14),
+    format_version INTEGER NOT NULL CHECK (format_version = 15),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT pgjobdb.scheduler_now()
 );
 
 INSERT INTO pgjobdb.installation (name, format_version)
-SELECT 'pgjobdb',14 WHERE NOT EXISTS(SELECT 1 FROM pgjobdb.installation WHERE name='pgjobdb');
+SELECT 'pgjobdb',15 WHERE NOT EXISTS(SELECT 1 FROM pgjobdb.installation WHERE name='pgjobdb');
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS pgjobdb.cells (
  created_at_ns BIGINT NOT NULL, updated_at_ns BIGINT NOT NULL, retired_at_ns BIGINT,
  PRIMARY KEY(tenant_id,cell_id), UNIQUE(tenant_id,repo), UNIQUE(tenant_id,name)
 );
+ALTER TABLE pgjobdb.cells ADD COLUMN IF NOT EXISTS archived_at_ns BIGINT;
 CREATE TABLE IF NOT EXISTS pgjobdb.cell_names (
  tenant_id TEXT NOT NULL, name TEXT COLLATE "C" NOT NULL, cell_id TEXT NOT NULL,
  PRIMARY KEY(tenant_id,name), FOREIGN KEY(tenant_id,cell_id) REFERENCES pgjobdb.cells(tenant_id,cell_id)
@@ -2644,6 +2645,6 @@ RETURNS VOID LANGUAGE sql AS $$
 $$;
 
 ALTER TABLE pgjobdb.installation DROP CONSTRAINT IF EXISTS installation_format_version_check;
-UPDATE pgjobdb.installation SET format_version=14;
-ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK(format_version=14);
+UPDATE pgjobdb.installation SET format_version=15;
+ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK(format_version=15);
 COMMIT;

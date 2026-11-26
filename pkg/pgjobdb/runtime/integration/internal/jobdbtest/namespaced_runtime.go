@@ -371,6 +371,30 @@ func (r *tenantNamespacedRuntime) RetireCell(ctx context.Context, req jobdb.Reti
 	out.TenantID = r.stripTenant(out.TenantID)
 	return
 }
+
+func (r *tenantNamespacedRuntime) ArchiveCell(ctx context.Context, req jobdb.ArchiveCellRequest) (jobdb.Cell, error) {
+	return r.setCellArchived(ctx, req, true)
+}
+
+func (r *tenantNamespacedRuntime) UnarchiveCell(ctx context.Context, req jobdb.ArchiveCellRequest) (jobdb.Cell, error) {
+	return r.setCellArchived(ctx, req, false)
+}
+
+func (r *tenantNamespacedRuntime) setCellArchived(ctx context.Context, req jobdb.ArchiveCellRequest, archived bool) (jobdb.Cell, error) {
+	backend, ok := r.runtime.(jobdb.CellArchiveRuntime)
+	if !ok {
+		return jobdb.Cell{}, jobdb.ErrCellArchiveUnsupported
+	}
+	ctx = r.prefixContext(ctx)
+	req.TenantID = r.prefixTenant(req.TenantID)
+	apply := backend.UnarchiveCell
+	if archived {
+		apply = backend.ArchiveCell
+	}
+	cell, err := apply(ctx, req)
+	cell.TenantID = r.stripTenant(cell.TenantID)
+	return cell, err
+}
 func (l *tenantNamespacedLease) ResolveCell(ctx context.Context, name string) (jobdb.ResolvedCell, error) {
 	ctx = l.runtime.prefixContext(ctx)
 	return l.lease.ResolveCell(ctx, name)

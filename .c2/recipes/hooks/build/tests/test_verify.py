@@ -255,7 +255,7 @@ class SelectionTests(NativeRunnerSimulation):
         self.assertEqual(set(free) | set(runtime), set(names))
         self.assertFalse(set(free) & set(runtime))
         names = ['TestPostgresRuntimeConformance', 'TestWorkflowRuntimeConformance',
-                 'TestStartOrAppendConformance', 'TestOther'] + sorted(verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME | verify.REQUIRED_RESOURCE)
+                 'TestStartOrAppendConformance', 'TestOther'] + sorted(verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME | verify.REQUIRED_RESOURCE | verify.REQUIRED_ARCHIVE_RUNTIME)
         conf = verify.select_tests(verify.INTEGRATION, names, 'conformance')
         runtime = verify.select_tests(verify.INTEGRATION, names, 'runtime')
         self.assertEqual(set(conf) | set(runtime), set(names))
@@ -265,8 +265,8 @@ class SelectionTests(NativeRunnerSimulation):
         self.assertIn(verify.COMMAND, verify.select_packages(PACKAGES, 'service_free'))
 
     def test_required_goal_and_conversion_outcomes(self):
-        for package, required in ((verify.INTEGRATION, verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME | verify.REQUIRED_RESOURCE),
-                                  (verify.PREFIX+'pkg/pgjobdb/installer', verify.REQUIRED_INSTALLER | verify.REQUIRED_RESOURCE_INSTALLER),
+        for package, required in ((verify.INTEGRATION, verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME | verify.REQUIRED_RESOURCE | verify.REQUIRED_ARCHIVE_RUNTIME),
+                                  (verify.PREFIX+'pkg/pgjobdb/installer', verify.REQUIRED_INSTALLER | verify.REQUIRED_RESOURCE_INSTALLER | verify.REQUIRED_ARCHIVE_INSTALLER),
                                   (verify.PROJECTS, verify.REQUIRED_PROJECTS),
                                   (verify.ENGINE_CONFORMANCE_PACKAGE, verify.REQUIRED_RETRY_HISTORY)):
             for omitted in required:
@@ -357,190 +357,22 @@ class SelectionTests(NativeRunnerSimulation):
                                           {'Test':name, 'Action':'skip'}],
                                          [name.split('/')[0]])
 
-    def history_events(self, leaf='TestRetainedGoalConcurrentInitialHistory', message=None):
-        message = verify.INITIAL_HISTORY_ERROR if message is None else message
-        output = ('Error Trace: /source/' + verify.INITIAL_HISTORY_SITES[leaf] +
-                  '\nError: Received unexpected error:\n' + message + '\nTest: ' + leaf + '\n')
-        events = [{'Test': leaf, 'Action': 'output', 'Output': output}, {'Test': leaf, 'Action': 'fail'}]
-        if '/' in leaf:
-            events.append({'Test': leaf.split('/')[0], 'Action': 'fail'})
-        return events
-
-    def test_human_exception_preserves_failed_outcomes(self):
-        for leaf in verify.INITIAL_HISTORY_SITES:
-            events = self.history_events(leaf)
-            accepted = verify.accepted_initial_history_failures(events, verify.INTEGRATION, True)
-            expected = {leaf} | ({leaf.split('/')[0]} if '/' in leaf else set())
-            self.assertEqual(accepted, expected)
-            outcomes = verify.validate_outcomes(events, [leaf.split('/')[0]], accepted)
-            self.assertEqual(outcomes[leaf], 'fail')
-            with self.assertRaises(ValueError): verify.validate_outcomes(events, [leaf.split('/')[0]])
-
-    def test_history_deferral_does_not_accept_task_alternate_failure(self):
-        events = self.history_events()
-        alternate = 'TestPostgresTaskAlternates'
-        leaf = alternate + '/TestTaskAlternateLifecycle/remote-postgres/fallback'
-        events += [{'Test': leaf, 'Action': 'output', 'Output': 'Error: Should be true\nTest: ' + leaf + '\n'}]
-        events += [{'Test': name, 'Action': 'fail'} for name in (leaf, alternate + '/TestTaskAlternateLifecycle', alternate)]
-        accepted = verify.accepted_initial_history_failures(events, verify.INTEGRATION, True)
-        self.assertEqual(accepted, {'TestRetainedGoalConcurrentInitialHistory'})
-        with self.assertRaisesRegex(ValueError, 'TestPostgresTaskAlternates'):
-            verify.validate_outcomes(events, ['TestRetainedGoalConcurrentInitialHistory', alternate], accepted)
-
-    def test_local_history_sites_match_current_source_assertions(self):
-        assertions = {
-            'TestPostgresSelectedConcurrentRequests': 'require.NoError(t, r.err)',
-            'TestRetainedGoalConcurrentInitialHistory': 'require.NoError(t, y.err, "equivalent submission must await complete initial history")',
-        }
-        root = HERE.parents[4] / 'pkg/pgjobdb/runtime/integration'
-        for name, assertion in assertions.items():
-            with self.subTest(name=name):
-                filename, number = verify.INITIAL_HISTORY_SITES[name].rsplit(':', 1)
-                lines = (root / filename).read_text().splitlines()
-                start = next(i for i, line in enumerate(lines) if line.startswith('func ' + name + '('))
-                end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith('func ')), len(lines))
-                actual = [i + 1 for i in range(start, end) if lines[i].strip() == assertion]
-                self.assertEqual(actual, [int(number)], 'accepted failure site must track its exact source assertion')
-
-    def test_current_human_direction_is_bound_to_cancelled_consultation(self):
-        self.assertEqual(verify.INITIAL_HISTORY_OWNER_JOB, 'WTYBvQMGp87NeKRx1GATPEIBFXD')
-        self.assertEqual(verify.INITIAL_HISTORY_DIRECTION, "we don't want to address this bug at this time. please ignore it.")
-        self.assertEqual(verify.INITIAL_HISTORY_VERSION, 'v0.0.99-0.20261122051819-86f7ba9bc009')
-
-    def test_remote_history_symptom_requires_exact_captured_response(self):
-        leaf = 'TestPostgresPrimaryGoalSelection/remote'
-        events = self.history_events(leaf, 'primary goal selection is unsupported')
-        self.assertFalse(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True))
-        diagnostic = '    initial_history_http_test.go:22: ' + verify.INITIAL_HISTORY_HTTP_DIAGNOSTIC + '\n'
-        events[0]['Output'] = diagnostic + events[0]['Output']
-        self.assertEqual(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True), {leaf, leaf.split('/')[0]})
-        for wrong in (diagnostic.replace('status=404', 'status=501'), diagnostic.replace('chapter not found', 'route not found'), diagnostic.replace(':22:', ':24:')):
-            changed = [dict(e) for e in events]
-            changed[0]['Output'] = events[0]['Output'].replace(diagnostic, wrong)
-            self.assertFalse(verify.accepted_initial_history_failures(changed, verify.INTEGRATION, True))
-        events[0]['Output'] += '    initial_history_http_test.go:22: unrelated assertion\n'
-        self.assertFalse(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True))
-
-    def test_human_exception_rejects_other_signature_package_or_dependency(self):
-        events = self.history_events()
-        self.assertFalse(verify.accepted_initial_history_failures(events, verify.COMMAND, True))
-        self.assertFalse(verify.accepted_initial_history_failures(events, verify.INTEGRATION, False))
-        for message in ('database startup failed', 'context deadline exceeded', 'chapter not found',
-                        verify.INITIAL_HISTORY_ERROR + '\npanic: unrelated failure'):
-            self.assertFalse(verify.accepted_initial_history_failures(self.history_events(message=message), verify.INTEGRATION, True))
-        events[0]['Output'] = events[0]['Output'].replace('selected_history_concurrency_test.go:100', 'another_test.go:100')
-        self.assertFalse(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True))
-        events = self.history_events()
-        for e in events: e['Test'] = 'TestUnrelated'
-        self.assertFalse(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True))
-
-    def test_selected_concurrent_exception_requires_exact_assertion(self):
-        leaf = 'TestPostgresSelectedConcurrentRequests'
-        events = self.history_events(leaf)
-        events[0]['Output'] = '    primary_goal_selection_test.go:86: \n' + events[0]['Output']
-        self.assertEqual(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True), {leaf})
-        for label, output in (
-            ('other site', events[0]['Output'].replace(':86', ':88')),
-            ('stale site', events[0]['Output'].replace(':86', ':84')),
-            ('other error', events[0]['Output'].replace(verify.INITIAL_HISTORY_ERROR, 'context deadline exceeded')),
-            ('second testify assertion', events[0]['Output'] + 'Error: unrelated assertion\nTest: ' + leaf + '\n'),
-            ('plain Go assertion', events[0]['Output'] + '    primary_goal_selection_test.go:88: handles differ\n'),
-            ('cleanup', events[0]['Output'] + '    testsupport_test.go:59: cleanup failed\n'),
-        ):
-            with self.subTest(label=label):
-                changed = [dict(e) for e in events]
-                changed[0]['Output'] = output
-                accepted = verify.accepted_initial_history_failures(changed, verify.INTEGRATION, True)
-                self.assertFalse(accepted)
-                with self.assertRaises(ValueError): verify.validate_outcomes(changed, [leaf], accepted)
-        self.assertFalse(verify.accepted_initial_history_failures(events, verify.INTEGRATION, False))
-        self.assertFalse(verify.accepted_initial_history_failures(events, verify.COMMAND, True))
-
-    def test_human_exception_cannot_hide_extra_assertion_skip_or_child(self):
-        events = self.history_events()
-        events.insert(1, {'Test': events[0]['Test'], 'Action': 'output', 'Output': 'Error: unrelated assertion\nTest: fixture\n'})
-        self.assertFalse(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True))
-        events = self.history_events('TestPostgresPrimaryGoalSelection/direct')
-        events.append({'Test': 'TestPostgresPrimaryGoalSelection/another', 'Action': 'fail'})
-        accepted = verify.accepted_initial_history_failures(events, verify.INTEGRATION, True)
-        self.assertNotIn('TestPostgresPrimaryGoalSelection', accepted)
-        with self.assertRaises(ValueError): verify.validate_outcomes(events, ['TestPostgresPrimaryGoalSelection'], accepted)
-        events = self.history_events()
-        events[-1]['Action'] = 'skip'
-        accepted = verify.accepted_initial_history_failures(events, verify.INTEGRATION, True)
-        with self.assertRaises(ValueError): verify.validate_outcomes(events, [events[-1]['Test']], accepted)
-
-    def test_human_exception_rejects_plain_go_assertions_and_cleanup(self):
-        for leaf in verify.INITIAL_HISTORY_SITES:
-            parent = leaf.split('/')[0]
-            for name in {leaf, parent}:
-                for diagnostic in (
-                    '    unrelated_test.go:123: unrelated invariant failed\n',
-                    '    unrelated_test.go:124: \n        plain Go assertion\n',
-                    '    testsupport_test.go:59: cleanup failed: database still running\n',
-                    '    selected_history_concurrency_test.go:100: unexpected additional assertion\n',
-                    'cleanup failed: forced process cleanup error\n',
-                ):
-                    with self.subTest(leaf=leaf, name=name, diagnostic=diagnostic):
-                        events = self.history_events(leaf)
-                        events.insert(1, {'Test': name, 'Action': 'output', 'Output': diagnostic})
-                        accepted = verify.accepted_initial_history_failures(events, verify.INTEGRATION, True)
-                        self.assertNotIn(name, accepted)
-                        with self.assertRaises(ValueError):
-                            verify.validate_outcomes(events, [parent], accepted)
-
-    def test_human_exception_allows_only_exact_barrier_logs(self):
-        name = 'TestRetainedGoalConcurrentInitialHistory'
-        lines = ('    selected_history_concurrency_test.go:74: first runtime pid 123 blocked inside initial chapter INSERT\n'
-                 '    selected_history_concurrency_test.go:89: second runtime pid 124: early result=&{{}}, waiting=false\n'
-                 '    selected_history_concurrency_test.go:98: after barrier release: first=<nil>, equivalent=' + verify.INITIAL_HISTORY_ERROR + '\n'
-                 '    selected_history_concurrency_test.go:100: \n')
-        for extra, expected in (('', {name}), ('    selected_history_concurrency_test.go:74: unrelated assertion\n', set())):
-            events = self.history_events(name)
-            events.insert(0, {'Test': name, 'Action': 'output', 'Output': lines + extra})
-            self.assertEqual(verify.accepted_initial_history_failures(events, verify.INTEGRATION, True), expected)
-
-    def test_runner_retains_raw_failure_and_only_accepts_expected_exit(self):
-        for code, version, expected in ((1, verify.INITIAL_HISTORY_VERSION, 'passed'),
-                                         (2, verify.INITIAL_HISTORY_VERSION, 'failed'),
-                                         (0, verify.INITIAL_HISTORY_VERSION, 'failed'),
-                                         (1, 'v0.0.100', 'failed'),
-                                         (1, 'v0.0.99-0.20261121034814-05238600e743', 'failed')):
-            with self.subTest(code=code, version=version), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                (root/'go.mod').write_text('module fixture\nrequire (\n github.com/colony-2/jobdb ' + version + '\n)\n')
-                (root/'go.sum').write_text('')
-                leaf = 'TestRetainedGoalConcurrentInitialHistory'
-                events = self.history_events(leaf)
-                def command(argv, log, **kwargs):
-                    if argv[:2] == ['go', 'list']: kwargs['stdout'].write(verify.INTEGRATION + '\n')
-                    elif argv[0] == 'go' and argv[1] in ('build', 'test'): Path(argv[argv.index('-o')+1]).touch()
-                    elif '-test.list=.' in argv: kwargs['stdout'].write(leaf + '\n')
-                    elif argv[:3] == ['go', 'tool', 'test2json']:
-                        kwargs['stdout'].write(''.join(json.dumps(e) + '\n' for e in events))
-                    else:
-                        kwargs['stdout'].write('--- FAIL: ' + leaf + ' (0.01s)\n')
-                        return code
-                    return 0
-                with patch.dict(os.environ, ROOT=tmp, OUTBOX=tmp), patch.object(verify, 'execute', side_effect=command), \
-                     patch.object(verify, 'select_packages', return_value=[verify.INTEGRATION]), \
-                     patch.object(verify, 'select_tests', return_value=[leaf]):
-                    verify.run('runtime')
-                record = json.loads((root/'runtime.json').read_text())
-                self.assertEqual(record['status'], expected)
-                self.assertEqual(record['test_exit_codes'][verify.INTEGRATION], [code])
-                self.assertEqual(record['outcomes']['failed'], 1)
-                if expected == 'passed':
-                    self.assertEqual(record['tests'][verify.INTEGRATION][leaf], 'fail')
-                    self.assertEqual(record['accepted_failures'][verify.INTEGRATION], [leaf])
-                else:
-                    self.assertFalse(record['accepted_failures'])
+    def test_required_archive_layout_and_http_cases(self):
+        for parent, children in verify.REQUIRED_ARCHIVE_CHILDREN.items():
+            events = [{'Test': name, 'Action': 'pass'} for name in (parent, *(parent + '/' + child for child in children))]
+            self.assertEqual(len(verify.validate_outcomes(events, [parent])), len(events))
+            for index in range(1, len(events)):
+                with self.assertRaisesRegex(ValueError, 'missing required test outcomes'):
+                    verify.validate_outcomes(events[:index] + events[index+1:], [parent])
+                for action in ('fail', 'skip'):
+                    with self.assertRaisesRegex(ValueError, 'did not pass'):
+                        verify.validate_outcomes(events[:index] + [dict(events[index], Action=action)] + events[index+1:], [parent])
 
     def test_batches_keep_early_and_late_failures_and_complete_selection(self):
         for bad_batch in (None, 0, 1):
             with self.subTest(bad_batch=bad_batch), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                (root/'go.mod').write_text('module fixture\nrequire (\n github.com/colony-2/jobdb ' + verify.INITIAL_HISTORY_VERSION + '\n)\n')
+                (root/'go.mod').write_text('module fixture')
                 (root/'go.sum').write_text('')
                 names = ['TestRetainedGoalConcurrentInitialHistory'] + ['TestCase%02d' % i for i in range(20)]
                 runs, pending = [], []
@@ -554,8 +386,7 @@ class SelectionTests(NativeRunnerSimulation):
                         batch = argv[-1].removeprefix('-test.run=^(').removesuffix(')$').split('|')
                         index = len(runs); runs.append(batch); pending.clear()
                         for name in batch:
-                            if name == names[0]: pending.extend(self.history_events())
-                            else: pending.append({'Test': name, 'Action': 'fail' if index == bad_batch and name == batch[-1] else 'pass'})
+                            pending.append({'Test': name, 'Action': 'fail' if index == bad_batch and name == batch[-1] else 'pass'})
                         for e in pending:
                             if e['Action'] in ('pass', 'fail'):
                                 kwargs['stdout'].write('--- ' + e['Action'].upper() + ': ' + e['Test'] + ' (0.01s)\n')
@@ -569,26 +400,10 @@ class SelectionTests(NativeRunnerSimulation):
                 self.assertEqual([n for batch in runs for n in batch], names)
                 self.assertEqual(len(runs), 2)
                 self.assertEqual(record['status'], 'passed' if bad_batch is None else 'failed')
-                self.assertEqual(record['outcomes']['failed'], 1 if bad_batch is None else 2)
+                self.assertEqual(record['outcomes']['failed'], 0 if bad_batch is None else 1)
                 self.assertEqual(len(record['test_exit_codes'][verify.INTEGRATION]), 2)
                 if bad_batch is None:
                     self.assertEqual(len(record['tests'][verify.INTEGRATION]), len(names))
-
-    def test_aggregate_discloses_human_exception(self):
-        # Aggregation never rewrites raw failures into passing assertions.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            for behavior in verify.BEHAVIORS:
-                record = {'behavior': behavior, 'status': 'passed'}
-                if behavior == 'runtime':
-                    record['accepted_failures'] = {verify.INTEGRATION: ['TestRetainedGoalConcurrentInitialHistory']}
-                (root/(behavior + '.json')).write_text(json.dumps(record))
-                (root/(behavior + '.log')).write_text('raw evidence')
-            with patch.dict(os.environ, INBOX=tmp, OUTBOX=tmp): verify.aggregate()
-            report = (root/'verification.md').read_text()
-            self.assertIn('raw test outcomes remain failed', report)
-            self.assertIn(verify.INITIAL_HISTORY_OWNER_JOB, report)
-            self.assertIn(verify.INITIAL_HISTORY_DIRECTION, report)
 
     def test_focused_failure_affects_behavior(self):
         with tempfile.TemporaryDirectory() as tmp:

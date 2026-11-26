@@ -42,7 +42,7 @@ func TestPriorPrimaryGoalPreparationsPreserved(t *testing.T) {
 		require.JSONEq(t, before, after)
 		var version int
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&version))
-		require.Equal(t, 14, version)
+		require.Equal(t, 15, version)
 
 	})
 }

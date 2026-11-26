@@ -35,12 +35,22 @@ REQUIRED_GOALS = {'TestRetainedGoalPublicConformance', 'TestRetainedGoalIndepend
                   'TestRetainedGoalSimultaneousIdleAdmission', 'TestRetainedGoalPublicationRollbackAndReopen',
                   'TestRetainedGoalHiddenAndCancellationAdmission', 'TestRetainedGoalFailureCurrentAuthority',
                   'TestRetainedGoalLostHTTPFailureResponse', 'TestRetainedGoalDiscoveryAndRetirement',
-                  'TestRetainedGoalProtectedHistoryGuards', 'TestRetainedGoalConcurrentInitialHistory'}
+                  'TestRetainedGoalProtectedHistoryGuards', 'TestRetainedGoalConcurrentInitialHistory',
+                  'TestPostgresSelectedConcurrentRequests', 'TestPostgresInitialHistoryRollback'}
 REQUIRED_INSTALLER = {'TestGoalConversionHistoricalFormats', 'TestGoalConversionRollback',
                       'TestGoalConversionAuthoritativeReport', 'TestGoalConversionRejectsCorruption',
                       'TestGoalConversionLostCommitAcknowledgement', 'TestGoalConversionStartupReport',
                       'TestGoalConversionOriginTie', 'TestRetainedGoalVerifyContract', 'TestRetainedGoalRejectsDamagedMirror',
                       'TestRetainedGoalProtectionDefinitions', 'TestGoalConversionRejectsAlteredProtections'}
+REQUIRED_ARCHIVE_RUNTIME = {'TestPostgresCellArchiveConformance', 'TestPostgresCellArchiveHTTP',
+                            'TestPostgresCellArchiveVisibilityAndReopen'}
+REQUIRED_ARCHIVE_INSTALLER = {'TestPostgresCellArchiveMigration', 'TestPostgresCellArchiveMigrationRollback'}
+ARCHIVE_LAYOUTS = ('plain', 'direct_project', 'migrated_project')
+ARCHIVE_HTTP_CASES = ('strong_preconditions', 'revision_race_and_noop', 'retirement',
+                      'scoped_authorization', 'pagination_and_cursor_binding')
+REQUIRED_ARCHIVE_CHILDREN = {parent: ARCHIVE_LAYOUTS for parent in REQUIRED_ARCHIVE_INSTALLER}
+REQUIRED_ARCHIVE_CHILDREN['TestPostgresCellArchiveHTTP'] = tuple(
+    family + '/' + case for family in ('tenants', 'projects') for case in ARCHIVE_HTTP_CASES)
 REQUIRED_RESOURCE = {'TestResourceBackoffConformance', 'TestResourceBackoffPostgresBoundaries', 'TestResourceBackoffHTTPPostgres', 'TestResourceBackoffPostgresProcessRestart', 'TestResourceBackoffInstalledProtections', 'TestResourceBackoffDefaultAssignments', 'TestResourceBackoffWorkflowPostgres'}
 REQUIRED_RESOURCE_CHILDREN = {'B13b_guarded_clear', 'B05_B10_atomic_validation', 'B06a_late_duplicate', 'B17_retained_after_cancel', 'B11a_zero_credit_deadline_job_target', 'B07_competing_transitions', 'B09_append_gate_B13a_parent_not_refilled', 'B04_tenant_job_and_attempt_isolation', 'B13a_B13c_ordinary_reset_and_renew', 'B07a_single_reclaim', 'B05a_transaction_rollback', 'B11a_zero_credit_deadline_job_poll', 'B08_reopen', 'B11_zero_credit_engine_timeout_external_true', 'B09b_deadline_keeps_resource_gate', 'B04_B04a_retained_sequences', 'B13_countdown_boundary', 'B11a_zero_credit_deadline_task_poll', 'B15a_S02_snapshot', 'B03f_policy_binding', 'B11_zero_credit_engine_timeout_external_false', 'B09_task_completion_gate', 'B11a_zero_credit_deadline_task_target', 'B09_B09b_independent_gate', 'B07_barrier', 'B11a_ordinary_completion_after_due', 'B07a_task_poll_target_completion_append_reclaim', 'B09a_ordinary_join_alternative', 'B06_exact_receipt'}
 REQUIRED_RESOURCE_INSTALLER = {'TestPostgresResourceBackoffMigrationFormat13', 'TestPostgresResourceBackoffMigrationRollback', 'TestPostgresResourceBackoffMigrationPreservesProjects', 'TestPostgresResourceBackoffMigrationDefaultSerialization', 'TestPostgresResourceBackoffMigrationRejectsInvalidCrashData'}
@@ -56,20 +66,6 @@ REQUIRED_FORMAT14_REGRESSIONS = {
         'missing_threshold', 'null_threshold', 'zero_threshold', 'negative_threshold',
         'negative_active_count', 'negative_archived_count',
     ),
-}
-# Current human direction on cancelled owner consultation WTYBvQMGp87NeKRx1GATPEIBFXD.
-# Keep the diagnosed raw failures; never retry or skip them. This supersedes the
-# previous delivery's exception for 05238600e743; it does not authorize other bugs.
-INITIAL_HISTORY_DIRECTION = "we don't want to address this bug at this time. please ignore it."
-INITIAL_HISTORY_OWNER_JOB = 'WTYBvQMGp87NeKRx1GATPEIBFXD'
-INITIAL_HISTORY_VERSION = 'v0.0.99-0.20261122051819-86f7ba9bc009'
-INITIAL_HISTORY_ERROR = 'chapter not found: chapterstore: resource not found: chapterstore: chapter not found'
-INITIAL_HISTORY_HTTP_DIAGNOSTIC = 'initial history HTTP response: status=404 error=' + INITIAL_HISTORY_ERROR
-INITIAL_HISTORY_SITES = {
-    'TestRetainedGoalConcurrentInitialHistory': 'selected_history_concurrency_test.go:100',
-    'TestPostgresPrimaryGoalSelection/direct': 'runtimetest/primary_goal.go:86',
-    'TestPostgresPrimaryGoalSelection/remote': 'runtimetest/primary_goal.go:86',
-    'TestPostgresSelectedConcurrentRequests': 'primary_goal_selection_test.go:86',
 }
 REQUIRED_COMMAND = {'TestPostgresConsumerGoalsCommands', 'TestPostgresProjectCommands', 'TestPostgresResourceBackoffMigrationCommands'}
 TASK_DELEGATION_PACKAGE = INTEGRATION + '/internal/jobdbtest'
@@ -107,7 +103,7 @@ def select_tests(package, names, behavior):
         raise ValueError('missing PostgreSQL task delegation tests')
     if package == ENGINE_CONFORMANCE_PACKAGE and not REQUIRED_RETRY_HISTORY.issubset(tests):
         raise ValueError('missing PostgreSQL retry history tests')
-    if package == PREFIX + 'pkg/pgjobdb/installer' and not (REQUIRED_INSTALLER | REQUIRED_RESOURCE_INSTALLER).issubset(tests):
+    if package == PREFIX + 'pkg/pgjobdb/installer' and not (REQUIRED_INSTALLER | REQUIRED_RESOURCE_INSTALLER | REQUIRED_ARCHIVE_INSTALLER).issubset(tests):
         raise ValueError('missing required historical conversion/report tests')
     if package == PROJECTS and not REQUIRED_PROJECTS.issubset(tests):
         raise ValueError('missing required PostgreSQL project tests')
@@ -116,67 +112,14 @@ def select_tests(package, names, behavior):
         database = [n for n in tests if n.startswith(('TestPostgresConsumerGoals', 'TestPostgresProject', 'TestPostgresResourceBackoffMigration'))]
         return database if behavior == 'runtime' else [n for n in tests if n not in database]
     if package == INTEGRATION:
-        if not (REQUIRED_CONSUMER | REQUIRED_GOALS | REQUIRED_PROJECT_RUNTIME | REQUIRED_RESOURCE).issubset(tests): raise ValueError('missing focused consumer tests')
+        if not (REQUIRED_CONSUMER | REQUIRED_GOALS | REQUIRED_PROJECT_RUNTIME | REQUIRED_RESOURCE | REQUIRED_ARCHIVE_RUNTIME).issubset(tests): raise ValueError('missing focused consumer tests')
         conformance = [n for n in tests if 'Conformance' in n]
         if not conformance: raise ValueError('empty conformance test selection')
         return conformance if behavior == 'conformance' else [n for n in tests if n not in conformance]
     return tests
 
 
-def allowed_history_diagnostics(output, name, site=None):
-    """Go assertions/cleanup errors have file:line prefixes, unlike PG output.
-
-    Permit only the diagnosed testify header and the three exact barrier logs.
-    In particular, counting testify Error blocks alone misses testing.T.Errorf.
-    Parent tests have no authorized Go diagnostics of their own.
-    """
-    barrier_logs = (
-        r'selected_history_concurrency_test[.]go:74: first runtime pid [0-9]+ blocked inside initial chapter INSERT',
-        r'selected_history_concurrency_test[.]go:89: second runtime pid [0-9]+: early result=.+, waiting=(?:true|false)',
-        r'selected_history_concurrency_test[.]go:98: after barrier release: first=<nil>, equivalent=' + re.escape(INITIAL_HISTORY_ERROR),
-    ) if name == 'TestRetainedGoalConcurrentInitialHistory' else ()
-    for line in output.splitlines():
-        if not re.match(r'\s*\S+[.](?:go|s):[0-9]+:', line):
-            continue
-        text = line.strip()
-        if site and text == site.rsplit('/', 1)[-1] + ':':
-            continue  # testify emits an empty source header before Error Trace
-        if any(re.fullmatch(pattern, text) for pattern in barrier_logs):
-            continue
-        if name == 'TestPostgresPrimaryGoalSelection/remote' and re.fullmatch(r'initial_history_http_test[.]go:22: ' + re.escape(INITIAL_HISTORY_HTTP_DIAGNOSTIC), text):
-            continue
-        return False
-    return not re.search(r'(?i)panic:|fatal error:|cleanup[^\n]*(?:fail|error)', output)
-
-
-def accepted_initial_history_failures(events, package, pinned):
-    """Recognize only the diagnosed assertion, never a whole-test exemption."""
-    if package != INTEGRATION or not pinned:
-        return set()
-    failed = {e['Test'] for e in events if e.get('Action') == 'fail' and 'Test' in e}
-    accepted = set()
-    for name, site in INITIAL_HISTORY_SITES.items():
-        if name not in failed:
-            continue
-        output = ''.join(e.get('Output', '') for e in events if e.get('Test') == name)
-        # A second assertion (even alongside the known message), missing trace,
-        # startup error, panic or altered failure is outside this authorization.
-        errors = re.findall(r'\bError:\s*(.*?)(?=\s+Test:|\Z)', output, re.S)
-        expected = 'Received unexpected error: ' + INITIAL_HISTORY_ERROR
-        if name == 'TestPostgresPrimaryGoalSelection/remote' and INITIAL_HISTORY_HTTP_DIAGNOSTIC in output:
-            expected = 'Received unexpected error: primary goal selection is unsupported'
-        if site in output and len(errors) == 1 and ' '.join(errors[0].split()) == expected and allowed_history_diagnostics(output, name, site):
-            accepted.add(name)
-    parent = 'TestPostgresPrimaryGoalSelection'
-    children = {name for name in failed if name.startswith(parent + '/')}
-    if parent in failed and children and children.issubset(accepted):
-        own_output = ''.join(e.get('Output', '') for e in events if e.get('Test') == parent)
-        if not re.search(r'\bError:', own_output) and allowed_history_diagnostics(own_output, parent):
-            accepted.add(parent)
-    return accepted
-
-
-def validate_outcomes(events, chosen, accepted=()):
+def validate_outcomes(events, chosen):
     outcomes = {e['Test']: e['Action'] for e in events
                 if 'Test' in e and e.get('Action') in ('pass', 'fail', 'skip')}
     if 'TestResourceBackoffConformance' in chosen:
@@ -184,16 +127,12 @@ def validate_outcomes(events, chosen, accepted=()):
         missing_children = expected - set(outcomes)
         if missing_children:
             raise ValueError('missing required resource cases: ' + ', '.join(sorted(missing_children)))
-    required_regressions = {parent + '/' + child for parent, children in REQUIRED_FORMAT14_REGRESSIONS.items()
+    required_regressions = {parent + '/' + child for parent, children in (REQUIRED_FORMAT14_REGRESSIONS | REQUIRED_ARCHIVE_CHILDREN).items()
                             if parent in chosen for child in children}
     missing = (set(chosen) | required_regressions) - set(outcomes)
     if missing: raise ValueError('missing required test outcomes: ' + ', '.join(sorted(missing)))
-    for test in chosen:
-        if outcomes[test] != 'pass' and not (outcomes[test] == 'fail' and test in accepted): raise ValueError('required test did not pass: ' + test + ': ' + outcomes[test])
     for name, action in outcomes.items():
-        # Every selected child still executes; only the diagnosed, explicitly
-        # accepted assertion may retain a failed outcome without blocking.
-        if action == 'skip' or (action == 'fail' and name not in accepted):
+        if action != 'pass':
             raise ValueError('required test did not pass: ' + name + ': ' + action)
     return outcomes
 
@@ -314,7 +253,7 @@ def run(behavior):
                                 GOCACHE=str(scratch / 'cache'), GOMODCACHE=str(scratch / 'modules'),
                                 GOTMPDIR=str(scratch), CGO_ENABLED='0', GOTOOLCHAIN='local',
                                 GOWORK='off', GOFLAGS='')
-                goflags = ['-modfile=' + str(scratch / 'go.mod'), '-tags=integration']
+                goflags = ['-mod=readonly', '-modfile=' + str(scratch / 'go.mod'), '-tags=integration']
                 listcmd = ['go', 'list', *goflags, './...']
                 result['commands'].append(listcmd)
                 with (scratch / 'packages.txt').open('w') as listing_file:
@@ -364,9 +303,13 @@ def run(behavior):
                         if execute(checker_tests,log,cwd=testhome,env=testenv,**drop): failed=True
                 result['tests'] = {}
                 result['test_exit_codes'] = {}
-                result['accepted_failures'] = {}
-                modtext = (root / 'go.mod').read_text()
-                pinned = bool(re.search(r'^\s*github\.com/colony-2/jobdb\s+' + re.escape(INITIAL_HISTORY_VERSION) + r'\s*$', modtext, re.M)) and not re.search(r'^\s*replace\b', modtext, re.M)
+                if behavior == 'installer':
+                    historical = scratch / 'format14-fixture'
+                    cmd = [sys.executable, str(root / 'pkg/pgjobdb/installer/testdata/build_format14_fixture.py'), str(historical)]
+                    result['commands'].append(cmd)
+                    if execute(cmd, log, cwd=root, env=buildenv) or not historical.is_file():
+                        raise RuntimeError('format-14 fixture builder compilation prerequisite failed')
+                    testenv['PGJOBDB_TEST_FORMAT14_FIXTURE'] = str(historical)
                 if behavior == 'runtime' and COMMAND in packages:
                     cli = scratch / 'pgjobdb-cli'
                     cmd = ['go', 'build', *goflags, '-o', str(cli), './cmd/jobdb']
@@ -421,14 +364,9 @@ def run(behavior):
                                 raise RuntimeError('test2json prerequisite failed')
                         events = [json.loads(line) for line in (scratch / 'events.json').read_text().splitlines()]
                         try:
-                            accepted = accepted_initial_history_failures(events, package, pinned)
-                            result['tests'][package].update(validate_outcomes(events, batch, accepted))
-                            if code != (1 if accepted else 0):
+                            result['tests'][package].update(validate_outcomes(events, batch))
+                            if code != 0:
                                 raise ValueError('unexpected test binary exit: ' + str(code))
-                            if accepted:
-                                result['accepted_failures'][package] = sorted(set(result['accepted_failures'].get(package, [])) | accepted)
-                                result['accepted_failure_direction'] = {'owner_job': INITIAL_HISTORY_OWNER_JOB, 'message': INITIAL_HISTORY_DIRECTION, 'dependency': INITIAL_HISTORY_VERSION}
-                                log.write('Accepted initial-history failures under human direction: ' + json.dumps(sorted(accepted)) + '\n')
                         except ValueError as exc:
                             log.write(str(exc) + '\n')
                             result['tests'][package].setdefault('acceptance_errors', []).append(str(exc))
@@ -438,9 +376,7 @@ def run(behavior):
                 log.flush()
                 outcomes = test_outcomes((out / (behavior + '.log')).read_text().replace('\x16', ''))
                 result['outcomes'] = outcomes
-                accepted_names = {name for names in result['accepted_failures'].values() for name in names}
-                unaccepted = set(outcomes['failed_names']) - accepted_names
-                result['status'] = 'failed' if failed or unaccepted or outcomes['skipped'] else 'passed'
+                result['status'] = 'failed' if failed or outcomes['failed'] or outcomes['skipped'] else 'passed'
         except Exception as exc:
             result['status'] = 'failed'
             log.write(type(exc).__name__ + ': ' + str(exc) + '\n')
@@ -462,16 +398,23 @@ def aggregate():
         records.append(record)
     status = 'passed' if all(r['status'] == 'passed' for r in records) else 'failed'
     report = '# Native verification\n\n' + '\n'.join('* ' + r['behavior'] + ': ' + r['status'] for r in records)
-    for record in records:
-        for package, names in record.get('accepted_failures', {}).items():
-            report += '\n\nAccepted initial-history failures (raw test outcomes remain failed): ' + package + ': ' + ', '.join(names)
-            report += '\nHuman direction on ' + INITIAL_HISTORY_OWNER_JOB + ': “' + INITIAL_HISTORY_DIRECTION + '”'
-    report += '\n\nHeld: Docker container-smoke/Postgres/MinIO topology; other architecture/macOS runs; release, signing and publication.\n'
-    (out / 'verification.md').write_text(report)
+    root = Path(os.environ.get('ROOT', '.')).resolve()
+    env = dict(os.environ, GOWORK='off', GOFLAGS='', GOTOOLCHAIN='local')
+    module = 'github.com/colony-2/jobdb'
+    selected = json.loads(subprocess.check_output(['go', 'list', '-mod=readonly', '-m', '-json', module], cwd=root, env=env, timeout=120))
+    identity = json.loads(subprocess.check_output(['go', 'mod', 'download', '-json', module + '@' + selected['Version']], cwd=root, env=env, timeout=120))
+    jobdb = {'version': identity['Version'], 'revision': identity.get('Origin', {}).get('Hash'),
+             'sum': identity['Sum'], 'gomodsum': identity['GoModSum']}
+    if selected.get('Replace') or jobdb['version'] != 'v0.0.99-0.20261126061858-c55cbf2da623' or jobdb['revision'] != 'c55cbf2da62318fecc7024ff2ba5cffd1a641ed0':
+        raise ValueError('unexpected JobDB module identity: ' + str(jobdb))
     metadata = {'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version,
                 'go': subprocess.check_output(['go', 'version'], text=True, timeout=30).strip(),
-                'candidate': os.environ.get('CANDIDATE'), 'base': os.environ.get('BASE')}
+                'candidate': os.environ.get('CANDIDATE'), 'base': os.environ.get('BASE'), 'jobdb': jobdb}
     (out / 'environment.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    report += f"\n\nCandidate: `{metadata['candidate']}`; base: `{metadata['base']}`."
+    report += f"\n\nJobDB: `{jobdb['version']}` (`{jobdb['revision']}`)."
+    report += '\n\nHeld: Docker container-smoke/Postgres/MinIO topology; other architecture/macOS runs; release, signing and publication.\n'
+    (out / 'verification.md').write_text(report)
     print(status, end='')
 
 if __name__ == '__main__':

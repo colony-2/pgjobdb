@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 	"time"
@@ -69,11 +70,12 @@ func withCellTx(ctx context.Context, db DB, tenant string, mutate bool, fn func(
 	if err != nil {
 		return err
 	}
-	before := cellstate.Clone(*state)
+	before := *state
+	before.Cells = maps.Clone(state.Cells)
 	if err = fn(tx, state); err != nil {
 		return err
 	}
-	if mutate {
+	if mutate && !reflect.DeepEqual(&before, state) {
 		if err = saveCells(ctx, tx, tenant, &before, state); err != nil {
 			return err
 		}
@@ -91,10 +93,10 @@ func loadCells(ctx context.Context, db DB, tenant string) (*cellstate.State, err
 		return nil, err
 	}
 	s := cellstate.New()
-	rows, err := db.QueryContext(ctx, `SELECT 0 AS kind,cell_id,name,repo,description,metadata::text,state,revision,created_at_ns,updated_at_ns,retired_at_ns,'' AS principal,'' AS request_id,'' AS descriptor,NULL::bytea AS cursor_key FROM pgjobdb.cells WHERE tenant_id=$1
- UNION ALL SELECT 1,cell_id,name,'','','{}','','',0,0,NULL,'','','',NULL FROM pgjobdb.cell_names WHERE tenant_id=$1
- UNION ALL SELECT 2,cell_id,name,repo,description,metadata::text,'ACTIVE',revision,created_at_ns,created_at_ns,NULL,principal,request_id,descriptor,NULL FROM pgjobdb.cell_requests WHERE tenant_id=$1
- UNION ALL SELECT 3,'','','','','{}','','',0,0,NULL,'','','',cursor_key FROM pgjobdb.cell_catalog WHERE tenant_id=$1
+	rows, err := db.QueryContext(ctx, `SELECT 0 AS kind,cell_id,name,repo,description,metadata::text,state,revision,created_at_ns,updated_at_ns,retired_at_ns,archived_at_ns,'' AS principal,'' AS request_id,'' AS descriptor,NULL::bytea AS cursor_key FROM pgjobdb.cells WHERE tenant_id=$1
+ UNION ALL SELECT 1,cell_id,name,'','','{}','','',0,0,NULL,NULL,'','','',NULL FROM pgjobdb.cell_names WHERE tenant_id=$1
+ UNION ALL SELECT 2,cell_id,name,repo,description,metadata::text,'ACTIVE',revision,created_at_ns,created_at_ns,NULL,NULL,principal,request_id,descriptor,NULL FROM pgjobdb.cell_requests WHERE tenant_id=$1
+ UNION ALL SELECT 3,'','','','','{}','','',0,0,NULL,NULL,'','','',cursor_key FROM pgjobdb.cell_catalog WHERE tenant_id=$1
  ORDER BY kind,cell_id,name,principal,request_id`, tenant)
 	if err != nil {
 		return nil, err
@@ -105,9 +107,9 @@ func loadCells(ctx context.Context, db DB, tenant string) (*cellstate.State, err
 		c := jobdb.Cell{TenantID: tenant, Aliases: []string{}}
 		var raw, key []byte
 		var created, updated int64
-		var retired sql.NullInt64
+		var retired, archived sql.NullInt64
 		var principal, request, descriptor string
-		if err = rows.Scan(&kind, &c.ID, &c.Name, &c.Repo, &c.Description, &raw, &c.State, &c.Revision, &created, &updated, &retired, &principal, &request, &descriptor, &key); err != nil {
+		if err = rows.Scan(&kind, &c.ID, &c.Name, &c.Repo, &c.Description, &raw, &c.State, &c.Revision, &created, &updated, &retired, &archived, &principal, &request, &descriptor, &key); err != nil {
 			return nil, err
 		}
 		switch kind {
@@ -120,6 +122,10 @@ func loadCells(ctx context.Context, db DB, tenant string) (*cellstate.State, err
 			if retired.Valid {
 				t := time.Unix(0, retired.Int64).UTC()
 				c.RetiredAt = &t
+			}
+			if archived.Valid {
+				t := time.Unix(0, archived.Int64).UTC()
+				c.ArchivedAt = &t
 			}
 			if kind == 0 {
 				s.Cells[c.ID] = c
@@ -147,11 +153,14 @@ func saveCells(ctx context.Context, tx *sql.Tx, tenant string, before, after *ce
 		if err != nil {
 			return err
 		}
-		var retired any
+		var retired, archived any
 		if c.RetiredAt != nil {
 			retired = c.RetiredAt.UnixNano()
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO pgjobdb.cells(tenant_id,cell_id,name,repo,description,metadata,state,revision,created_at_ns,updated_at_ns,retired_at_ns) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(tenant_id,cell_id) DO UPDATE SET name=excluded.name,repo=excluded.repo,description=excluded.description,metadata=excluded.metadata,state=excluded.state,revision=excluded.revision,updated_at_ns=excluded.updated_at_ns,retired_at_ns=excluded.retired_at_ns`, tenant, id, c.Name, c.Repo, c.Description, string(raw), c.State, c.Revision, c.CreatedAt.UnixNano(), c.UpdatedAt.UnixNano(), retired)
+		if c.ArchivedAt != nil {
+			archived = c.ArchivedAt.UnixNano()
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO pgjobdb.cells(tenant_id,cell_id,name,repo,description,metadata,state,revision,created_at_ns,updated_at_ns,retired_at_ns,archived_at_ns) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(tenant_id,cell_id) DO UPDATE SET name=excluded.name,repo=excluded.repo,description=excluded.description,metadata=excluded.metadata,state=excluded.state,revision=excluded.revision,updated_at_ns=excluded.updated_at_ns,retired_at_ns=excluded.retired_at_ns,archived_at_ns=excluded.archived_at_ns`, tenant, id, c.Name, c.Repo, c.Description, string(raw), c.State, c.Revision, c.CreatedAt.UnixNano(), c.UpdatedAt.UnixNano(), retired, archived)
 		if err != nil {
 			return err
 		}
@@ -194,6 +203,18 @@ func CreateCellWithLeaseByID(ctx context.Context, db DB, key jobdb.JobKey, lease
 	})
 	return
 }
+func SetCellArchived(ctx context.Context, db DB, req jobdb.ArchiveCellRequest, archived bool) (out jobdb.Cell, err error) {
+	if err = cellstate.AuthorizeArchive(ctx, req.CellKey); err != nil {
+		return
+	}
+	err = cellTx(ctx, db, req.TenantID, func(_ *sql.Tx, state *cellstate.State) error {
+		var stateErr error
+		out, stateErr = state.SetArchived(ctx, req, archived)
+		return stateErr
+	})
+	return
+}
+
 func GetCell(ctx context.Context, db DB, key jobdb.CellKey) (out jobdb.Cell, err error) {
 	s, err := loadCells(ctx, db, key.TenantID)
 	if err != nil {

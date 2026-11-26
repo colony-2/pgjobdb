@@ -1,0 +1,61 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/colony-2/jobdb/pkg/jobdb"
+	pg "github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime"
+)
+
+func check() error {
+	var fixture struct {
+		Project string       `json:"project"`
+		DSN     string       `json:"dsn"`
+		Seeded  []jobdb.Cell `json:"seeded"`
+	}
+	info, err := os.ReadFile(os.Args[1])
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(info, &fixture); err != nil {
+		return err
+	}
+	if err := os.Mkdir(os.Args[2], 0o700); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	runtime, err := pg.OpenDSN(ctx, fixture.DSN, pg.Config{BlobStoreURI: "blobfs://" + os.Args[2]})
+	if err != nil {
+		return err
+	}
+	defer runtime.Close(ctx)
+	var consumer jobdb.ConsumerRuntime = runtime
+	if _, ok := consumer.(jobdb.CellArchiveRuntime); !ok {
+		return fmt.Errorf("missing cell archive capability")
+	}
+	want := fixture.Seeded[1]
+	ctx = jobdb.WithCellAuthority(ctx, jobdb.CellAuthority{Principal: "external-smoke", TenantID: fixture.Project,
+		Permissions: map[string]bool{"cells.list": true}, Cells: map[string]bool{want.ID: true}})
+	archived := true
+	page, err := consumer.ListCells(ctx, jobdb.ListCellsRequest{TenantID: fixture.Project, Archived: &archived, PageSize: 1})
+	if err != nil {
+		return err
+	}
+	if len(page.Cells) != 1 || page.Cells[0].ID != want.ID || page.Cells[0].ArchivedAt == nil || page.NextPageToken != "" {
+		return fmt.Errorf("unexpected external consumer list: %+v", page)
+	}
+	fmt.Println("external consumer: opened PostgreSQL runtime; archive capability and scoped archived list passed")
+	return nil
+}
+
+func main() {
+	if err := check(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

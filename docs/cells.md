@@ -1,6 +1,6 @@
 # Tenant cells
 
-pgjobdb implements the JobDB cell contract using storage format **9** and JobDB
+pgjobdb implements the JobDB cell contract using storage format **15** and JobDB
 as pinned in `go.mod`. Jobs require an explicitly registered cell name and retain
 tenant-wide job IDs. Cells have server-generated immutable IDs, tenant-unique
 mutable names and canonical repository locators, descriptions, arbitrary JSON
@@ -59,6 +59,22 @@ Use a strong current ETag in `If-Match`; missing validators return 428, malforme
 validators 400, and stale validators 412. Changes are atomic. Creation request
 IDs are scoped to tenant/principal; matching replay returns the original
 snapshot after authority and retirement checks.
+
+Archiving is reversible and keeps the cell active. `POST /cells/{id}/archive`
+and `POST /cells/{id}/unarchive` work under both `/v1/tenants/{tenantId}` and
+`/v1/projects/{projectId}`. They require `cells.get` and `cells.update` for the
+cell, plus its current strong `If-Match`. Send the returned `ETag` on the next
+mutation. Requesting the current state leaves the revision and timestamps
+unchanged; a stale revision still fails. Retiring an archived cell clears the
+archive marker; a retired cell cannot be archived or unarchived.
+
+`GET /cells` accepts `archived=true` (marked only) and `archived=false`
+(unmarked only). Omitting the parameter keeps the previous behavior, including
+the default `ACTIVE` state. Scope, name or alias, lifecycle state, and archive
+filters apply before pagination. Use cursors with the same caller and filters.
+Archiving does not change ID or alias lookup, admission, scheduling, leases,
+restart, or history. See the [disposable HTTP fixture](../tests/cell-archive/README.md)
+for a local example with scoped callers.
 
 Job facts, goals, preparations, schedules, handles, and leases carry cell
 identity. Jobs keep the repository captured at submission across retries and

@@ -243,7 +243,7 @@ func TestGoalConversionHistoricalFormats(t *testing.T) {
 				again, err := pgjobdb.GetGoal(ctx, db, key)
 				require.NoError(t, err)
 				require.Equal(t, g, again)
-				t.Logf("format %d -> 14: preserved rows, exact cross-primary witness, failure %s, 2 dropped links, overlap drained", fixture.version, g.FailureJobID)
+				t.Logf("format %d -> %d: preserved rows, exact cross-primary witness, failure %s, 2 dropped links, overlap drained", fixture.version, installer.FormatVersion, g.FailureJobID)
 			})
 		})
 	}

@@ -36,7 +36,7 @@ func TestPostgresResourceBackoffMigrationCommands(t *testing.T) {
 		var report installer.ConversionReport
 		require.NoError(t, json.Unmarshal([]byte(output), &report))
 		require.Equal(t, 0, report.SourceFormat)
-		require.Equal(t, 14, report.TargetFormat)
+		require.Equal(t, 15, report.TargetFormat)
 		require.True(t, report.Advisory)
 		var exists bool
 		require.NoError(t, db.QueryRow(`SELECT to_regnamespace('pgjobdb') IS NOT NULL`).Scan(&exists))

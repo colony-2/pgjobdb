@@ -10,11 +10,11 @@ caller-owned `*sql.DB`; `OpenDSN(ctx, dsn, cfg)` owns the connection. Both
 require a `BlobStoreURI` for chapter artifacts. Call `Close` when finished.
 
 Prepare storage explicitly before opening a runtime. Constructors and server
-startup verify scheduler format 14 and project installation protocol 1; they never
+startup verify scheduler format 15 and project installation protocol 1; they never
 install, convert or seed projects. Every writer requires a real catalog project
 ID. See [PostgreSQL projects](docs/projects.md) for fresh installation, historical
 adoption, inventory/fencing obligations, administration and durable first-use
-admission. Supported scheduler formats 9–13 require explicit conversion; see
+admission. Supported scheduler formats 9–14 require explicit conversion; see
 [resource waits and upgrades](docs/resource-backoff.md).
 
 The `github.com/colony-2/pgjobdb/pkg/pgjobdb` package exposes typed scheduler
@@ -37,6 +37,8 @@ Every submitted job requires an explicitly registered cell name. Submission neve
 creates cells; `cellRepo` optionally asserts the existing repository. Cell names are
 unique and mutable; IDs and job repository snapshots are stable. PATCH supports
 repo, name, description, and metadata updates. Cells are retired rather than deleted.
+Archiving is reversible and changes only filtered cell listings. It does not
+retire the cell, disable work, or hide execution history.
 
 Normal execution leases can explicitly register cells with `lease.CreateCell`.
 Delegated leases require a `cells.create` name selector. Creation is restricted to
@@ -53,7 +55,7 @@ rename restrictions. The `create-root` command has been removed.
 
 ## JobDB consumer API
 
-The current dependency is JobDB `v0.0.99-0.20261122051819-86f7ba9bc009`.
+The current dependency is JobDB `v0.0.99-0.20261126061858-c55cbf2da623`.
 The PostgreSQL HTTP server uses the consumer API: candidate PUT is unregistered,
 and this executable no longer registers `goals add-candidate`. Choose primary goal
 membership at submission with an explicit destination job ID, or use a shared-goal

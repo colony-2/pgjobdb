@@ -17,6 +17,7 @@ import (
 	runtimecore "github.com/colony-2/jobdb/pkg/jobdb/runtime/core"
 	schemapostgres "github.com/colony-2/jobdb/pkg/jobdb/schemastore/postgres"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb/projects"
+	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/internal/chapterlog"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb/runtime/internal/runtimeadapter"
 	_ "github.com/lib/pq"
 	"gorm.io/gorm"
@@ -46,7 +47,7 @@ type Config struct {
 type Runtime struct {
 	*runtimecore.Runtime
 	*runtimecore.SchemaRegistry
-	chapters *chapterpostgres.Store
+	chapters *chapterlog.Store
 	db       *sql.DB
 	ownsDB   bool
 	close    sync.Once
@@ -56,6 +57,7 @@ type Runtime struct {
 // Native backend compatibility intentionally retains concrete core attachment.
 var _ jobdb.ProjectControl = (*Runtime)(nil)
 var _ jobdb.ConsumerRuntime = (*Runtime)(nil)
+var _ jobdb.CellArchiveRuntime = (*Runtime)(nil)
 var _ jobdb.ConsumerGoalRuntime = (*Runtime)(nil)
 var _ jobdb.WorkflowRuntime = (*Runtime)(nil)
 var _ jobdb.JobSchemaRegistry = (*Runtime)(nil)
@@ -96,7 +98,7 @@ func NewSQLDB(ctx context.Context, db *sql.DB, cfg Config) (*Runtime, error) {
 		return nil, fmt.Errorf("direct runtime: verify project storage: %w", err)
 	}
 	control := projects.NewControl(db, cfg.CanDeleteProject)
-	chapters, err := chapterpostgres.NewSQLDB(ctx, db, chapterpostgres.Config{Projects: control,
+	chapters, err := chapterlog.New(ctx, db, chapterpostgres.Config{Projects: control,
 		BlobStoreURI:           cfg.BlobStoreURI,
 		MaxInlineArtifactBytes: cfg.MaxInlineArtifactBytes,
 		Logger:                 cfg.Logger,

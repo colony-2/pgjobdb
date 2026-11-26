@@ -58,18 +58,23 @@ exact report digest. Staged bytes alone do not prove commit. If acknowledgment i
 uncertain, retain the file and reconcile the marker, balances, retained facts and
 exact allocated failure IDs on a fresh connection before retrying.
 
-Fresh runtimes require an explicit [project initialization](projects.md) on format 14. Startup/Apply reject formats 9–13 unchanged with
+Fresh runtimes require an explicit [project initialization](projects.md) on format 15. Startup/Apply reject formats 9–14 unchanged with
 an explicit migration error. The explicit migration composes historical 9–12
 retained-goal conversion and countdown conversion in one transaction; authentic
 13 converts directly. It captures the original threshold T before replacing any
 functions and converts each original execution count C to `max(T-C, 0)` once.
 Protected goal failures remain inert at zero. Leases, original expired identities,
 routes, payload revisions, history, waits and retained-goal protections survive.
-Writer exclusion, validation or report failure rolls back both phases. Repeating
-migration on 14 is a no-op and never converts balances again. For a format-13
+Writer exclusion, validation or report failure rolls back all phases. Format
+14→15 adds the nullable cell archive marker and does not change allowances,
+per-execution budgets, or lease eligibility. Reports for format 14 and later
+use `crash_budget_remaining`, not the old formula. Repeating migration on 15
+does not convert balances again. For a format-13
 store with an installed project catalog, the cutover validates its original
 fingerprint, preserves catalog and receipt bytes, and records the new fingerprint
-with the same commit. Guards cover the new retained tables. Use the installer for
+with the same commit. Guards cover the new retained tables. The 14→15 project
+upgrade updates structure certification without reinstalling guards or changing
+the receipt, catalog, or admission state. Use the installer for
 reapplication on project-enabled stores; standalone schema SQL refuses them to
 protect existing guards.
 

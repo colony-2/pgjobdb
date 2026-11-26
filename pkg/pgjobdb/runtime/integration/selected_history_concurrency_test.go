@@ -1,9 +1,11 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -72,6 +74,9 @@ func TestRetainedGoalConcurrentInitialHistory(t *testing.T) {
 		}
 		require.Eventually(t, func() bool { return waiting(aPID) }, 5*time.Second, time.Millisecond)
 		t.Logf("first runtime pid %d blocked inside initial chapter INSERT", aPID)
+		var storyVisible bool
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM jobdb_chapter_stories WHERE anthology_id='c2' AND story_id='staged')`).Scan(&storyVisible))
+		require.False(t, storyVisible, "another connection must not see the story before chapter zero")
 		go submit(b, second)
 		var early *outcome
 		// The old store commits the story before its initial chapter and the
@@ -87,14 +92,10 @@ func TestRetainedGoalConcurrentInitialHistory(t *testing.T) {
 			}
 		}, 5*time.Second, time.Millisecond)
 		t.Logf("second runtime pid %d: early result=%v, waiting=%v", bPID, early, waiting(bPID))
+		require.Nil(t, early, "an equivalent writer must not return before the story and chapter commit")
 		require.NoError(t, barrier.Commit())
 		x := <-first
-		var y outcome
-		if early != nil {
-			y = *early
-		} else {
-			y = <-second
-		}
+		y := <-second
 		t.Logf("after barrier release: first=%v, equivalent=%v", x.err, y.err)
 		require.NoError(t, x.err, "first submission")
 		require.NoError(t, y.err, "equivalent submission must await complete initial history")
@@ -105,5 +106,55 @@ func TestRetainedGoalConcurrentInitialHistory(t *testing.T) {
 		listing, err := a.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"c2"}, GoalIDs: []string{source.GoalID}})
 		require.NoError(t, err)
 		require.Len(t, listing.Jobs, 2, "origin plus one accepted selected identity")
+	})
+}
+
+func TestPostgresInitialHistoryRollback(t *testing.T) {
+	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
+		runtime, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+		_, err = db.ExecContext(ctx, `CREATE FUNCTION pgjobdb.test_initial_artifact_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+		 IF NEW.story_id='artifact-fault' AND NEW.ordinal=0 THEN RAISE EXCEPTION 'injected initial artifact row failure'; END IF;
+		 RETURN NEW;
+		END $$;
+		CREATE TRIGGER test_initial_artifact_failure BEFORE INSERT ON jobdb_chapter_artifacts
+		FOR EACH ROW EXECUTE FUNCTION pgjobdb.test_initial_artifact_failure()`)
+		require.NoError(t, err)
+		contents := map[string][]byte{"inline.txt": []byte("inline"), "blob.txt": bytes.Repeat([]byte("blob"), 128)}
+		request := func() jobdb.SubmitJobRequest {
+			return jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{
+				TenantId: "c2", JobID: "artifact-fault", Cell: "test", CellRepo: "example.test/test", JobType: "work",
+				Data: jobdb.NewTaskDataOrPanic(nil, jobdb.NewArtifactFromBytes("inline.txt", contents["inline.txt"]), jobdb.NewArtifactFromBytes("blob.txt", contents["blob.txt"])),
+			}}
+		}
+		_, err = celltest.Submit(runtime, ctx, request())
+		require.ErrorContains(t, err, "injected initial artifact row failure")
+		var storyVisible, chapterVisible, artifactVisible bool
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT
+			EXISTS (SELECT 1 FROM jobdb_chapter_stories WHERE anthology_id='c2' AND story_id='artifact-fault'),
+			EXISTS (SELECT 1 FROM jobdb_chapter_chapters WHERE anthology_id='c2' AND story_id='artifact-fault'),
+			EXISTS (SELECT 1 FROM jobdb_chapter_artifacts WHERE anthology_id='c2' AND story_id='artifact-fault')`).Scan(&storyVisible, &chapterVisible, &artifactVisible))
+		require.False(t, storyVisible || chapterVisible || artifactVisible, "no partial history may survive a failed create")
+		_, err = db.ExecContext(ctx, `DROP TRIGGER test_initial_artifact_failure ON jobdb_chapter_artifacts`)
+		require.NoError(t, err)
+		handle, err := celltest.Submit(runtime, ctx, request())
+		require.NoError(t, err, "retry can reuse the same identity")
+		chapters, err := runtime.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: handle.JobKey})
+		require.NoError(t, err)
+		require.Len(t, chapters, 1)
+		require.Len(t, chapters[0].Artifacts, 2)
+		for _, artifact := range chapters[0].Artifacts {
+			reader, err := runtime.OpenArtifact(ctx, jobdb.ArtifactRef{JobKey: handle.JobKey, Ordinal: 0, Name: artifact.Name, Digest: artifact.Digest})
+			require.NoError(t, err)
+			stream, err := reader.Open()
+			require.NoError(t, err)
+			data, readErr := io.ReadAll(stream)
+			closeErr := stream.Close()
+			require.NoError(t, readErr)
+			require.NoError(t, closeErr)
+			require.Equal(t, contents[artifact.Name], data)
+		}
 	})
 }

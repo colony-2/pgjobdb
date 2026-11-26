@@ -45,18 +45,16 @@ internal/jobdbtest is required during enumeration, including default and signed
 consumer servers, nonempty namespaces, and the standard remote PostgreSQL factory.
 Every selected child outcome, including shared conformance and availability checks,
 must pass; any skipped native test fails its behavior and remains recorded.
-The sole accepted failure is the diagnosed initial-history race at the exact
-JobDB pin `v0.0.99-0.20261122051819-86f7ba9bc009`, under human cancellation of
-`WTYBvQMGp87NeKRx1GATPEIBFXD`: “we don't want to address this bug at this time.
-please ignore it.” The four existing assertion sites remain narrowly matched;
-raw failures and nonzero exits are retained. Other errors, added assertions,
-cleanup failures, skips, replacement modules and different pins still fail.
-Hook unit tests bind each local accepted site to its exact assertion in current
-source, so fixture edits cannot silently leave a stale line match behind.
-At the existing remote selection assertion only, the published client can map
-the missing-chapter 404 to unsupported selection. That symptom is accepted only
-with the fixture's exact captured 404/missing-chapter diagnostic; an unsupported
-route or capability without that evidence still fails.
+There are no pin-specific failure exceptions. The gate requires the shared
+cell archive conformance test, each tenant/project HTTP case, the visibility
+and reopen check, and migration/rollback for all three authentic format-14
+layouts. The installer stage checks out the historical module by exact Git SHA
+and checks its module hash before compiling a fixture builder, then runs it
+without acquisition credentials. The report records the candidate and exact
+selected JobDB module identity and checksums.
+The runtime stage requires the two-connection initial-history barrier,
+concurrent selection with equivalent and conflicting requests, and initial
+history rollback with inline and blob-backed artifact readback on retry.
 The service-free selection first executes the bounded hook unit tests from an
 isolated source copy as the same unprivileged UID, without acquisition credentials.
 Per-command execution is bounded to 30 minutes. Unprivileged Linux subreaper
@@ -98,5 +96,4 @@ a temporary directory. Release tests prebuild it before switching to their
 separate test home so the build can use the configured private-module access.
 The hook also requires passing child results for reopening tenant configuration
 on the current format and for verifying the project search path during migration.
-The project delivery carries the current owner deferral for the exact JobDB pin.
 No resource case or new assertion is exempt.
