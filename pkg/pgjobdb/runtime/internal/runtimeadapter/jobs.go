@@ -116,7 +116,7 @@ func (s Scheduler) ListJobs(ctx context.Context, req runtimecore.ListJobsRequest
 			AppendKey: summary.AppendKey, JobType: string(summary.JobType), RouteJobType: string(summary.RouteJobType), WorkKind: runtimecore.WorkKind(summary.WorkKind),
 			AppMetadata: summary.AppMetadata, SchemaHash: summary.SchemaHash, ParentJobID: string(summary.ParentJobID),
 			CreatedAt: summary.CreatedAt, AvailableAt: summary.AvailableAt, ExpiresAt: summary.ExpiresAt,
-			LeaseExpiresAt: summary.LeaseExpiresAt, ArchivedAt: summary.ArchivedAt, CancelRequested: summary.CancelRequested,
+			LeaseExpiresAt: summary.LeaseExpiresAt, LastLeaseUpdatedAt: summary.LastLeaseUpdatedAt, ArchivedAt: summary.ArchivedAt, CancelRequested: summary.CancelRequested,
 			ClientPayload:         summary.ClientPayload,
 			ClientPayloadRevision: summary.ClientPayloadRevision, BlockingWaitSummary: summary.BlockingWaitSummary,
 		}

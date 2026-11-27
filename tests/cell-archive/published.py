@@ -15,8 +15,8 @@ from urllib.parse import urlsplit
 
 PG = 'github.com/colony-2/pgjobdb'
 JOBDB = 'github.com/colony-2/jobdb'
-JOBDB_VERSION = 'v0.0.99-0.20261126061858-c55cbf2da623'
-JOBDB_COMMIT = 'c55cbf2da62318fecc7024ff2ba5cffd1a641ed0'
+JOBDB_VERSION = 'v0.0.99-0.20261126174656-857ac1ada983'
+JOBDB_COMMIT = '857ac1ada983ed5ed3ab06ae01bb8b6d95b5c538'
 LAUNCHER = '/pkg/pgjobdb/runtime/integration/cmd/cellarchivefixture'
 
 

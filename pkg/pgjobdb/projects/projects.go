@@ -406,7 +406,7 @@ func Install(ctx context.Context, db *sql.DB, in Inventory, seeds []projectcatal
 	if err != nil {
 		return receipt, err
 	}
-	receipt = Receipt{Protocol: Protocol, Inventory: raw, Seeds: seeds, CatalogID: state.ID, CatalogManifest: state.Manifest, GuardSource: projectstorage.GuardDigest()}
+	receipt = Receipt{SchedulerFormat: installer.FormatVersion, Protocol: Protocol, Inventory: raw, Seeds: seeds, CatalogID: state.ID, CatalogManifest: state.Manifest, GuardSource: projectstorage.GuardDigest()}
 	receipt.Structure, err = projectstorage.Structure(ctx, tx)
 	if err != nil {
 		return receipt, err

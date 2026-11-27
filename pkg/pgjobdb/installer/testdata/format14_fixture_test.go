@@ -42,6 +42,10 @@ func TestCreateFormat14Fixture(t *testing.T) {
 		_, err = db.ExecContext(ctx, `SELECT pgjobdb.complete_native_unheld_job('c2',$1,'operator','success')`, id)
 		require.NoError(t, err)
 	}
+	if installer.FormatVersion == 15 {
+		_, err = db.ExecContext(ctx, `UPDATE pgjobdb.cells SET archived_at_ns=123456789 WHERE tenant_id='c2'`)
+		require.NoError(t, err)
+	}
 	_, err = db.ExecContext(ctx, `SELECT pgjobdb.set_crash_concern_threshold(7);
 UPDATE pgjobdb.jobs SET consecutive_expirations=1, crash_budget_remaining=CASE job_id WHEN 'live-empty' THEN 0 ELSE 2 END;
 UPDATE pgjobdb.jobs_archive SET consecutive_expirations=2, crash_budget_remaining=CASE job_id WHEN 'retained-empty' THEN 0 ELSE 3 END`)

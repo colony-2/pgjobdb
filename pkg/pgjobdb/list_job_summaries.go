@@ -47,6 +47,7 @@ type JobListSummary struct {
 	AvailableAt           time.Time                    `json:"available_at"`
 	ExpiresAt             *time.Time                   `json:"expires_at"`
 	LeaseExpiresAt        *time.Time                   `json:"lease_expires_at"`
+	LastLeaseUpdatedAt    *time.Time                   `json:"last_lease_updated_at"`
 	ArchivedAt            *time.Time                   `json:"archived_at"`
 	CancelRequested       bool                         `json:"cancel_requested"`
 	CompletionStatus      *CompletionStatus            `json:"completion_status"`
@@ -84,6 +85,7 @@ func ListJobSummaries(ctx context.Context, db DB, opts ListJobsOptions) (*ListJo
 		item.AvailableAt = item.AvailableAt.UTC()
 		item.ExpiresAt = utcTimeCopy(item.ExpiresAt)
 		item.LeaseExpiresAt = utcTimeCopy(item.LeaseExpiresAt)
+		item.LastLeaseUpdatedAt = utcTimeCopy(item.LastLeaseUpdatedAt)
 		item.ArchivedAt = utcTimeCopy(item.ArchivedAt)
 		item.ClientPayload = payload
 		if item.BlockingWaitSummary != nil && item.BlockingWaitSummary.Deadline != nil {

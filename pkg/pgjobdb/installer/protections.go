@@ -40,7 +40,22 @@ SELECT jsonb_object_agg(key, value) FROM (
  SELECT 'function/'||p.proname, to_jsonb(pg_get_functiondef(p.oid))
  FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='pgjobdb'
  AND p.pronargs=0 AND p.proname IN ('_immutable_goal_id','_immutable_retained_goal','_check_active_goal','_archive_goal_identity','_terminal_goals')
+ UNION ALL
+ SELECT 'view/jobs_with_status', to_jsonb(encode(sha256(convert_to(pg_get_viewdef(r.oid,false),'UTF8')),'hex'))
+ FROM pg_class r JOIN pg_namespace n ON n.oid=r.relnamespace
+ WHERE n.nspname='pgjobdb' AND r.relname='jobs_with_status' AND r.relkind='v' AND r.reloptions IS NULL
 ) protections`
+
+func statusViewDigest(version int) string {
+	switch {
+	case version >= FormatVersion:
+		return "0b9465b8eb447f695c811867cc7110d4367ac8134a9c66f40dd05cdedaffedcf"
+	case version >= crashBudgetFormat:
+		return "af768ccafbd7030c68a99f77f90020385529caf4234cb0111283f28eeb6162eb"
+	default:
+		return "61f2e8d00819a1b82d9c65006c84617dc7226425b8b99608c56b5aacd2557ab7"
+	}
+}
 
 func validateProtections(ctx context.Context, tx *sql.Tx, version int) error {
 	var contracts map[string]map[string]json.RawMessage
@@ -74,6 +89,10 @@ func validateProtections(ctx context.Context, tx *sql.Tx, version int) error {
 	var actual map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &actual); err != nil {
 		return err
+	}
+	var statusView string
+	if err := json.Unmarshal(actual["view/jobs_with_status"], &statusView); err != nil || statusView != statusViewDigest(version) {
+		return fmt.Errorf("pgjobdb: missing or altered status view pgjobdb.jobs_with_status in format %d", version)
 	}
 	objects := make([]string, 0, len(expected))
 	for object := range expected {

@@ -58,7 +58,7 @@ exact report digest. Staged bytes alone do not prove commit. If acknowledgment i
 uncertain, retain the file and reconcile the marker, balances, retained facts and
 exact allocated failure IDs on a fresh connection before retrying.
 
-Fresh runtimes require an explicit [project initialization](projects.md) on format 15. Startup/Apply reject formats 9–14 unchanged with
+Fresh runtimes require an explicit [project initialization](projects.md) on format 16. Startup/Apply reject formats 9–15 unchanged with
 an explicit migration error. The explicit migration composes historical 9–12
 retained-goal conversion and countdown conversion in one transaction; authentic
 13 converts directly. It captures the original threshold T before replacing any

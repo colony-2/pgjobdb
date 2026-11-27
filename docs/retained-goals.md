@@ -33,12 +33,13 @@ those gaps and unpublished preparations.
 
 ## Supported installations
 
-Fresh Apply creates format 15. Apply, ApplyWithReport and `runtime.NewSQLDB`
-reject authentic formats 9–14 unchanged until an explicit offline migration.
+Fresh Apply creates format 16. Apply, ApplyWithReport and `runtime.NewSQLDB`
+reject authentic formats 9–15 unchanged until an explicit offline migration.
 `Installer.MigrateWithReport` composes the retained-goal conversion for formats
-9–12, the countdown conversion for pre-14 sources, and the format-15 archive
-marker in one transaction. Format 14 adds the marker without modifying stored
-crash credit. Reapplication preserves identities.
+9–12, the countdown conversion for pre-14 sources, the format-15 archive
+marker, and the format-16 lease activity projection in one transaction. Format
+14 adds the archive marker without modifying stored crash credit. Format 15
+retains the existing archive marker and values. Reapplication preserves identities.
 See [resource waits and upgrade commands](resource-backoff.md). Verify requires the retained contract and rejects either
 removed table, any retired mutation overload, damaged protection and inconsistent
 mirrors. Formats 1–8, future formats, old `pgwf`, unmarked, corrupt and incomplete

@@ -66,14 +66,14 @@ func TestPostgresResourceBackoffMigrationFormat13(t *testing.T) {
 				require.NoError(t, err)
 				require.True(t, confirmation.Committed)
 				require.Equal(t, 13, confirmation.SourceFormat)
-				require.Equal(t, 15, confirmation.TargetFormat)
+				require.Equal(t, 16, confirmation.TargetFormat)
 				require.NoError(t, install.Verify(ctx))
 				var markerGuard string
 				require.NoError(t, db.QueryRowContext(ctx, `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='pgjobdb.installation'::regclass AND conname='installation_format_version_check'`).Scan(&markerGuard))
-				require.Equal(t, "CHECK ((format_version = 15))", markerGuard)
+				require.Equal(t, "CHECK ((format_version = 16))", markerGuard)
 				require.NoError(t, json.Unmarshal(staged.Bytes(), &report))
 				require.Equal(t, 2, report.ReportVersion)
-				require.Equal(t, []int{13, 14, 15}, report.PhasePath)
+				require.Equal(t, []int{13, 14, 15, 16}, report.PhasePath)
 				require.Empty(t, report.MigrationFailures)
 				for i, count := range counts {
 					var credit, lifetime int64

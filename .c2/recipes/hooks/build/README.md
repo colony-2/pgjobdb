@@ -66,6 +66,11 @@ recipe tasks to continue. Launch/setup errors fail the behavior, recording that
 dependent tests were not run. Evidence/report generation failures fail the hook;
 the standard shared caller handles operation failures and cancellation.
 
+The installer lane builds the standalone format-13 producer and authentic
+format-14/15 producers from the pinned published modules. The lease activity,
+archive preservation, concurrent initial-history, and append conformance checks
+are required with the current JobDB dependency; skips and failures reject the candidate.
+
 Embedded PostgreSQL uses the existing test helpers and pinned embedded-postgres
 v1.32.0 default PostgreSQL 17.5.0. Native Linux binaries are downloaded by that
 library using its checked checksum behavior. Startup failure is a failure, never a

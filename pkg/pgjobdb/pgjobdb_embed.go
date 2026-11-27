@@ -25,8 +25,18 @@ var TransactionSQL = strings.TrimSuffix(strings.TrimPrefix(baseSQL, "BEGIN;"), "
 
 var SQL string
 
+//go:embed historical_lease_definitions.sql
+var HistoricalLeaseSQL string
+
+// UpgradeSQL applies the target definitions without seeding or advancing the marker.
+var UpgradeSQL string
+
 func init() {
 	end := strings.LastIndex(TransactionSQL, "ALTER TABLE pgjobdb.installation DROP CONSTRAINT")
+	start := strings.Index(TransactionSQL, "CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+	clock := strings.Index(TransactionSQL, "CREATE OR REPLACE FUNCTION pgjobdb.scheduler_now()")
+	guard := strings.Index(TransactionSQL, "DO $$ BEGIN")
+	UpgradeSQL = "SET LOCAL search_path = pgjobdb, public;\n" + TransactionSQL[clock:guard] + TransactionSQL[start:end] + conversionSQL + "\n" + discoverySQL + "\n" + resourceSQL
 	finish := strings.TrimSuffix(strings.TrimSpace(TransactionSQL[end:]), "COMMIT;")
 	TransactionSQL = TransactionSQL[:end] + conversionSQL + "\n" + discoverySQL + "\n" + resourceSQL + "\n" + finish
 	SQL = `BEGIN;
@@ -35,5 +45,11 @@ func init() {
    RAISE EXCEPTION 'project installation exists; use the pgjobdb installer to preserve project guards';
   END IF;
  END $$;
+  DO $$ BEGIN
+   IF to_regclass('pgjobdb.installation') IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pgjobdb.jobs')
+        AND attname='last_lease_updated_at' AND NOT attisdropped
+   ) THEN RAISE EXCEPTION 'existing pgjobdb installation requires explicit verification or offline migration'; END IF;
+  END $$;
  ` + TransactionSQL + "\nCOMMIT;"
 }

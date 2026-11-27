@@ -9,20 +9,20 @@ CREATE OR REPLACE FUNCTION pgjobdb.scheduler_now() RETURNS TIMESTAMPTZ LANGUAGE 
 
 DO $$ BEGIN
  IF to_regclass('pgjobdb.installation') IS NOT NULL THEN
-  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') <> 15 THEN
-   RAISE EXCEPTION 'unsupported pgjobdb format; explicit offline migration to format 15 required';
+  IF (SELECT format_version FROM pgjobdb.installation WHERE name='pgjobdb') <> 16 THEN
+   RAISE EXCEPTION 'unsupported pgjobdb format; explicit offline migration to format 16 required';
   END IF;
  END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.installation (
     name TEXT PRIMARY KEY CHECK (name = 'pgjobdb'),
-    format_version INTEGER NOT NULL CHECK (format_version = 15),
+    format_version INTEGER NOT NULL CHECK (format_version = 16),
     installed_at TIMESTAMPTZ NOT NULL DEFAULT pgjobdb.scheduler_now()
 );
 
 INSERT INTO pgjobdb.installation (name, format_version)
-SELECT 'pgjobdb',15 WHERE NOT EXISTS(SELECT 1 FROM pgjobdb.installation WHERE name='pgjobdb');
+SELECT 'pgjobdb',16 WHERE NOT EXISTS(SELECT 1 FROM pgjobdb.installation WHERE name='pgjobdb');
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -184,6 +184,7 @@ ALTER TABLE pgjobdb.jobs ADD COLUMN IF NOT EXISTS resource_not_before_ns BIGINT;
 ALTER TABLE pgjobdb.jobs ADD COLUMN IF NOT EXISTS resource_not_before TIMESTAMPTZ;
 ALTER TABLE pgjobdb.jobs ADD COLUMN IF NOT EXISTS resource_deadline TIMESTAMPTZ;
 ALTER TABLE pgjobdb.jobs ADD COLUMN IF NOT EXISTS resource_resume JSON;
+ALTER TABLE pgjobdb.jobs ADD COLUMN IF NOT EXISTS last_lease_updated_at TIMESTAMPTZ;
 
 -- Rescheduled dependency waits may wake on completion OR a deadline. Keep
 -- ordinary submission availability and delay-only reschedules as not-before times.
@@ -268,6 +269,7 @@ ALTER TABLE pgjobdb.jobs_archive ADD COLUMN IF NOT EXISTS resource_not_before_ns
 ALTER TABLE pgjobdb.jobs_archive ADD COLUMN IF NOT EXISTS resource_not_before TIMESTAMPTZ;
 ALTER TABLE pgjobdb.jobs_archive ADD COLUMN IF NOT EXISTS resource_deadline TIMESTAMPTZ;
 ALTER TABLE pgjobdb.jobs_archive ADD COLUMN IF NOT EXISTS resource_resume JSON;
+ALTER TABLE pgjobdb.jobs_archive ADD COLUMN IF NOT EXISTS last_lease_updated_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS pgjobdb.jobs_trace (
     trace_id BIGINT PRIMARY KEY DEFAULT nextval('pgjobdb.jobs_trace_id_seq'),
@@ -372,19 +374,27 @@ WITH status_calc AS (
         j.lease_route_job_type,
         j.lease_work_kind,
         j.lease_task_type,
-        pgjobdb.job_status_at(j, pgjobdb.scheduler_now()) AS status
+        pgjobdb.job_status_at(j, pgjobdb.scheduler_now()) AS status,
+        j.last_lease_updated_at
     FROM pgjobdb.jobs j
 ),
 ready_calc AS (
     SELECT
-        sc.*,
+        sc.tenant_id, sc.job_id, sc.alternate_after_seconds, sc.alternate_at, sc.wait_for,
+        sc.payload, sc.metadata, sc.available_at, sc.expires_at, sc.lease_id, sc.lease_expires_at,
+        sc.lease_expiration_count, sc.consecutive_expirations, sc.created_at, sc.cancel_requested,
+        sc.cancel_requested_by, sc.cancel_requested_at, sc.route_job_type, sc.work_kind, sc.task_type,
+        sc.resume_job_type, sc.task_input_ordinal, sc.task_output_ordinal, sc.task_input_hash,
+        sc.alternate_job_type, sc.alternate_task_type, sc.lease_worker_id, sc.lease_route_job_type,
+        sc.lease_work_kind, sc.lease_task_type, sc.status,
         CASE
             WHEN sc.status = 'READY' THEN GREATEST(
                 sc.available_at,
                 COALESCE(NULLIF(sc.lease_expires_at, '-infinity'), sc.created_at),
                 CASE WHEN COALESCE(array_length(sc.wait_for, 1), 0) = 0 THEN sc.created_at ELSE '-infinity' END
             )
-        END AS ready_since
+        END AS ready_since,
+        sc.last_lease_updated_at
     FROM status_calc sc
 )
 SELECT rc.*
@@ -545,6 +555,7 @@ BEGIN
         created_at,
         expires_at,
         lease_id,
+        last_lease_updated_at,
         lease_expiration_count,
         consecutive_expirations,
         cancel_requested,
@@ -564,6 +575,7 @@ BEGIN
         p_locked_job.created_at,
         p_locked_job.expires_at,
         p_locked_job.lease_id,
+        p_locked_job.last_lease_updated_at,
         p_locked_job.lease_expiration_count,
         p_locked_job.consecutive_expirations,
         p_locked_job.cancel_requested,
@@ -907,7 +919,7 @@ BEGIN
     v_new := v_now + make_interval(secs => p_additional_seconds);
 
     UPDATE pgjobdb.jobs
-    SET lease_expires_at = v_new
+    SET lease_expires_at = v_new, last_lease_updated_at = v_now
     WHERE tenant_id = v_job.tenant_id
       AND job_id = v_job.job_id
       AND lease_id = v_job.lease_id RETURNING * INTO STRICT v_updated;
@@ -1050,6 +1062,7 @@ BEGIN
             created_at,
             expires_at,
             lease_id,
+            last_lease_updated_at,
             lease_expiration_count,
             consecutive_expirations,
             cancel_requested,
@@ -1069,6 +1082,7 @@ BEGIN
             j.created_at,
             j.expires_at,
             j.lease_id,
+            j.last_lease_updated_at,
             j.lease_expiration_count,
             j.consecutive_expirations,
             j.cancel_requested,
@@ -1884,6 +1898,8 @@ BEGIN
         ORDER BY j.available_at, j.created_at, j.tenant_id, j.job_id
         FOR UPDATE OF j SKIP LOCKED
         LIMIT 1
+    ), stamped AS MATERIALIZED (
+        SELECT c.*, pgjobdb.scheduler_now() AS lease_updated_at FROM candidate c
     ), leased AS (
         UPDATE pgjobdb.jobs j SET
             lease_id = gen_random_uuid()::TEXT,
@@ -1904,18 +1920,19 @@ BEGIN
             alternate_task_type = CASE WHEN NOT c.alternate_due THEN j.alternate_task_type END,
             alternate_after_seconds = CASE WHEN NOT c.alternate_due THEN j.alternate_after_seconds END,
             alternate_at = CASE WHEN NOT c.alternate_due THEN j.alternate_at END,
-            lease_expires_at = pgjobdb.scheduler_now() + make_interval(secs => p_lease_seconds),
+            lease_expires_at = c.lease_updated_at + make_interval(secs => p_lease_seconds),
+            last_lease_updated_at = c.lease_updated_at,
             lease_expiration_count = j.lease_expiration_count +
                 CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
             crash_budget_remaining = CASE WHEN j.lease_id IS NOT NULL AND left(j.lease_worker_id,13)<>'jobdb-append-' THEN greatest(j.crash_budget_remaining-1,0) ELSE j.crash_budget_remaining END
-        FROM candidate c
+        FROM stamped c
         WHERE j.tenant_id = c.tenant_id AND j.job_id = c.job_id
         RETURNING j AS updated, c.previous_id
     )
     SELECT l.updated, l.previous_id INTO v_result FROM leased l;
     IF NOT FOUND THEN RETURN; END IF;
     v_updated:=v_result.updated; v_previous:=v_result.previous_id;
-    PERFORM pgjobdb._record_lease_event(v_updated,v_updated.lease_expires_at - make_interval(secs => p_lease_seconds),
+    PERFORM pgjobdb._record_lease_event(v_updated,v_updated.last_lease_updated_at,
       CASE WHEN p_target_job_id IS NULL THEN 'poll' ELSE 'targeted' END,v_previous,NULL);
     RETURN QUERY
     SELECT l.tenant_id, l.job_id, l.lease_id, l.lease_expires_at,
@@ -2332,6 +2349,7 @@ BEGIN
         lease_route_job_type = v_job.resume_job_type,
         lease_work_kind = 'JOB', lease_task_type = NULL,
         lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
+        last_lease_updated_at = v_now,
         lease_expiration_count = j.lease_expiration_count +
             CASE WHEN j.lease_id IS NOT NULL THEN 1 ELSE 0 END,
         crash_budget_remaining = CASE WHEN j.lease_id IS NOT NULL AND left(j.lease_worker_id,13)<>'jobdb-append-' THEN greatest(j.crash_budget_remaining-1,0) ELSE j.crash_budget_remaining END,
@@ -2584,7 +2602,7 @@ BEGIN
                 final_route_job_type,final_work_kind,final_task_type,final_resume_job_type,
                 final_task_input_ordinal,final_task_output_ordinal,final_task_input_hash,
                 final_alternate_job_type,final_alternate_task_type,final_alternate_after_seconds,final_alternate_at,
-                final_wait_for,final_available_at,final_lease_expires_at,final_lease_worker_id,final_cancel_requested
+                final_wait_for,final_available_at,final_lease_expires_at,final_lease_worker_id,final_cancel_requested,last_lease_updated_at
             ) VALUES (
                 p_now,v_job.tenant_id,v_job.job_id,v_job.alternate_after_seconds,v_job.alternate_at,v_job.wait_for,
                 v_job.payload,v_job.metadata,v_job.created_at,v_job.expires_at,NULL,v_job.lease_expiration_count,0,
@@ -2592,7 +2610,7 @@ BEGIN
                 v_job.route_job_type,v_job.work_kind,v_job.task_type,v_job.resume_job_type,
                 v_job.task_input_ordinal,v_job.task_output_ordinal,v_job.task_input_hash,
                 v_job.alternate_job_type,v_job.alternate_task_type,v_job.alternate_after_seconds,v_job.alternate_at,
-                v_job.wait_for,v_job.available_at,'-infinity',NULL,TRUE
+                v_job.wait_for,v_job.available_at,'-infinity',NULL,TRUE,v_job.last_lease_updated_at
             );
             DELETE FROM pgjobdb.jobs WHERE tenant_id=p_tenant_id AND job_id=v_id;
             PERFORM pgjobdb._update_waiters_for_completion(p_tenant_id,v_id);
@@ -2626,6 +2644,7 @@ BEGIN
  t:=pgjobdb.scheduler_now();
  UPDATE pgjobdb.jobs j SET lease_id=p_lease,lease_worker_id=p_worker,
  lease_expires_at=t+make_interval(secs=>p_seconds),
+ last_lease_updated_at=t,
  lease_route_job_type=j.route_job_type,lease_work_kind=j.work_kind,lease_task_type=j.task_type,
  crash_budget_remaining=CASE WHEN j.lease_id IS NOT NULL AND left(j.lease_worker_id,13)<>'jobdb-append-' THEN greatest(j.crash_budget_remaining-1,0) ELSE j.crash_budget_remaining END
  WHERE j.tenant_id=p_tenant AND j.job_id=p_job AND NOT j.cancel_requested
@@ -2645,6 +2664,6 @@ RETURNS VOID LANGUAGE sql AS $$
 $$;
 
 ALTER TABLE pgjobdb.installation DROP CONSTRAINT IF EXISTS installation_format_version_check;
-UPDATE pgjobdb.installation SET format_version=15;
-ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK(format_version=15);
+UPDATE pgjobdb.installation SET format_version=16;
+ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK(format_version=16);
 COMMIT;

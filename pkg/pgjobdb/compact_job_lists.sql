@@ -31,6 +31,7 @@ WITH parameters AS NOT MATERIALIZED (SELECT
         f.app_metadata,f.schema_hash,f.parent_job_id,f.created_at,
         j.available_at,NULLIF(f.expires_at,'infinity'::timestamptz) AS expires_at,
         NULLIF(j.lease_expires_at,'-infinity'::timestamptz) AS lease_expires_at,
+        j.last_lease_updated_at,
         NULL::timestamptz AS archived_at,j.cancel_requested,
         NULL::text AS completion_status,NULL::text AS completion_detail,j.dependency_wait_id,f.hidden_at,
         route.effective_job_type,route.effective_task_type,j.crash_budget_remaining,j.resource_resume
@@ -49,6 +50,7 @@ WITH parameters AS NOT MATERIALIZED (SELECT
         f.app_metadata,f.schema_hash,f.parent_job_id,f.created_at,
         a.final_available_at,NULLIF(f.expires_at,'infinity'::timestamptz),
         NULLIF(a.final_lease_expires_at,'-infinity'::timestamptz),
+        a.last_lease_updated_at,
         a.archived_at,a.final_cancel_requested,a.completion_status,a.completion_detail,
         NULL::text,f.hidden_at,NULL::text,NULL::text,a.crash_budget_remaining,a.resource_resume
     FROM pgjobdb.jobs_archive a
@@ -116,6 +118,7 @@ SELECT jsonb_build_object(
     'available_at',to_char(n.available_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
     'expires_at',to_char(n.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
     'lease_expires_at',to_char(n.lease_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+    'last_lease_updated_at',to_char(n.last_lease_updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
     'archived_at',to_char(n.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
     'cancel_requested',n.cancel_requested,'completion_status',n.completion_status,
     'completion_detail',n.completion_detail,

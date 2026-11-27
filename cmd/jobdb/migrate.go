@@ -32,9 +32,9 @@ func (w syncedReport) Write(data []byte) (int, error) {
 func newMigrationCmd(migrate bool) *cobra.Command {
 	var dsn, reportPath string
 	var timeout time.Duration
-	name, description := "check-migrate", "Inspect an explicit database for offline migration to format 15"
+	name, description := "check-migrate", "Inspect an explicit database for offline migration to format 16"
 	if migrate {
-		name, description = "migrate", "Convert an explicit offline database to format 15 with a durable staged report"
+		name, description = "migrate", "Convert an explicit offline database to format 16 with a durable staged report"
 	}
 	cmd := &cobra.Command{Use: name, Short: description, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if strings.TrimSpace(dsn) == "" {

@@ -94,14 +94,32 @@ func TestSelectedIndependentHistoryBoundaries(t *testing.T) {
 			require.NoError(t, err)
 			retireNativeMember(t, ctx, db, "history-failure")
 		})
-		t.Run("incomplete story ordinary retry", func(t *testing.T) {
+		t.Run("initial upload rollback permits ordinary retry", func(t *testing.T) {
 			history.failUpload = true
-			_, err := runtime.SubmitJob(ctx, request("incomplete"))
-			require.ErrorContains(t, err, "injected upload interruption")
+			_, err := runtime.SubmitJob(ctx, request("upload-failure"))
 			history.failUpload = false
+			require.ErrorContains(t, err, "injected upload interruption")
+			assertNoSelectedScheduler(t, ctx, db, "upload-failure")
+			var storyExists bool
+			require.NoError(t, historyDB.QueryRowContext(ctx, `SELECT EXISTS (
+				SELECT 1 FROM public.jobdb_chapter_stories WHERE anthology_id='c2' AND story_id='upload-failure'
+			)`).Scan(&storyExists))
+			require.False(t, storyExists)
+			handle, err := makeRuntime().SubmitJob(ctx, request("upload-failure"))
+			require.NoError(t, err)
+			require.Equal(t, source.GoalID, handle.GoalID)
+			chapter, err := chapters.Get(ctx, runtimecore.ChapterLogKey{JobKey: handle.JobKey}, 0)
+			require.NoError(t, err)
+			require.Len(t, chapter.Artifacts, 1)
+			retireNativeMember(t, ctx, db, "upload-failure")
+		})
+		t.Run("incomplete story ordinary retry", func(t *testing.T) {
+			_, err := historyDB.ExecContext(ctx, `INSERT INTO public.jobdb_chapter_stories
+				(anthology_id, story_id, created_at_ns, updated_at_ns) VALUES ('c2', 'incomplete', 1, 1)`)
+			require.NoError(t, err)
 			assertNoSelectedScheduler(t, ctx, db, "incomplete")
 			_, err = makeRuntime().SubmitJob(ctx, request("incomplete"))
-			require.Error(t, err)
+			require.ErrorIs(t, err, jobdb.ErrChapterNotFound)
 			assertNoSelectedScheduler(t, ctx, db, "incomplete")
 		})
 		t.Run("publication rejection retains history", func(t *testing.T) {

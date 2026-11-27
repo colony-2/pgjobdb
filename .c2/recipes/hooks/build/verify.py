@@ -24,7 +24,8 @@ REQUIRED_PROJECTS = {'TestProjectFreshInstallationAndReopen', 'TestProjectCatalo
  'TestProjectDamagedGuardsAndResolution', 'TestProjectLargeNumericCatalogMetadata', 'TestProjectOpaqueCatalogStrings', 'TestProjectAdmissionProjectionIntegrity',
  'TestProjectInstallationConflictsAndExternalInventory', 'TestProjectWriterExclusionAndUnknownParticipants',
  'TestProjectConcurrentRetainedCreationAndDeletion', 'TestProjectCommittedSealSurvivesVacuum', 'TestProjectCommittedCatalogNewerThanWriter', 'TestProjectPartialAndFutureInstallations', 'TestProjectRefusesIncompleteSharedSchema', 'TestProjectRejectsUncommittedSeal',
- 'TestProjectSQLNoopAdmissionAndCopy', 'TestProjectSealSurvivesDownstreamFailureAndRelaxedCommit'}
+ 'TestProjectSQLNoopAdmissionAndCopy', 'TestProjectSealSurvivesDownstreamFailureAndRelaxedCommit',
+ 'TestProjectSchedulerClockDrift'}
 REQUIRED_PROJECT_RUNTIME = {'TestProjectIndependentSharedWriters', 'TestProjectNativeWriterAdmission',
  'TestProjectReadDoesNotSeal', 'TestProjectAdmissionBeforeSecretProvider', 'TestProjectHTTPAdministrationAndReceiptReplay', 'TestProjectHTTPLeaseRenewal', 'TestPostgresTaskAlternates', 'TestPostgresTaskAlternateDelayedReschedule'}
 REQUIRED_CONSUMER = {'TestConsumerConstructorCapabilities', 'TestConsumerHTTPRetiresAttachment',
@@ -36,21 +37,29 @@ REQUIRED_GOALS = {'TestRetainedGoalPublicConformance', 'TestRetainedGoalIndepend
                   'TestRetainedGoalHiddenAndCancellationAdmission', 'TestRetainedGoalFailureCurrentAuthority',
                   'TestRetainedGoalLostHTTPFailureResponse', 'TestRetainedGoalDiscoveryAndRetirement',
                   'TestRetainedGoalProtectedHistoryGuards', 'TestRetainedGoalConcurrentInitialHistory',
-                  'TestPostgresSelectedConcurrentRequests', 'TestPostgresInitialHistoryRollback'}
+                  'TestPostgresSelectedConcurrentRequests', 'TestPostgresInitialHistoryRollback',
+                  'TestLastLeaseUpdatedAtHTTP', 'TestAppendActivitySurvivesChapterWriteFailure',
+                  'TestStartOrAppendConformance'}
 REQUIRED_INSTALLER = {'TestGoalConversionHistoricalFormats', 'TestGoalConversionRollback',
                       'TestGoalConversionAuthoritativeReport', 'TestGoalConversionRejectsCorruption',
                       'TestGoalConversionLostCommitAcknowledgement', 'TestGoalConversionStartupReport',
                       'TestGoalConversionOriginTie', 'TestRetainedGoalVerifyContract', 'TestRetainedGoalRejectsDamagedMirror',
-                      'TestRetainedGoalProtectionDefinitions', 'TestGoalConversionRejectsAlteredProtections'}
+                      'TestRetainedGoalProtectionDefinitions', 'TestGoalConversionRejectsAlteredProtections',
+                      'TestLastLeaseUpdatedAtMutations', 'TestLastLeaseUpdatedAtRejectsUnsupported',
+                      'TestLastLeaseUpdatedAtUpgrade', 'TestLeaseDefinitionDriftRejected', 'TestStatusViewDriftRejected'}
 REQUIRED_ARCHIVE_RUNTIME = {'TestPostgresCellArchiveConformance', 'TestPostgresCellArchiveHTTP',
                             'TestPostgresCellArchiveVisibilityAndReopen'}
-REQUIRED_ARCHIVE_INSTALLER = {'TestPostgresCellArchiveMigration', 'TestPostgresCellArchiveMigrationRollback'}
+REQUIRED_ARCHIVE_INSTALLER = {'TestPostgresCellArchiveMigration', 'TestPostgresCellArchiveMigrationRollback', 'TestLastLeaseUpdatedAtFormat15'}
 ARCHIVE_LAYOUTS = ('plain', 'direct_project', 'migrated_project')
 ARCHIVE_HTTP_CASES = ('strong_preconditions', 'revision_race_and_noop', 'retirement',
                       'scoped_authorization', 'pagination_and_cursor_binding')
 REQUIRED_ARCHIVE_CHILDREN = {parent: ARCHIVE_LAYOUTS for parent in REQUIRED_ARCHIVE_INSTALLER}
 REQUIRED_ARCHIVE_CHILDREN['TestPostgresCellArchiveHTTP'] = tuple(
     family + '/' + case for family in ('tenants', 'projects') for case in ARCHIVE_HTTP_CASES)
+REQUIRED_LEASE_CHILDREN = {
+    'TestLeaseDefinitionDriftRejected': ('15/strict-renewal', '15/fixed-clock', '16/strict-renewal', '16/fixed-clock'),
+    'TestStatusViewDriftRejected': ('9', '13', '14', '15', '16'),
+}
 REQUIRED_RESOURCE = {'TestResourceBackoffConformance', 'TestResourceBackoffPostgresBoundaries', 'TestResourceBackoffHTTPPostgres', 'TestResourceBackoffPostgresProcessRestart', 'TestResourceBackoffInstalledProtections', 'TestResourceBackoffDefaultAssignments', 'TestResourceBackoffWorkflowPostgres'}
 REQUIRED_RESOURCE_CHILDREN = {'B13b_guarded_clear', 'B05_B10_atomic_validation', 'B06a_late_duplicate', 'B17_retained_after_cancel', 'B11a_zero_credit_deadline_job_target', 'B07_competing_transitions', 'B09_append_gate_B13a_parent_not_refilled', 'B04_tenant_job_and_attempt_isolation', 'B13a_B13c_ordinary_reset_and_renew', 'B07a_single_reclaim', 'B05a_transaction_rollback', 'B11a_zero_credit_deadline_job_poll', 'B08_reopen', 'B11_zero_credit_engine_timeout_external_true', 'B09b_deadline_keeps_resource_gate', 'B04_B04a_retained_sequences', 'B13_countdown_boundary', 'B11a_zero_credit_deadline_task_poll', 'B15a_S02_snapshot', 'B03f_policy_binding', 'B11_zero_credit_engine_timeout_external_false', 'B09_task_completion_gate', 'B11a_zero_credit_deadline_task_target', 'B09_B09b_independent_gate', 'B07_barrier', 'B11a_ordinary_completion_after_due', 'B07a_task_poll_target_completion_append_reclaim', 'B09a_ordinary_join_alternative', 'B06_exact_receipt'}
 REQUIRED_RESOURCE_INSTALLER = {'TestPostgresResourceBackoffMigrationFormat13', 'TestPostgresResourceBackoffMigrationRollback', 'TestPostgresResourceBackoffMigrationPreservesProjects', 'TestPostgresResourceBackoffMigrationDefaultSerialization', 'TestPostgresResourceBackoffMigrationRejectsInvalidCrashData'}
@@ -127,7 +136,7 @@ def validate_outcomes(events, chosen):
         missing_children = expected - set(outcomes)
         if missing_children:
             raise ValueError('missing required resource cases: ' + ', '.join(sorted(missing_children)))
-    required_regressions = {parent + '/' + child for parent, children in (REQUIRED_FORMAT14_REGRESSIONS | REQUIRED_ARCHIVE_CHILDREN).items()
+    required_regressions = {parent + '/' + child for parent, children in (REQUIRED_FORMAT14_REGRESSIONS | REQUIRED_ARCHIVE_CHILDREN | REQUIRED_LEASE_CHILDREN).items()
                             if parent in chosen for child in children}
     missing = (set(chosen) | required_regressions) - set(outcomes)
     if missing: raise ValueError('missing required test outcomes: ' + ', '.join(sorted(missing)))
@@ -304,12 +313,19 @@ def run(behavior):
                 result['tests'] = {}
                 result['test_exit_codes'] = {}
                 if behavior == 'installer':
-                    historical = scratch / 'format14-fixture'
-                    cmd = [sys.executable, str(root / 'pkg/pgjobdb/installer/testdata/build_format14_fixture.py'), str(historical)]
+                    for version in (14, 15):
+                        historical = scratch / f'format{version}-fixture'
+                        cmd = [sys.executable, str(root / 'pkg/pgjobdb/installer/testdata/build_format14_fixture.py'), str(historical), str(version)]
+                        result['commands'].append(cmd)
+                        if execute(cmd, log, cwd=root, env=buildenv) or not historical.is_file():
+                            raise RuntimeError(f'format-{version} fixture builder compilation prerequisite failed')
+                        testenv[f'PGJOBDB_TEST_FORMAT{version}_FIXTURE'] = str(historical)
+                    producer = scratch / 'format13'
+                    cmd = ['go', 'build', '-mod=readonly', '-o', str(producer), '.']
                     result['commands'].append(cmd)
-                    if execute(cmd, log, cwd=root, env=buildenv) or not historical.is_file():
-                        raise RuntimeError('format-14 fixture builder compilation prerequisite failed')
-                    testenv['PGJOBDB_TEST_FORMAT14_FIXTURE'] = str(historical)
+                    if execute(cmd, log, cwd=root / 'scripts/testdata/pgjobdb-format13', env=buildenv) or not producer.is_file():
+                        raise RuntimeError('format-13 fixture builder compilation prerequisite failed')
+                    testenv['PGJOBDB_TEST_FORMAT13'] = str(producer)
                 if behavior == 'runtime' and COMMAND in packages:
                     cli = scratch / 'pgjobdb-cli'
                     cmd = ['go', 'build', *goflags, '-o', str(cli), './cmd/jobdb']
@@ -405,7 +421,7 @@ def aggregate():
     identity = json.loads(subprocess.check_output(['go', 'mod', 'download', '-json', module + '@' + selected['Version']], cwd=root, env=env, timeout=120))
     jobdb = {'version': identity['Version'], 'revision': identity.get('Origin', {}).get('Hash'),
              'sum': identity['Sum'], 'gomodsum': identity['GoModSum']}
-    if selected.get('Replace') or jobdb['version'] != 'v0.0.99-0.20261126061858-c55cbf2da623' or jobdb['revision'] != 'c55cbf2da62318fecc7024ff2ba5cffd1a641ed0':
+    if selected.get('Replace') or jobdb['version'] != 'v0.0.99-0.20261126174656-857ac1ada983' or jobdb['revision'] != '857ac1ada983ed5ed3ab06ae01bb8b6d95b5c538':
         raise ValueError('unexpected JobDB module identity: ' + str(jobdb))
     metadata = {'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version,
                 'go': subprocess.check_output(['go', 'version'], text=True, timeout=30).strip(),

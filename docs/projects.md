@@ -41,12 +41,13 @@ fresh initializer or delete historical storage to make it appear empty.
 ## Adopt historical storage
 
 Back up first and keep every participant fenced through reconciliation and reopen.
-Convert supported scheduler formats 9–13 explicitly with
+Convert supported scheduler formats 9–15 explicitly with
 `installer.Installer.MigrateWithReport` or [`jobdb direct migrate`](resource-backoff.md),
-retaining the staged report and commit confirmation. If format 13 already has
+retaining the staged report and commit confirmation. If the source already has
 an installed catalog, migration preserves the catalog, admission projection and
 original installation receipt. It verifies the old guard contract before cutover
-and records the updated scheduler fingerprint in the same transaction. Skip
+and records a separate source-to-16 certificate in the same transaction, retaining
+any historical scheduler certification. Skip
 project adoption below for an already installed catalog.
 
 If all five shared tables are absent, explicitly prepare them:
@@ -97,7 +98,8 @@ The receipt also binds scheduler definitions. A later scheduler schema upgrade
 must explicitly preserve the catalog, creation receipts and seals, reconcile the
 guard bindings and certify the new definitions under the participant fence.
 Replaying scheduler SQL or copying a new structure digest into the receipt is
-not a supported upgrade operation. This version provides no format-14 upgrade.
+not a supported upgrade operation. Follow the [offline format 16 runbook](offline-format-16-upgrade.md);
+format-13–15 project installations keep the exact original receipt and receive a separate certificate.
 
 ## Compose trusted policy and independent writers
 

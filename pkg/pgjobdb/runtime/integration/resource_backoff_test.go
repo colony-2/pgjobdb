@@ -90,7 +90,7 @@ func resourceFixture(tb testing.TB, dsn string, observers ...func(*sql.DB)) runt
 	}
 	setTime := func(value time.Time) {
 		at = value.UTC()
-		_, err := db.ExecContext(ctx, `CREATE OR REPLACE FUNCTION pgjobdb.scheduler_now() RETURNS TIMESTAMPTZ LANGUAGE sql VOLATILE AS $$ SELECT '`+at.Format(time.RFC3339Nano)+`'::timestamptz; $$;`)
+		_, err := db.ExecContext(ctx, `CREATE OR REPLACE FUNCTION pg_catalog.clock_timestamp() RETURNS TIMESTAMPTZ LANGUAGE sql VOLATILE AS $$ SELECT '`+at.Format(time.RFC3339Nano)+`'::timestamptz; $$;`)
 		require.NoError(tb, err)
 	}
 	prepared := false
@@ -104,6 +104,9 @@ func resourceFixture(tb testing.TB, dsn string, observers ...func(*sql.DB)) runt
 			if !installed {
 				require.NoError(tb, projectfixture.Prepare(ctx, db))
 			}
+			_, err = db.ExecContext(ctx, `ALTER FUNCTION pg_catalog.clock_timestamp() RENAME TO resource_fixture_real_clock`)
+			require.NoError(tb, err)
+			setTime(at)
 			prepared = true
 		}
 		require.NoError(tb, projects.Verify(ctx, db))
@@ -117,7 +120,6 @@ func resourceFixture(tb testing.TB, dsn string, observers ...func(*sql.DB)) runt
 		scheduler = runtimeadapter.Scheduler{DB: db, Chapters: chapters, ResourceFault: fault, ResourceSample: func() float64 { mu.Lock(); defer mu.Unlock(); return sample }}
 		current, err = runtimecore.NewRuntime(runtimecore.Config{Projects: control, Scheduler: scheduler, Chapters: chapters, Schemas: schemas, Configurations: configs})
 		require.NoError(tb, err)
-		setTime(at)
 		for _, observe := range observers {
 			observe(db)
 		}

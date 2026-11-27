@@ -10,12 +10,12 @@ caller-owned `*sql.DB`; `OpenDSN(ctx, dsn, cfg)` owns the connection. Both
 require a `BlobStoreURI` for chapter artifacts. Call `Close` when finished.
 
 Prepare storage explicitly before opening a runtime. Constructors and server
-startup verify scheduler format 15 and project installation protocol 1; they never
+startup verify scheduler format 16 and project installation protocol 1; they never
 install, convert or seed projects. Every writer requires a real catalog project
 ID. See [PostgreSQL projects](docs/projects.md) for fresh installation, historical
 adoption, inventory/fencing obligations, administration and durable first-use
-admission. Supported scheduler formats 9–14 require explicit conversion; see
-[resource waits and upgrades](docs/resource-backoff.md).
+admission. Supported scheduler formats 9–15 require explicit conversion; see
+the [offline format 16 upgrade runbook](docs/offline-format-16-upgrade.md).
 
 The `github.com/colony-2/pgjobdb/pkg/pgjobdb` package exposes typed scheduler
 operations. Its `installer` subpackage installs and verifies the embedded
@@ -55,7 +55,7 @@ rename restrictions. The `create-root` command has been removed.
 
 ## JobDB consumer API
 
-The current dependency is JobDB `v0.0.99-0.20261126061858-c55cbf2da623`.
+The current dependency is JobDB `v0.0.99-0.20261126174656-857ac1ada983`.
 The PostgreSQL HTTP server uses the consumer API: candidate PUT is unregistered,
 and this executable no longer registers `goals add-candidate`. Choose primary goal
 membership at submission with an explicit destination job ID, or use a shared-goal
@@ -189,3 +189,5 @@ The JobDB dependency is pinned to a published compatible commit. Use `GOWORK=off
 verifying that release so a local workspace cannot substitute another checkout.
 
 Publish the JobDB core and base CLI version first, then this pgjobdb module.
+
+For existing PostgreSQL installations, see the [offline format 16 upgrade runbook](docs/offline-format-16-upgrade.md).

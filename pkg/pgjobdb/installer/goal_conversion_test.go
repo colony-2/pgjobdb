@@ -108,8 +108,8 @@ func stableHistoricalRows(t *testing.T, ctx context.Context, db *sql.DB) string 
 	var out string
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_build_object(
  'facts',(SELECT jsonb_agg(to_jsonb(f)-'goal_origin'-'goal_created_at'-'goal_closed_at'-'goal_success_job_id'-'historical_goal_success'-'record_kind'-'terminal_failure'-'append_key'-'append_gen' ORDER BY job_id) FROM pgjobdb.job_facts f WHERE job_type<>'jobdb.goal_failure'),
- 'active',(SELECT jsonb_agg(to_jsonb(j)-'crash_budget_remaining'-'resource_not_before_ns'-'resource_not_before'-'resource_deadline'-'resource_resume' ORDER BY job_id) FROM pgjobdb.jobs j),
- 'archive',(SELECT jsonb_agg(to_jsonb(a)-'crash_budget_remaining'-'resource_not_before_ns'-'resource_not_before'-'resource_deadline'-'resource_resume' ORDER BY job_id) FROM pgjobdb.jobs_archive a WHERE job_id IN (SELECT job_id FROM pgjobdb.job_facts WHERE job_type<>'jobdb.goal_failure')),
+ 'active',(SELECT jsonb_agg(to_jsonb(j)-'crash_budget_remaining'-'resource_not_before_ns'-'resource_not_before'-'resource_deadline'-'resource_resume'-'last_lease_updated_at' ORDER BY job_id) FROM pgjobdb.jobs j),
+ 'archive',(SELECT jsonb_agg(to_jsonb(a)-'crash_budget_remaining'-'resource_not_before_ns'-'resource_not_before'-'resource_deadline'-'resource_resume'-'last_lease_updated_at' ORDER BY job_id) FROM pgjobdb.jobs_archive a WHERE job_id IN (SELECT job_id FROM pgjobdb.job_facts WHERE job_type<>'jobdb.goal_failure')),
  'clients',(SELECT jsonb_agg(to_jsonb(s) ORDER BY job_id) FROM pgjobdb.job_client_state s WHERE job_id IN (SELECT job_id FROM pgjobdb.job_facts WHERE job_type<>'jobdb.goal_failure')),
  'preparations',(SELECT jsonb_agg(to_jsonb(p)-CASE WHEN to_jsonb(p)->'selected_goal_id' IS NULL OR to_jsonb(p)->'selected_goal_id'='null'::jsonb THEN 'selected_goal_id' ELSE '' END-CASE WHEN to_jsonb(p)->'receipt' IS NULL OR to_jsonb(p)->'receipt'='null'::jsonb THEN 'receipt' ELSE '' END ORDER BY job_id) FROM pgjobdb.job_preparations p),
  'waits',(SELECT jsonb_agg(to_jsonb(w) ORDER BY wait_id) FROM pgjobdb.dependency_waits w),

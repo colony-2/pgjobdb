@@ -424,6 +424,25 @@ func TestProjectAdmissionProjectionIntegrity(t *testing.T) {
 	must(t, err)
 }
 
+func TestProjectSchedulerClockDrift(t *testing.T) {
+	ctx, db, _ := initialized(t)
+	must(t, projects.Verify(ctx, db))
+	control := projects.NewControl(db, nil)
+	_, err := control.ListProjects(ctx, jobdb.ListProjectsRequest{})
+	must(t, err)
+	_, err = db.ExecContext(ctx, `CREATE OR REPLACE FUNCTION pgjobdb.scheduler_now() RETURNS timestamptz LANGUAGE sql VOLATILE AS $$ SELECT '2026-01-01T00:00:00Z'::timestamptz; $$`)
+	must(t, err)
+	if err := projects.Verify(ctx, db); err == nil || !strings.Contains(err.Error(), "altered scheduler clock") {
+		t.Errorf("verify: want scheduler clock rejection, got %v", err)
+	}
+	if _, err := control.ListProjects(ctx, jobdb.ListProjectsRequest{}); !errors.Is(err, jobdb.ErrProjectUnavailable) {
+		t.Errorf("catalog read: want unavailable project catalog, got %v", err)
+	}
+	if _, err := control.CreateProject(ctx, jobdb.CreateProjectRequest{Name: "clock-drift", RequestID: "clock-drift"}); !errors.Is(err, jobdb.ErrProjectUnavailable) {
+		t.Errorf("catalog write: want unavailable project catalog, got %v", err)
+	}
+}
+
 func TestProjectInstallationConflictsAndExternalInventory(t *testing.T) {
 	ctx, db, _ := database(t)
 	must(t, (installer.Installer{DB: db}).Apply(ctx))

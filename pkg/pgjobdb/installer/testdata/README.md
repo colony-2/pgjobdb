@@ -15,7 +15,7 @@ before selected-goal submission adds explicit selection and retained receipts.
 `pkg/pgjobdb/pgjobdb.sql`. `TestSubmissionFormat12Upgrade` creates valid work
 with those definitions, reproduces the historical non-UTC read failure, applies
 and reapplies the current SQL, then reads and acquires that work through a new
-connection. Explicit migration composes the retained-goal phase and advances it to format 15.
+connection. Explicit migration composes the retained-goal phase and advances it to format 16.
 
 
 `format11.sql` is the unchanged scheduler SQL from
@@ -54,4 +54,18 @@ as a non-root user (or run the compiled Go test binary unprivileged):
 tmp=$(mktemp -d)
 GOWORK=off python3 pkg/pgjobdb/installer/testdata/build_format14_fixture.py "$tmp/fixture"
 PGJOBDB_TEST_FORMAT14_FIXTURE="$tmp/fixture" GOWORK=off go test ./pkg/pgjobdb/installer -run '^TestPostgresCellArchiveMigration' -count=1
+```
+
+The status-view contract in `protections.go` hashes PostgreSQL's complete view
+definition, including its projection and predicate. Formats 9–13 share the
+historical definition; 14–15 share the countdown definition. Format 16 adds
+the lease timestamp. The digests come from the frozen schemas, the authentic
+14/15 fixture producers and a fresh format-16 installation. To reproduce a
+digest on its intact fixture, run:
+
+```sql
+BEGIN READ ONLY;
+SET LOCAL search_path TO pg_catalog;
+SELECT encode(sha256(convert_to(pg_get_viewdef('pgjobdb.jobs_with_status'::regclass,false),'UTF8')),'hex');
+ROLLBACK;
 ```

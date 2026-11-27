@@ -255,7 +255,7 @@ class SelectionTests(NativeRunnerSimulation):
         self.assertEqual(set(free) | set(runtime), set(names))
         self.assertFalse(set(free) & set(runtime))
         names = ['TestPostgresRuntimeConformance', 'TestWorkflowRuntimeConformance',
-                 'TestStartOrAppendConformance', 'TestOther'] + sorted(verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME | verify.REQUIRED_RESOURCE | verify.REQUIRED_ARCHIVE_RUNTIME)
+                 'TestOther'] + sorted(verify.REQUIRED_CONSUMER | verify.REQUIRED_GOALS | verify.REQUIRED_PROJECT_RUNTIME | verify.REQUIRED_RESOURCE | verify.REQUIRED_ARCHIVE_RUNTIME)
         conf = verify.select_tests(verify.INTEGRATION, names, 'conformance')
         runtime = verify.select_tests(verify.INTEGRATION, names, 'runtime')
         self.assertEqual(set(conf) | set(runtime), set(names))
@@ -357,8 +357,8 @@ class SelectionTests(NativeRunnerSimulation):
                                           {'Test':name, 'Action':'skip'}],
                                          [name.split('/')[0]])
 
-    def test_required_archive_layout_and_http_cases(self):
-        for parent, children in verify.REQUIRED_ARCHIVE_CHILDREN.items():
+    def test_required_archive_and_lease_cases(self):
+        for parent, children in (verify.REQUIRED_ARCHIVE_CHILDREN | verify.REQUIRED_LEASE_CHILDREN).items():
             events = [{'Test': name, 'Action': 'pass'} for name in (parent, *(parent + '/' + child for child in children))]
             self.assertEqual(len(verify.validate_outcomes(events, [parent])), len(events))
             for index in range(1, len(events)):
@@ -367,6 +367,18 @@ class SelectionTests(NativeRunnerSimulation):
                 for action in ('fail', 'skip'):
                     with self.assertRaisesRegex(ValueError, 'did not pass'):
                         verify.validate_outcomes(events[:index] + [dict(events[index], Action=action)] + events[index+1:], [parent])
+
+    def test_required_lease_drift_tests_cannot_be_omitted(self):
+        installer = verify.PREFIX + 'pkg/pgjobdb/installer'
+        for package, required, test in (
+            (installer, verify.REQUIRED_INSTALLER | verify.REQUIRED_RESOURCE_INSTALLER | verify.REQUIRED_ARCHIVE_INSTALLER,
+             'TestLeaseDefinitionDriftRejected'),
+            (installer, verify.REQUIRED_INSTALLER | verify.REQUIRED_RESOURCE_INSTALLER | verify.REQUIRED_ARCHIVE_INSTALLER,
+             'TestStatusViewDriftRejected'),
+            (verify.PROJECTS, verify.REQUIRED_PROJECTS, 'TestProjectSchedulerClockDrift'),
+        ):
+            with self.subTest(test=test), self.assertRaisesRegex(ValueError, 'missing required'):
+                verify.select_tests(package, sorted(required - {test}), 'installer')
 
     def test_batches_keep_early_and_late_failures_and_complete_selection(self):
         for bad_batch in (None, 0, 1):

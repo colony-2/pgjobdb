@@ -9,17 +9,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	pgsql "github.com/colony-2/pgjobdb/pkg/pgjobdb"
 	"github.com/colony-2/pgjobdb/pkg/pgjobdb/internal/projectstorage"
-	"github.com/lib/pq"
 )
 
 const (
 	crashBudgetFormat = 14
-	FormatVersion     = 15
+	cellArchiveFormat = 15
+	FormatVersion     = 16
 )
 
 // Frozen original format-13 program, also used by authentic migration fixtures.
@@ -128,6 +127,11 @@ func (i Installer) apply(ctx context.Context, destination io.Writer, migrate boo
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('pgjobdb.installation',0))`); err != nil {
 		return CommitConfirmation{}, err
 	}
+	if migrate {
+		if err = fenceInstallation(ctx, tx); err != nil {
+			return CommitConfirmation{}, err
+		}
+	}
 	version, err := inspectInstallation(ctx, tx)
 	if err != nil {
 		return CommitConfirmation{}, err
@@ -139,71 +143,15 @@ func (i Installer) apply(ctx context.Context, destination io.Writer, migrate boo
 		if err = validateInput(ctx, tx, version); err != nil {
 			return CommitConfirmation{}, err
 		}
-		tenants, err := inputTenants(ctx, tx)
-		if err != nil {
-			return CommitConfirmation{}, err
-		}
-		for _, tenant := range tenants {
-			if _, err = tx.ExecContext(ctx, `SELECT pgjobdb._goal_lock($1)`, tenant); err != nil {
-				return CommitConfirmation{}, err
-			}
-		}
-		rows, err := tx.QueryContext(ctx, `SELECT tablename FROM pg_tables WHERE schemaname='pgjobdb' ORDER BY tablename COLLATE "C"`)
-		if err != nil {
-			return CommitConfirmation{}, err
-		}
-		var tables []string
-		for rows.Next() {
-			var name string
-			if err = rows.Scan(&name); err != nil {
-				rows.Close()
-				return CommitConfirmation{}, err
-			}
-			tables = append(tables, "pgjobdb."+pq.QuoteIdentifier(name))
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return CommitConfirmation{}, err
-		}
-		// NOWAIT prevents deadlock with a new-tenant writer holding a table/row lock
-		// while awaiting a tenant lock. Failure is a clean transactional rejection.
-		if _, err = tx.ExecContext(ctx, "LOCK TABLE "+strings.Join(tables, ",")+" IN ACCESS EXCLUSIVE MODE NOWAIT"); err != nil {
-			return CommitConfirmation{}, fmt.Errorf("pgjobdb: exclude conversion writers: %w", err)
-		}
-		current, err := inspectInstallation(ctx, tx)
-		if err != nil {
-			return CommitConfirmation{}, err
-		}
-		covered, err := inputTenants(ctx, tx)
-		if err != nil {
-			return CommitConfirmation{}, err
-		}
-		if current != version || !slices.Equal(tenants, covered) {
-			return CommitConfirmation{}, fmt.Errorf("pgjobdb: installation inputs changed before writer exclusion; retry from current inputs")
-		}
-		if err = validateInput(ctx, tx, version); err != nil {
-			return CommitConfirmation{}, err
-		}
 	}
 	projectsInstalled, err := inspectProjects(ctx, tx)
 	if err != nil {
 		return CommitConfirmation{}, err
 	}
+	var projectSource projectstorage.UpgradeSource
 	if projectsInstalled && version < FormatVersion {
-		if version < 13 {
-			return CommitConfirmation{}, fmt.Errorf("pgjobdb: project catalog requires source format 13 or later")
-		}
-		participants := []string{"public.jobdb_project_catalog"}
-		for _, table := range projectstorage.TableNames() {
-			if strings.HasPrefix(table, "public.") {
-				participants = append(participants, table)
-			}
-		}
-		if _, err = tx.ExecContext(ctx, "LOCK TABLE "+strings.Join(participants, ",")+" IN ACCESS EXCLUSIVE MODE NOWAIT"); err != nil {
-			return CommitConfirmation{}, fmt.Errorf("pgjobdb: exclude project participant writers: %w", err)
-		}
-		if err = projectstorage.Verify(ctx, tx); err != nil {
+		projectSource, err = projectstorage.VerifyUpgradeSource(ctx, tx)
+		if err != nil {
 			return CommitConfirmation{}, err
 		}
 	}
@@ -224,54 +172,52 @@ func (i Installer) apply(ctx context.Context, destination io.Writer, migrate boo
 			return CommitConfirmation{}, err
 		}
 	}
-	if version > 0 && version < crashBudgetFormat {
-		// The shared schema program accepts only fresh or current stores. The
-		// marker is not visible outside this writer-excluded transaction.
+	if version == 0 {
+		if err = executeProgram(ctx, tx, pgsql.TransactionSQL); err != nil {
+			return CommitConfirmation{}, fmt.Errorf("pgjobdb: fresh installation: %w", err)
+		}
+	} else if version < FormatVersion {
+		if version < crashBudgetFormat {
+			if err = upgradeCrashBudget(ctx, tx, projectsInstalled, report.OriginalCrashDefault); err != nil {
+				return CommitConfirmation{}, err
+			}
+		}
+		if version < cellArchiveFormat {
+			if _, err = tx.ExecContext(ctx, `ALTER TABLE pgjobdb.cells ADD COLUMN archived_at_ns BIGINT`); err != nil {
+				return CommitConfirmation{}, fmt.Errorf("pgjobdb: add cell archive marker: %w", err)
+			}
+			if err = validateInput(ctx, tx, cellArchiveFormat); err != nil {
+				return CommitConfirmation{}, fmt.Errorf("pgjobdb: validate cell archive stage: %w", err)
+			}
+		}
+		if err = upgradeLeaseActivity(ctx, tx, projectsInstalled); err != nil {
+			return CommitConfirmation{}, err
+		}
+		if err = validateInput(ctx, tx, FormatVersion); err != nil {
+			return CommitConfirmation{}, fmt.Errorf("pgjobdb: validate target definitions: %w", err)
+		}
+		if projectsInstalled {
+			if err = projectstorage.VerifyTargetGuards(ctx, tx); err != nil {
+				return CommitConfirmation{}, err
+			}
+		}
 		if err = setCurrentFormat(ctx, tx); err != nil {
 			return CommitConfirmation{}, err
 		}
-	}
-	if version < crashBudgetFormat || (version == FormatVersion && !projectsInstalled) {
-		var searchPath string
-		if err = tx.QueryRowContext(ctx, `SHOW search_path`).Scan(&searchPath); err != nil {
-			return CommitConfirmation{}, err
-		}
-		if _, err = tx.ExecContext(ctx, pgsql.TransactionSQL); err != nil {
-			return CommitConfirmation{}, fmt.Errorf("pgjobdb: transactional conversion: %w", err)
-		}
-		if _, err = tx.ExecContext(ctx, `SELECT set_config('search_path',$1,true)`, searchPath); err != nil {
-			return CommitConfirmation{}, err
-		}
-	}
-	if version > 0 && version < crashBudgetFormat {
-		for _, query := range []string{`UPDATE pgjobdb.resource_configuration SET crash_allowance=$1 WHERE singleton`,
-			`UPDATE pgjobdb.jobs SET crash_budget_remaining=greatest($1-consecutive_expirations,0)`,
-			`UPDATE pgjobdb.jobs_archive a SET crash_budget_remaining=CASE WHEN f.record_kind='EXECUTION' THEN greatest($1-a.consecutive_expirations,0) ELSE 0 END FROM pgjobdb.job_facts f WHERE f.tenant_id=a.tenant_id AND f.job_id=a.job_id`} {
-			if _, err = tx.ExecContext(ctx, query, report.OriginalCrashDefault); err != nil {
+		if projectsInstalled {
+			if err = projectSource.Certify(ctx, tx); err != nil {
 				return CommitConfirmation{}, err
 			}
 		}
 	}
-	if version == crashBudgetFormat {
-		if _, err = tx.ExecContext(ctx, `ALTER TABLE pgjobdb.cells ADD COLUMN archived_at_ns BIGINT`); err != nil {
-			return CommitConfirmation{}, fmt.Errorf("pgjobdb: add cell archive marker: %w", err)
-		}
-		if err = setCurrentFormat(ctx, tx); err != nil {
-			return CommitConfirmation{}, err
-		}
-	}
-	if projectsInstalled && version < crashBudgetFormat {
-		if err = projectstorage.InstallGuards(ctx, tx, []string{"pgjobdb.resource_receipts", "pgjobdb.resource_sequences"}); err != nil {
-			return CommitConfirmation{}, err
-		}
-	}
-	if projectsInstalled && version < FormatVersion {
-		if err = refreshProjectStructure(ctx, tx); err != nil {
-			return CommitConfirmation{}, err
-		}
+	if current, err := inspectInstallation(ctx, tx); err != nil || current != FormatVersion {
+		return CommitConfirmation{}, fmt.Errorf("pgjobdb: invalid staged format %d: %v", current, err)
 	}
 	if err = validateInput(ctx, tx, FormatVersion); err != nil {
-		return CommitConfirmation{}, fmt.Errorf("pgjobdb: validate converted contract: %w", err)
+		return CommitConfirmation{}, fmt.Errorf("pgjobdb: validate staged contract: %w", err)
+	}
+	if _, err = inspectProjects(ctx, tx); err != nil {
+		return CommitConfirmation{}, err
 	}
 	if version > 0 && version < 13 {
 		report.MigrationFailures, err = reportRows(ctx, tx, `SELECT jsonb_build_object('tenantId',tenant_id,'goalId',goal_id,'jobId',job_id,'failure',terminal_failure) FROM pgjobdb.job_facts WHERE record_kind='MIGRATED_GOAL_FAILURE' ORDER BY tenant_id COLLATE "C",goal_id COLLATE "C"`)
@@ -348,23 +294,6 @@ func inspectInstallation(ctx context.Context, tx *sql.Tx) (int, error) {
 	return version, nil
 }
 
-func inputTenants(ctx context.Context, tx *sql.Tx) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT tenant_id FROM (SELECT tenant_id FROM pgjobdb.cells UNION SELECT tenant_id FROM pgjobdb.job_facts UNION SELECT tenant_id FROM pgjobdb.job_preparations) t ORDER BY tenant_id COLLATE "C"`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []string{}
-	for rows.Next() {
-		var tenant string
-		if err = rows.Scan(&tenant); err != nil {
-			return nil, err
-		}
-		out = append(out, tenant)
-	}
-	return out, rows.Err()
-}
-
 // Validate before DDL as well as after writer exclusion. Never repair incomplete
 // or version-marker-only inputs by silently creating their missing stores.
 func validateInput(ctx context.Context, tx *sql.Tx, version int) error {
@@ -431,7 +360,7 @@ func validateInput(ctx context.Context, tx *sql.Tx, version int) error {
 		if !defaultValid {
 			return fmt.Errorf("pgjobdb: invalid installed crash default")
 		}
-		if err := pgsql.VerifyResourceBackoff(ctx, tx); err != nil {
+		if err := pgsql.VerifyResourceBackoffDefinitions(ctx, tx, version < FormatVersion); err != nil {
 			return err
 		}
 	}
@@ -447,16 +376,16 @@ func validateInput(ctx context.Context, tx *sql.Tx, version int) error {
 	if version >= 13 {
 		columns["job_facts"] = append(columns["job_facts"], "goal_origin", "goal_created_at", "goal_closed_at", "goal_success_job_id", "historical_goal_success", "record_kind", "terminal_failure")
 	}
-	if version >= FormatVersion {
-		var valid bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns
- WHERE table_schema='pgjobdb' AND table_name='cells' AND column_name='archived_at_ns'
- AND data_type='bigint' AND is_nullable='YES' AND column_default IS NULL)`).Scan(&valid); err != nil {
-			return err
-		}
-		if !valid {
-			return fmt.Errorf("pgjobdb: invalid cell archive marker in format %d", version)
-		}
+	var archiveColumn, validArchiveColumn bool
+	if err := tx.QueryRowContext(ctx, `SELECT count(*)=1, count(*) FILTER (WHERE atttypid='bigint'::regtype AND NOT attnotnull AND NOT atthasdef AND attidentity='' AND attgenerated='')=1
+ FROM pg_attribute WHERE attrelid='pgjobdb.cells'::regclass AND attname='archived_at_ns' AND NOT attisdropped`).Scan(&archiveColumn, &validArchiveColumn); err != nil {
+		return err
+	}
+	if version < cellArchiveFormat && archiveColumn || version >= cellArchiveFormat && !validArchiveColumn {
+		return fmt.Errorf("pgjobdb: invalid cell archive marker in format %d", version)
+	}
+	if err := validateLeaseActivity(ctx, tx, version); err != nil {
+		return err
 	}
 	for table, names := range columns {
 		for _, column := range names {
@@ -536,6 +465,9 @@ func captureReport(ctx context.Context, tx *sql.Tx, version int) (ConversionRepo
 	if version > 0 && version < crashBudgetFormat {
 		r.PhasePath = append(r.PhasePath, crashBudgetFormat)
 	}
+	if version > 0 && version < cellArchiveFormat {
+		r.PhasePath = append(r.PhasePath, cellArchiveFormat)
+	}
 	if version != FormatVersion {
 		r.PhasePath = append(r.PhasePath, FormatVersion)
 	}
@@ -598,7 +530,7 @@ func captureReport(ctx context.Context, tx *sql.Tx, version int) (ConversionRepo
 
 func inspectProjects(ctx context.Context, tx *sql.Tx) (bool, error) {
 	var exists bool
-	err := tx.QueryRowContext(ctx, `SELECT to_regclass('public.jobdb_project_catalog') IS NOT NULL OR to_regclass('pgjobdb.project_installation') IS NOT NULL OR EXISTS(SELECT 1 FROM pg_proc WHERE pronamespace=to_regnamespace('pgjobdb') AND proname IN ('_project_write_check','_project_row_guard','_project_no_truncate')) OR EXISTS(SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE t.tgname IN ('project_admission_row','project_admission_truncate') AND (n.nspname='pgjobdb' OR n.nspname='public' AND c.relname LIKE 'jobdb_%'))`).Scan(&exists)
+	err := tx.QueryRowContext(ctx, `SELECT to_regclass('public.jobdb_project_catalog') IS NOT NULL OR to_regclass('pgjobdb.project_installation') IS NOT NULL OR to_regclass('pgjobdb.project_scheduler_upgrade') IS NOT NULL OR EXISTS(SELECT 1 FROM pg_proc WHERE pronamespace=to_regnamespace('pgjobdb') AND proname IN ('_project_write_check','_project_row_guard','_project_no_truncate')) OR EXISTS(SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE t.tgname IN ('project_admission_row','project_admission_truncate') AND (n.nspname='pgjobdb' OR n.nspname='public' AND c.relname LIKE 'jobdb_%'))`).Scan(&exists)
 	if err != nil || !exists {
 		return exists, err
 	}
@@ -610,28 +542,4 @@ func setCurrentFormat(ctx context.Context, tx *sql.Tx) error {
 UPDATE pgjobdb.installation SET format_version=%[1]d;
 ALTER TABLE pgjobdb.installation ADD CONSTRAINT installation_format_version_check CHECK(format_version=%[1]d)`, FormatVersion))
 	return err
-}
-
-func refreshProjectStructure(ctx context.Context, tx *sql.Tx) error {
-	// Keep the original installation receipt replayable byte for byte. The
-	// scheduler cutover certifies the new structure on a separate column.
-	var hasCertification bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='pgjobdb'
- AND table_name='project_installation' AND column_name='scheduler_structure')`).Scan(&hasCertification); err != nil {
-		return err
-	}
-	if !hasCertification {
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE pgjobdb.project_installation ADD COLUMN scheduler_structure TEXT NOT NULL DEFAULT '';
- ALTER TABLE pgjobdb.project_installation ALTER COLUMN scheduler_structure DROP DEFAULT`); err != nil {
-			return err
-		}
-	}
-	digest, err := projectstorage.Structure(ctx, tx)
-	if err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE pgjobdb.project_installation SET scheduler_structure=$1 WHERE singleton=1`, digest); err != nil {
-		return err
-	}
-	return projectstorage.Verify(ctx, tx)
 }

@@ -31,10 +31,15 @@ type ResourceBackoffOptions struct {
 // Go interface presence. A damaged default rejects assignments separately so
 // exact receipts remain recoverable without reading mutable configuration.
 func VerifyResourceBackoff(ctx context.Context, db DB) error {
+	return VerifyResourceBackoffDefinitions(ctx, db, false)
+}
+
+// VerifyResourceBackoffDefinitions also supports the unmodified historical
+// function bodies during offline verification of a format-14 or -15 source.
+func VerifyResourceBackoffDefinitions(ctx context.Context, db DB, historical bool) error {
 	var valid bool
 	err := db.QueryRowContext(ctx, resourceProtectionCatalog+` SELECT
- (SELECT format_version IN (14,15) FROM pgjobdb.installation WHERE name='pgjobdb')
- AND to_regclass('pgjobdb.resource_sequences') IS NOT NULL
+ to_regclass('pgjobdb.resource_sequences') IS NOT NULL
  AND to_regclass('pgjobdb.resource_receipts') IS NOT NULL
  AND to_regclass('pgjobdb.resource_configuration') IS NOT NULL
  AND (SELECT count(*)=10 FROM information_schema.columns WHERE table_schema='pgjobdb' AND table_name IN ('jobs','jobs_archive') AND column_name IN ('crash_budget_remaining','resource_not_before_ns','resource_not_before','resource_deadline','resource_resume'))
@@ -68,7 +73,7 @@ func VerifyResourceBackoff(ctx context.Context, db DB) error {
 	if err != nil || !valid {
 		return &jobdb.ResourceBackoffUnsupportedError{Feature: "installed PostgreSQL crash-budget resource contract"}
 	}
-	if err := verifyResourceFunctions(ctx, db); err != nil {
+	if err := verifyResourceFunctions(ctx, db, historical); err != nil {
 		return err
 	}
 	return nil
@@ -76,7 +81,7 @@ func VerifyResourceBackoff(ctx context.Context, db DB) error {
 
 // Compare the installed bodies and execution attributes to the embedded SQL,
 // including every admission route. Presence alone cannot establish durability.
-func verifyResourceFunctions(ctx context.Context, db DB) error {
+func verifyResourceFunctions(ctx context.Context, db DB, historical bool) error {
 	var guarded bool
 	if err := db.QueryRowContext(ctx, `SELECT to_regclass('pgjobdb.project_installation') IS NOT NULL`).Scan(&guarded); err != nil {
 		return err
@@ -84,7 +89,11 @@ func verifyResourceFunctions(ctx context.Context, db DB) error {
 	names := []string{"job_status_at", "effective_native_route", "get_native_work", "validate_native_lease", "claim_native_task", "claim_append", "reschedule_native_job", "clear_crash_concern", "crash_concern_threshold", "set_crash_concern_threshold", "_archive_resource_state"}
 	expected := map[string][]string{}
 	pattern := regexp.MustCompile(`(?s)CREATE OR REPLACE FUNCTION pgjobdb\.([a-z_]+)\([^$]*?AS \$\$(.*?)\$\$;`)
-	for _, match := range pattern.FindAllStringSubmatch(baseSQL+"\n"+resourceSQL, -1) {
+	program := baseSQL + "\n" + resourceSQL
+	if historical {
+		program += "\n" + HistoricalLeaseSQL
+	}
+	for _, match := range pattern.FindAllStringSubmatch(program, -1) {
 		if slices.Contains(names, match[1]) {
 			expected[match[1]] = match
 		}

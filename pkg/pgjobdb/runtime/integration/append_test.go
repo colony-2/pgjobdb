@@ -164,3 +164,34 @@ func TestAppendInputAndReplay(t *testing.T) {
 		}
 	})
 }
+
+func TestAppendActivitySurvivesChapterWriteFailure(t *testing.T) {
+	runDatabaseTest(t, func(ctx context.Context, db *sql.DB) {
+		runtime, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
+		require.NoError(t, err)
+		defer runtime.Close(ctx)
+		_, err = runtime.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: "c2", Name: "test", Repo: "example.test/test"})
+		require.NoError(t, err)
+		request := jobdb.StartOrAppendJobRequest{Job: jobdb.StartOrAppendJob{
+			AppendKey: "activity", Job: jobdb.SubmitJob{TenantId: "c2", Cell: "test", JobType: "batch", Data: jobdb.NewTaskDataOrPanic(1)}, Append: json.RawMessage(`1`),
+		}}
+		handle, err := runtime.StartOrAppendJob(ctx, request)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `CREATE FUNCTION public.test_reject_chapter() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected append chapter write failure'; END $$;
+CREATE TRIGGER test_reject_chapter BEFORE INSERT ON public.jobdb_chapter_chapters FOR EACH ROW EXECUTE FUNCTION public.test_reject_chapter()`)
+		require.NoError(t, err)
+		request.Job.Append = json.RawMessage(`2`)
+		_, err = runtime.StartOrAppendJob(ctx, request)
+		require.ErrorContains(t, err, "injected append chapter write failure")
+		// The claim committed independently of the failed chapter write. The first
+		// list after append's release must already see that time and no deadline.
+		page, err := runtime.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"c2"}, JobKeys: []jobdb.JobKey{handle.JobKey}})
+		require.NoError(t, err)
+		require.Len(t, page.Jobs, 1)
+		var acquired time.Time
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT occurred_at FROM pgjobdb.lease_events WHERE tenant_id='c2' AND job_id=$1 AND acquisition_source='append' ORDER BY event_id DESC LIMIT 1`, handle.JobKey.JobId).Scan(&acquired))
+		require.NotNil(t, page.Jobs[0].LastLeaseUpdatedAt)
+		require.Equal(t, acquired.UTC(), *page.Jobs[0].LastLeaseUpdatedAt)
+		require.Nil(t, page.Jobs[0].LeaseExpiresAt)
+	})
+}

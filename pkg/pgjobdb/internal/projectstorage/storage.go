@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/projectcatalog"
@@ -53,6 +54,7 @@ func admissionProjection(s *projectcatalog.State, payload []byte) ([]byte, error
 
 // Receipt is the immutable completion record, not a second project registry.
 type Receipt struct {
+	SchedulerFormat int                   `json:"schedulerFormat,omitempty"`
 	Protocol        int                   `json:"protocol"`
 	Inventory       json.RawMessage       `json:"inventory"`
 	Seeds           []projectcatalog.Seed `json:"seeds"`
@@ -112,7 +114,15 @@ func CheckResolution(ctx context.Context, q Queryer) error {
 // definition contract; extra application functions/triggers are not owned guards.
 // It includes disabled triggers, changed function bodies and relation OIDs.
 func Structure(ctx context.Context, q Queryer) (string, error) {
-	const query = `SELECT v FROM (
+	format, err := schedulerFormat(ctx, q)
+	if err != nil {
+		return "", err
+	}
+	return structure(ctx, q, format)
+}
+
+func structure(ctx context.Context, q Queryer, format int) (string, error) {
+	query := `SELECT v FROM (
  SELECT 'relation:'||n.nspname||'.'||c.relname||':'||c.oid::text||':'||c.relkind::text||':'||c.relispartition::text AS v FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE (n.nspname='pgjobdb' OR n.nspname='public' AND c.relname LIKE 'jobdb_%') AND c.relkind IN ('r','p','f','v','m')
  UNION ALL SELECT 'column:'||n.nspname||'.'||c.relname||':'||a.attnum||':'||a.attname||':'||format_type(a.atttypid,a.atttypmod)||':'||a.attnotnull||':'||coalesce(pg_get_expr(d.adbin,d.adrelid),'') FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE a.attnum>0 AND NOT a.attisdropped AND (n.nspname='pgjobdb' OR n.nspname='public' AND c.relname LIKE 'jobdb_%')
  UNION ALL SELECT 'constraint:'||conrelid::regclass::text||':'||conname||':'||pg_get_constraintdef(oid) FROM pg_constraint WHERE connamespace='pgjobdb'::regnamespace OR conrelid IN (SELECT oid FROM pg_class WHERE relnamespace='public'::regnamespace AND relname LIKE 'jobdb_%')
@@ -121,6 +131,11 @@ func Structure(ctx context.Context, q Queryer) (string, error) {
  UNION ALL SELECT 'view:'||schemaname||'.'||viewname||':'||definition FROM pg_views WHERE schemaname='pgjobdb'
  UNION ALL SELECT 'trigger:'||t.tgrelid::regclass::text||':'||t.tgenabled::text||':'||t.tgfoid::text||':'||pg_get_triggerdef(t.oid) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE NOT t.tgisinternal AND t.tgname IN ('archive_goal_identity','check_active_goal','immutable_goal_id','immutable_retained_goal','project_admission_row','project_admission_truncate','terminal_goals') AND (n.nspname='pgjobdb' OR n.nspname='public' AND c.relname LIKE 'jobdb_%')
  ) objects ORDER BY v COLLATE "C"`
+	if format == leaseActivityFormat {
+		query = strings.Replace(query, "p.proname IN (", "p.proname IN ('_archive_resource_state','crash_concern_threshold','scheduler_now',", 1)
+		query = strings.Replace(query, "t.tgname IN (", "t.tgname IN ('archive_resource_state',", 1)
+		query = strings.Replace(query, " ) objects", " UNION ALL SELECT 'invalid_scheduler_clock' WHERE NOT ("+schedulerClockCheck+")\n ) objects", 1)
+	}
 	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return "", err
@@ -132,6 +147,9 @@ func Structure(ctx context.Context, q Queryer) (string, error) {
 		if err = rows.Scan(&v); err != nil {
 			return "", err
 		}
+		if v == "invalid_scheduler_clock" {
+			return "", fmt.Errorf("%s", schedulerClockError)
+		}
 		fmt.Fprintf(h, "%d:%s", len(v), v)
 	}
 	if err = rows.Err(); err != nil {
@@ -140,20 +158,36 @@ func Structure(ctx context.Context, q Queryer) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 func ReadReceipt(ctx context.Context, q Queryer) (Receipt, error) {
+	receipt, _, err := readReceipt(ctx, q)
+	return receipt, err
+}
+
+func readReceipt(ctx context.Context, q Queryer) (Receipt, []byte, error) {
 	var r Receipt
 	var b []byte
 	err := q.QueryRowContext(ctx, `SELECT payload FROM pgjobdb.project_installation WHERE singleton=1`).Scan(&b)
 	if err != nil {
-		return r, err
+		return r, nil, err
 	}
 	err = json.Unmarshal(b, &r)
-	return r, err
+	return r, b, err
 }
 func Verify(ctx context.Context, q Queryer) error {
 	if err := CheckResolution(ctx, q); err != nil {
 		return err
 	}
-	r, err := ReadReceipt(ctx, q)
+	var r Receipt
+	var receiptBytes []byte
+	var format int
+	var certified bool
+	var priorStructure sql.NullString
+	err := q.QueryRowContext(ctx, `SELECT i.payload,m.format_version,
+  to_regclass('pgjobdb.project_scheduler_upgrade') IS NOT NULL,
+  row_to_json(i)->>'scheduler_structure'
+ FROM pgjobdb.project_installation i CROSS JOIN pgjobdb.installation m WHERE i.singleton=1 AND m.name='pgjobdb'`).Scan(&receiptBytes, &format, &certified, &priorStructure)
+	if err == nil {
+		err = json.Unmarshal(receiptBytes, &r)
+	}
 	if err != nil {
 		return fmt.Errorf("project installation is incomplete: %w", err)
 	}
@@ -178,22 +212,7 @@ func Verify(ctx context.Context, q Queryer) error {
 	if !bytes.Equal(admission, expected) {
 		return fmt.Errorf("project admission projection does not match catalog")
 	}
-	digest, err := Structure(ctx, q)
-	if err != nil {
-		return err
-	}
-	var migratedStructure sql.NullString
-	if err = q.QueryRowContext(ctx, `SELECT row_to_json(i)->>'scheduler_structure' FROM pgjobdb.project_installation i WHERE singleton=1`).Scan(&migratedStructure); err != nil {
-		return err
-	}
-	expectedStructure := r.Structure
-	if migratedStructure.Valid {
-		expectedStructure = migratedStructure.String
-	}
-	if digest != expectedStructure {
-		return fmt.Errorf("project storage definitions or guard bindings changed")
-	}
-	return nil
+	return verifySchedulerBinding(ctx, q, r, receiptBytes, format, certified, priorStructure)
 }
 
 // Store uses qualified SQL and a transaction-bound public Store adapter. Checking

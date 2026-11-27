@@ -22,9 +22,14 @@ var archiveLayouts = []string{"plain", "direct_project", "migrated_project"}
 
 func archiveFixture(t *testing.T, ctx context.Context, dsn, layout string) {
 	t.Helper()
-	path := os.Getenv("PGJOBDB_TEST_FORMAT14_FIXTURE")
+	archiveReleaseFixture(t, ctx, dsn, layout, 14)
+}
+
+func archiveReleaseFixture(t *testing.T, ctx context.Context, dsn, layout string, version int) {
+	t.Helper()
+	path := os.Getenv(fmt.Sprintf("PGJOBDB_TEST_FORMAT%d_FIXTURE", version))
 	if path == "" {
-		t.Skip("build the pinned format-14 fixture binary: see installer/testdata/README.md")
+		t.Skipf("build the pinned format-%d fixture binary: see installer/testdata/README.md", version)
 	}
 	cmd := exec.CommandContext(ctx, path, "-test.run=^TestCreateFormat14Fixture$", "-test.count=1")
 	cmd.Env = append(os.Environ(), "FIXTURE_DSN="+dsn, "FIXTURE_LAYOUT="+layout)
@@ -93,8 +98,8 @@ func readArchiveSource(t *testing.T, ctx context.Context, db *sql.DB) archiveSou
 	require.Zero(t, historicalRetained)
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT jsonb_build_array(
  (SELECT jsonb_agg(to_jsonb(c)-'archived_at_ns' ORDER BY cell_id) FROM pgjobdb.cells c),
- (SELECT jsonb_agg(to_jsonb(j) ORDER BY job_id) FROM pgjobdb.jobs j),
- (SELECT jsonb_agg(to_jsonb(a) ORDER BY job_id) FROM pgjobdb.jobs_archive a),
+ (SELECT jsonb_agg(to_jsonb(j)-'last_lease_updated_at' ORDER BY job_id) FROM pgjobdb.jobs j),
+ (SELECT jsonb_agg(to_jsonb(a)-'last_lease_updated_at' ORDER BY job_id) FROM pgjobdb.jobs_archive a),
  (SELECT jsonb_agg(to_jsonb(f) ORDER BY job_id) FROM pgjobdb.job_facts f))::text`).Scan(&source.rows))
 	return source
 }
@@ -171,11 +176,11 @@ func TestPostgresCellArchiveMigration(t *testing.T) {
 				require.Equal(t, layout == "migrated_project", project.certification.Valid)
 				assertArchiveLeaseEligibility(t, ctx, db, layout)
 				_, err := pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
-				require.ErrorContains(t, err, "offline migration to format 15")
+				require.ErrorContains(t, err, "offline migration to format 16")
 				preflight, err := install.Preflight(ctx)
 				require.NoError(t, err)
 				require.True(t, preflight.Advisory)
-				require.Equal(t, []int{14, 15}, preflight.PhasePath)
+				require.Equal(t, []int{14, 15, 16}, preflight.PhasePath)
 				checkArchiveReport(t, before, preflight)
 				require.Equal(t, beforeSchema, catalogSnapshot(t, ctx, db))
 				require.Equal(t, before, readArchiveSource(t, ctx, db))
@@ -186,7 +191,7 @@ func TestPostgresCellArchiveMigration(t *testing.T) {
 				require.NoError(t, err)
 				require.True(t, confirmation.Committed)
 				require.Equal(t, 14, confirmation.SourceFormat)
-				require.Equal(t, 15, confirmation.TargetFormat)
+				require.Equal(t, 16, confirmation.TargetFormat)
 				require.Equal(t, fmt.Sprintf("%x", sha256.Sum256(staged.Bytes())), confirmation.ReportSHA256)
 				var committed installer.ConversionReport
 				require.NoError(t, json.Unmarshal(staged.Bytes(), &committed))
@@ -199,14 +204,13 @@ func TestPostgresCellArchiveMigration(t *testing.T) {
 				var marked int
 				require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pgjobdb.cells WHERE archived_at_ns IS NOT NULL`).Scan(&marked))
 				require.Zero(t, marked)
+				assertUnknownArchiveLeaseActivity(t, ctx, db)
 				require.Equal(t, before, readArchiveSource(t, ctx, db))
 				assertArchiveLeaseEligibility(t, ctx, db, layout)
 				after := archiveProject(t, ctx, db, layout)
 				if layout != "plain" {
 					require.NoError(t, projects.Verify(ctx, db))
-					require.True(t, after.certification.Valid)
-					require.NotEqual(t, project.certification, after.certification)
-					project.certification = after.certification
+					assertTransitionSource(t, ctx, db, 14)
 				}
 				require.Equal(t, project, after)
 				noop, err := install.Preflight(ctx)
@@ -236,6 +240,102 @@ func TestPostgresCellArchiveMigrationRollback(t *testing.T) {
 				require.Equal(t, before, readArchiveSource(t, ctx, reopened))
 				require.Equal(t, project, archiveProject(t, ctx, reopened, layout))
 				require.NoError(t, (installer.Installer{DB: reopened}).Migrate(ctx))
+			})
+		})
+	}
+}
+
+func assertTransitionSource(t *testing.T, ctx context.Context, db *sql.DB, expected int) {
+	t.Helper()
+	var source, target int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT source_format,target_format FROM pgjobdb.project_scheduler_upgrade WHERE singleton=1`).Scan(&source, &target))
+	require.Equal(t, expected, source)
+	require.Equal(t, 16, target)
+}
+
+func assertUnknownArchiveLeaseActivity(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	var known int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT last_lease_updated_at FROM pgjobdb.jobs UNION ALL SELECT last_lease_updated_at FROM pgjobdb.jobs_archive) j WHERE last_lease_updated_at IS NOT NULL`).Scan(&known))
+	require.Zero(t, known)
+}
+
+func TestLeaseDefinitionDriftRejected(t *testing.T) {
+	for _, source := range []int{15, 16} {
+		t.Run(fmt.Sprint(source), func(t *testing.T) {
+			withBareDatabaseDSN(t, func(ctx context.Context, db *sql.DB, dsn string) {
+				install := installer.Installer{DB: db}
+				if source == 15 {
+					archiveReleaseFixture(t, ctx, dsn, "plain", source)
+				} else {
+					require.NoError(t, install.Apply(ctx))
+				}
+				for _, drift := range []struct {
+					name, change, restore, diagnostic string
+				}{
+					{"strict-renewal", `ALTER FUNCTION pgjobdb._extend_lease(text,text,text,text,integer) STRICT`, `ALTER FUNCTION pgjobdb._extend_lease(text,text,text,text,integer) CALLED ON NULL INPUT`, "altered lease definition _extend_lease"},
+					{"fixed-clock", `CREATE OR REPLACE FUNCTION pgjobdb.scheduler_now() RETURNS timestamptz LANGUAGE sql VOLATILE AS $$ SELECT '2026-01-01T00:00:00Z'::timestamptz; $$`, `CREATE OR REPLACE FUNCTION pgjobdb.scheduler_now() RETURNS timestamptz LANGUAGE sql VOLATILE AS $$ SELECT clock_timestamp(); $$`, "altered scheduler clock"},
+				} {
+					t.Run(drift.name, func(t *testing.T) {
+						_, err := db.ExecContext(ctx, drift.change)
+						require.NoError(t, err)
+						before := catalogSnapshot(t, ctx, db)
+						_, err = install.Preflight(ctx)
+						require.ErrorContains(t, err, drift.diagnostic)
+						var confirmation installer.CommitConfirmation
+						if source == 15 {
+							confirmation, err = install.MigrateWithReport(ctx, nil)
+						} else {
+							confirmation, err = install.ApplyWithReport(ctx, nil)
+						}
+						require.ErrorContains(t, err, drift.diagnostic)
+						require.False(t, confirmation.Committed)
+						require.Equal(t, before, catalogSnapshot(t, ctx, db))
+						var marker int
+						require.NoError(t, db.QueryRowContext(ctx, `SELECT format_version FROM pgjobdb.installation`).Scan(&marker))
+						require.Equal(t, source, marker)
+						_, err = db.ExecContext(ctx, drift.restore)
+						require.NoError(t, err)
+						_, err = install.Preflight(ctx)
+						require.NoError(t, err)
+					})
+				}
+			})
+		})
+	}
+}
+
+func TestLastLeaseUpdatedAtFormat15(t *testing.T) {
+	for _, layout := range archiveLayouts {
+		t.Run(layout, func(t *testing.T) {
+			withBareDatabaseDSN(t, func(ctx context.Context, db *sql.DB, dsn string) {
+				archiveReleaseFixture(t, ctx, dsn, layout, 15)
+				install := installer.Installer{DB: db}
+				beforeSchema := catalogSnapshot(t, ctx, db)
+				before := readArchiveSource(t, ctx, db)
+				project := archiveProject(t, ctx, db, layout)
+				preflight, err := install.Preflight(ctx)
+				require.NoError(t, err)
+				require.Equal(t, []int{15, 16}, preflight.PhasePath)
+				require.ErrorContains(t, install.Apply(ctx), "offline migration to format 16")
+				_, err = pgruntime.NewSQLDB(ctx, db, pgruntime.Config{BlobStoreURI: "blobfs://" + t.TempDir()})
+				require.ErrorContains(t, err, "offline migration to format 16")
+				_, err = install.MigrateWithReport(ctx, failingReportWriter{})
+				require.ErrorContains(t, err, "injected report export failure")
+				require.Equal(t, beforeSchema, catalogSnapshot(t, ctx, db))
+				require.Equal(t, before, readArchiveSource(t, ctx, db))
+				require.Equal(t, project, archiveProject(t, ctx, db, layout))
+				require.NoError(t, install.Migrate(ctx))
+				require.NoError(t, install.Verify(ctx))
+				var archivedAt int64
+				require.NoError(t, db.QueryRowContext(ctx, `SELECT archived_at_ns FROM pgjobdb.cells WHERE tenant_id='c2'`).Scan(&archivedAt))
+				require.EqualValues(t, 123456789, archivedAt)
+				assertUnknownArchiveLeaseActivity(t, ctx, db)
+				require.Equal(t, before, readArchiveSource(t, ctx, db))
+				require.Equal(t, project, archiveProject(t, ctx, db, layout))
+				if layout != "plain" {
+					assertTransitionSource(t, ctx, db, 15)
+				}
 			})
 		})
 	}
